@@ -19,6 +19,45 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print(f"Error Telegram: {e}")
 
+def procesar_comandos_telegram():
+    """Revisa si el usuario envió comandos como /resumen antes de ejecutar el scraper"""
+    url_updates = f"https://api.telegram.org/bot{TOKEN_REAL}/getUpdates"
+    try:
+        res = requests.get(url_updates, timeout=10)
+        if res.status_code == 200:
+            datos = res.json()
+            if datos.get("ok") and datos.get("result"):
+                # Agarrar el último mensaje recibido
+                ultimo_update = datos["result"][-1]
+                mensaje_txt = ultimo_update.get("message", {}).get("text", "")
+                chat_id = str(ultimo_update.get("message", {}).get("chat", {}).get("id", ""))
+                
+                # Verificar que sea del dueño del radar
+                if chat_id == ID_REAL and mensaje_txt in ["/resumen", "/start"]:
+                    if os.path.exists(URLS_FILE):
+                        with open(URLS_FILE, "r", encoding="utf-8") as f:
+                            lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
+                        
+                        if lineas:
+                            texto_resumen = "📋 *Tus Radares Activos actualmente:*\n\n"
+                            for l in lineas:
+                                partes = l.split(",")
+                                meta = partes[2].split("_")
+                                tienda = meta[0] if len(meta) > 0 else "General"
+                                cat = meta[1] if len(meta) > 1 else "Ropa"
+                                talla = meta[2] if len(meta) > 2 else "Todas"
+                                texto_resumen += f"🏪 *{tienda}* | {cat} | Talla: {talla} | 🚨 Tope: S/. {partes[1]}\n"
+                            enviar_telegram(texto_resumen)
+                        else:
+                            enviar_telegram("📭 No tienes ningún enlace registrado en tu radar todavía.")
+                    else:
+                        enviar_telegram("⚠️ El archivo de URLs no existe en el servidor.")
+                    
+                    # Consumir las actualizaciones para limpiar la cola de Telegram
+                    requests.get(f"{url_updates}?offset={ultimo_update['update_id'] + 1}")
+    except Exception as e:
+        print(f"Error procesando comandos: {e}")
+
 def cargar_historial():
     if os.path.exists(HISTORIAL_FILE):
         try:
@@ -42,7 +81,6 @@ def escanear_tienda(url, limite_precio, tienda, categoria, talla_buscada):
     try:
         respuesta = requests.get(url, headers=headers, timeout=15)
         if respuesta.status_code != 200:
-            print(f"⚠️ {tienda} devolvió código {respuesta.status_code}")
             return []
             
         soup = BeautifulSoup(respuesta.text, 'html.parser')
@@ -67,24 +105,17 @@ def escanear_tienda(url, limite_precio, tienda, categoria, talla_buscada):
 
         # 🏢 MOTOR 2: FALABELLA
         elif "falabella" in t_low or "falabella" in url:
-            # Falabella usa contenedores tipo grid y clases 'pod-details' o estructuras 'sub-section'
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or \
                        soup.find_all('div', class_=lambda x: x and 'pod-details' in x) or \
                        soup.find_all('div', attrs={"id": lambda x: x and 'testId-pod-' in x})
                        
             for tarjeta in tarjetas:
                 tit = tarjeta.find('b') or tarjeta.find(class_=lambda x: x and 'pod-title' in x) or tarjeta.find(class_=lambda x: x and 'title' in x)
-                # Buscar precios de oferta (cmr-price o sale-price)
-                prc = tarjeta.find(class_=lambda x: x and 'prices' in x) or tarjeta.find(class_=lambda x: x and 'price' in x) or tarjeta.find(lambda tag: tag.name in ['ol', 'div'] and 'price' in str(tag.get('class', '')))
+                prc = tarjeta.find(class_=lambda x: x and 'prices' in x) or tarjeta.find(class_=lambda x: x and 'price' in x)
                 if tit and prc:
                     nombre = tit.text.strip()
-                    # Extraer el precio más bajo visible en el bloque
-                    text_precio = prc.text.strip()
-                    # Si tiene precio CMR o internet, nos quedamos con el menor numérico
-                    nums_lista = [int(s) for s in text_precio.split() if s.isdigit()]
-                    nums = ''.join(filter(str.isdigit, text_precio))
+                    nums = ''.join(filter(str.isdigit, prc.text.strip()))
                     if nums:
-                        # Control básico para limpiar si junta múltiples precios en texto largo
                         p_num = int(nums[:4]) if len(nums) > 5 else int(nums)
                         if p_num <= limite_precio:
                             productos_encontrados.append({"nombre": nombre, "precio": int(p_num)})
@@ -111,10 +142,12 @@ def escanear_tienda(url, limite_precio, tienda, categoria, talla_buscada):
         return []
 
 def revisar_ofertas():
-    print("🚀 Iniciando control cronometrado...")
+    print("🚀 Revisando cola...")
+    
+    # 🔥 PASO EXTRAS: Procesar comandos de Telegram primero
+    procesar_comandos_telegram()
     
     if not os.path.exists(URLS_FILE):
-        enviar_telegram("⚠️ El archivo `urls.txt` está vacío. Registra rutas en el panel.")
         return
         
     historial = cargar_historial()
@@ -165,15 +198,15 @@ def revisar_ofertas():
                         f"🔗 [Ir al enlace]({url_base})\n"
                     )
         except Exception as e:
-            print(f"Error procesando línea: {e}")
             continue
             
     guardar_historial(historial)
     
+    # 🔥 SIEMPRE mandará respuesta al gatillar el botón para que sepas que se ejecutó con éxito
     if alertas_enviar:
         enviar_telegram("🔥 *¡El Radar encontró rebajas dentro de tu presupuesto!* 🔥\n\n" + "\n".join(alertas_enviar))
     else:
-        enviar_telegram(f"✅ *Radar ejecutado con éxito.*\nSe revisaron `{conteo_radares}` enlaces activos, pero ninguno tiene ofertas por debajo de tus topes establecidos. ¡Seguimos vigilando!")
+        enviar_telegram(f"✅ *Radar ejecutado con éxito.*\nSe revisaron `{conteo_radares}` enlaces, pero los precios en las tiendas siguen volando por encima de tus topes establecidos. ¡Seguimos vigilando en piloto automático!")
 
 if __name__ == "__main__":
-    revisar_offers = revisar_ofertas()
+    revisar_ofertas()
