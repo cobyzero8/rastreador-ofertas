@@ -8,57 +8,58 @@ st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# Funciones de utilidad
-def cargar_urls():
-    if os.path.exists(URLS_FILE):
-        with open(URLS_FILE, "r", encoding="utf-8") as f:
-            return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
-    return []
+# --- SIDEBAR: BOTÓN DE ACCIÓN RÁPIDA ---
+with st.sidebar:
+    st.title("⚙️ Control Maestro")
+    if st.button("💥 FORZAR ESCANEO MANUAL", use_container_width=True):
+        st.warning("Ejecutando proceso...")
+        os.system("python scraper.py")
+        st.success("Escaneo finalizado.")
 
-st.title("🕵️‍♂️ Radar Familiar Pro - CobyZero8")
+# --- SECCIÓN SUPERIOR: AGREGAR ARTÍCULOS ---
+st.subheader("➕ Agregar Nuevo Artículo al Radar")
+with st.container(border=True):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        tienda = st.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike"])
+        url = st.text_input("URL del producto")
+    with col2:
+        nombre = st.text_input("Nombre del artículo")
+        precio = st.number_input("Precio máximo (Tope S/.)", value=100)
+    with col3:
+        talla = st.text_input("Talla (Ej: 9.5US, M)")
+        if st.button("💾 GUARDAR Y AGREGAR", type="primary", use_container_width=True):
+            nueva_linea = f"{url},{precio},{tienda}_{nombre.replace(' ', '-')}_{talla}"
+            
+            # Cargar y guardar al inicio (primera fila)
+            if os.path.exists(URLS_FILE):
+                with open(URLS_FILE, "r", encoding="utf-8") as f:
+                    lineas = f.readlines()
+            else:
+                lineas = []
+            
+            lineas.insert(0, nueva_linea + "\n")
+            with open(URLS_FILE, "w", encoding="utf-8") as f:
+                f.writelines(lineas)
+            
+            st.toast("✅ Artículo agregado correctamente a la primera fila.")
 
-# Botón de FORZAR ESCANEO (Siempre visible)
-if st.button("💥 FORZAR ESCANEO MANUAL AHORA"):
-    st.warning("Ejecutando proceso de rastreo... verifica tu Telegram.")
-    # Esto activará tu script scraper.py
-    os.system("python scraper.py") 
-    st.success("Escaneo terminado.")
+st.write("---")
 
-menu = st.sidebar.selectbox("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro"])
-
-if menu == "📈 Ver Dashboard":
-    st.subheader("📊 Artículos bajo vigilancia")
-    if os.path.exists(HISTORIAL_FILE):
-        with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            lista = []
-            for id_prod, hist in data.items():
-                tienda, cat, talla, nombre = id_prod.split("_", 3)
-                lista.append({
-                    "Tienda": tienda, 
-                    "Producto": nombre.replace("_", " "), 
-                    "Precio Actual": list(hist.values())[-1]
-                })
-            df = pd.DataFrame(lista)
-            st.table(df) # Tabla simple para no colgar el navegador
-    else:
-        st.info("Aún no hay datos. Agrega enlaces en la pestaña de Gestión.")
-
-elif menu == "🛠️ Gestionar Enlaces Pro":
-    st.subheader("🔗 Enlaces Activos")
-    urls = cargar_urls()
-    for u in urls:
-        st.code(u) # Aquí verás tus artículos actuales para verificar que existen
-        
-    st.write("---")
-    st.subheader("➕ Agregar nuevo artículo")
-    c1, c2 = st.columns(2)
-    tienda = c1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley"])
-    url_input = c2.text_input("Pega aquí el LINK del producto (con el filtro de talla ya hecho)")
-    
-    if st.button("GUARDAR ENLACE"):
-        nueva_linea = f"{url_input},100,{tienda}_General_M"
-        urls.append(nueva_linea)
-        with open(URLS_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(urls))
-        st.success("Guardado. Ahora presiona FORZAR ESCANEO.")
+# --- SECCIÓN DASHBOARD ---
+st.subheader("📊 Artículos bajo vigilancia")
+if os.path.exists(HISTORIAL_FILE):
+    with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        lista = []
+        for id_prod, hist in data.items():
+            parts = id_prod.split("_")
+            lista.append({
+                "Tienda": parts[0],
+                "Producto": parts[1].replace("-", " "),
+                "Talla": parts[2],
+                "Precio Actual": f"S/. {list(hist.values())[-1]}"
+            })
+    st.table(pd.DataFrame(lista))
+else:
+    st.info("Aún no hay artículos rastreados.")
