@@ -13,18 +13,6 @@ st.set_page_config(
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# --- INICIALIZAR SESIÓN PARA LIMPIAR CASILLEROS ---
-if "tienda" not in st.session_state:
-    st.session_state.tienda = "Adidas"
-if "seccion" not in st.session_state:
-    st.session_state.seccion = "Casacas"
-if "url" not in st.session_state:
-    st.session_state.url = ""
-if "precio" not in st.session_state:
-    st.session_state.precio = 100
-if "talla" not in st.session_state:
-    st.session_state.talla = "M"
-
 def cargar_historial():
     if os.path.exists(HISTORIAL_FILE):
         try:
@@ -37,7 +25,6 @@ def cargar_historial():
 def cargar_urls():
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
-            # Retorna la lista tal cual está en el archivo
             return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
     return []
 
@@ -127,23 +114,32 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
     st.subheader("🔗 Administrador Avanzado de URLs")
     lineas_actuales = cargar_urls()
     
-    # INTERFAZ ASOCIADA AL SESSION_STATE
-    col_t1, col_t2 = st.columns(2)
-    tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"], key="tienda")
-    seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Casacas, Polos):", key="seccion")
+    # Manejo seguro de reset de casilleros usando claves dinámicas en la sesión
+    if "reset_key" not in st.session_state:
+        st.session_state.reset_key = 0
+
+    # Cambiamos las llaves dinámicamente para forzar la limpieza al guardar
+    suffix = str(st.session_state.reset_key)
     
-    nueva_url = st.text_input("3. Pegar URL exacta de la sección:", key="url")
+    col_t1, col_t2 = st.columns(2)
+    tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"], key="tienda_" + suffix)
+    seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Casacas, Polos):", value="Casacas", key="seccion_" + suffix)
+    
+    nueva_url = st.text_input("3. Pegar URL exacta de la sección:", value="", key="url_" + suffix)
     
     col_p1, col_p2 = st.columns(2)
-    nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, key="precio")
-    talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, S):", key="talla")
+    nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, value=100, key="precio_" + suffix)
+    talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, S):", value="M", key="talla_" + suffix)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # BOTÓN DE PROCESAMIENTO
+    # Espacio para alertas informativas dentro de este menú
+    if "mensaje_exito" in st.session_state:
+        st.success(st.session_state.mensaje_exito)
+        del st.session_state.mensaje_exito
+
     if st.button("🚀 AÑADIR AL RADAR EN TIEMPO REAL", type="primary"):
         if nueva_url and seccion_nom:
-            # Limpieza de caracteres y espacios fantasmas
             seccion_limpia = "".join(c for c in seccion_nom if c.isalnum() or c in ("_", "-")).strip("_")
             talla_limpia = "".join(c for c in talla_filtro if c.isalnum()).upper()
             
@@ -153,23 +149,19 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             identificador_completo = f"{tienda_sel}_{seccion_limpia}_{talla_limpia}"
             nueva_linea = f"{nueva_url.strip()},{int(nuevo_limite)},{identificador_completo}"
             
-            # Quitar duplicados si existía el mismo identificador
+            # Quitar duplicados previos si existían
             lineas_filtradas = [l for l in lineas_actuales if not l.endswith(identificador_completo)]
             
-            # 🔥 CRUCIAL: Insertar la nueva línea AL INICIO de la lista (index 0)
+            # 🔥 CORRECCIÓN 1: Insertar la nueva línea ADELANTE (Index 0)
             lineas_filtradas.insert(0, nueva_linea)
             
-            # Guardar el archivo ordenado
             guardar_urls(lineas_filtradas)
             
-            # ✨ MENSAJE FLOTANTE SÚPER SATISFACTORIO DE ÉXITO
-            st.toast(f"✅ ¡Guardado satisfactoriamente: {identificador_completo}!", icon="🎯")
+            # 🔥 CORRECCIÓN 2: Guardar mensaje de éxito satisfactorio antes del reinicio
+            st.session_state.mensaje_exito = f"🎯 ¡El enlace fue guardado satisfactoriamente para: {identificador_completo}!"
             
-            # 🧹 LIMPIAR LOS CASILLEROS RESTABLECIENDO EL STATE
-            st.session_state.url = ""
-            st.session_state.seccion = "Casacas"
-            st.session_state.precio = 100
-            st.session_state.talla = "M"
+            # 🔥 CORRECCIÓN 3: Cambiar la clave de reseteo para limpiar instantáneamente las casillas
+            st.session_state.reset_key += 1
             
             st.rerun()
         else:
@@ -178,7 +170,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
     st.markdown("---")
     st.markdown("### 📋 Cola Actual de Escaneo")
     
-    # Recargar de nuevo para renderizar
+    # Volver a leer la lista fresca ya invertida para pintarla en pantalla
     lineas_render = cargar_urls()
     
     if not lineas_render:
