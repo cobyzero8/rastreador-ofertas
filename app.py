@@ -2,60 +2,63 @@ import streamlit as st
 import json
 import os
 import pandas as pd
-import requests
 
-st.set_page_config(page_title="CobyZero8 - Radar Familiar Pro", page_icon="🕵️‍♂️", layout="wide")
+st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
 
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# INICIALIZACIÓN DE ESTADO
-if "reset_key" not in st.session_state:
-    st.session_state.reset_key = 0
-
+# Funciones de utilidad
 def cargar_urls():
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
             return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
     return []
 
-def guardar_urls(lista_lineas):
-    with open(URLS_FILE, "w", encoding="utf-8") as f:
-        for linea in lista_lineas:
-            f.write(f"{linea}\n")
+st.title("🕵️‍♂️ Radar Familiar Pro - CobyZero8")
 
-st.title("🕵️‍♂️ CobyZero8 - Radar Familiar Pro")
+# Botón de FORZAR ESCANEO (Siempre visible)
+if st.button("💥 FORZAR ESCANEO MANUAL AHORA"):
+    st.warning("Ejecutando proceso de rastreo... verifica tu Telegram.")
+    # Esto activará tu script scraper.py
+    os.system("python scraper.py") 
+    st.success("Escaneo terminado.")
 
 menu = st.sidebar.selectbox("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro"])
 
 if menu == "📈 Ver Dashboard":
-    st.subheader("📊 Monitoreo de Ofertas")
+    st.subheader("📊 Artículos bajo vigilancia")
     if os.path.exists(HISTORIAL_FILE):
         with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             lista = []
             for id_prod, hist in data.items():
                 tienda, cat, talla, nombre = id_prod.split("_", 3)
-                lista.append({"Tienda": tienda, "Producto": nombre.replace("_", " "), "Precio": list(hist.values())[-1]})
-            st.dataframe(pd.DataFrame(lista), use_container_width=True)
+                lista.append({
+                    "Tienda": tienda, 
+                    "Producto": nombre.replace("_", " "), 
+                    "Precio Actual": list(hist.values())[-1]
+                })
+            df = pd.DataFrame(lista)
+            st.table(df) # Tabla simple para no colgar el navegador
+    else:
+        st.info("Aún no hay datos. Agrega enlaces en la pestaña de Gestión.")
 
 elif menu == "🛠️ Gestionar Enlaces Pro":
-    st.subheader("🔗 Administrador Avanzado")
-    suffix = str(st.session_state.reset_key)
-    
+    st.subheader("🔗 Enlaces Activos")
+    urls = cargar_urls()
+    for u in urls:
+        st.code(u) # Aquí verás tus artículos actuales para verificar que existen
+        
+    st.write("---")
+    st.subheader("➕ Agregar nuevo artículo")
     c1, c2 = st.columns(2)
-    tienda = c1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon"], key="t_"+suffix)
-    seccion = c2.text_input("Sección", value="Zapatillas", key="s_"+suffix)
-    url = st.text_input("URL", value="", key="u_"+suffix)
-    c3, c4 = st.columns(2)
-    precio = c3.number_input("Tope", value=100, key="p_"+suffix)
-    talla = c4.text_input("Talla", value="M", key="talla_"+suffix)
-
-    if st.button("🚀 AÑADIR AL RADAR", type="primary"):
-        if url and seccion:
-            lineas = cargar_urls()
-            nueva_linea = f"{url},{precio},{tienda}_{seccion}_{talla}"
-            lineas.insert(0, nueva_linea)
-            guardar_urls(lineas)
-            st.session_state.reset_key += 1
-            st.rerun()
+    tienda = c1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley"])
+    url_input = c2.text_input("Pega aquí el LINK del producto (con el filtro de talla ya hecho)")
+    
+    if st.button("GUARDAR ENLACE"):
+        nueva_linea = f"{url_input},100,{tienda}_General_M"
+        urls.append(nueva_linea)
+        with open(URLS_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(urls))
+        st.success("Guardado. Ahora presiona FORZAR ESCANEO.")
