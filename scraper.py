@@ -18,7 +18,7 @@ def enviar_telegram(mensaje):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Error al enviar a Telegram: {e}")
 
@@ -40,18 +40,22 @@ def guardar_historial(historial):
 
 def escanear_seccion(url, limite_precio, nombre_seccion):
     print(f"🕵️‍♂️ Analizando: {url}")
+    
+    # Camuflaje avanzado de navegador profesional para evitar bloqueos directos
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     }
     
     productos_encontrados = []
     
     try:
-        url_pasarela = f"https://api.allorigins.win/get?url={requests.utils.quote(url)}"
-        respuesta = requests.get(url_pasarela, timeout=15)
+        # Consultamos directo a la tienda de forma rápida sin pasar por pasarelas lentas
+        respuesta = requests.get(url, headers=headers, timeout=20)
         
         if respuesta.status_code == 200:
-            html_puro = respuesta.json().get('contents', '')
+            html_puro = respuesta.text
             soup = BeautifulSoup(html_puro, 'html.parser')
             
             if "adidas" in url:
@@ -71,11 +75,11 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
                                 
         return productos_encontrados
     except Exception as e:
-        print(f"Error en {nombre_seccion}: {e}")
+        print(f"⚠️ Alerta de conexión en {nombre_seccion}: {e}")
         return []
 
 def revisar_ofertas():
-    print("🚀 Iniciando rastreador optimizado a 2 páginas...")
+    print("🚀 Iniciando rastreador de alta estabilidad (2 páginas)...")
     
     if not os.path.exists("urls.txt"):
         print("Error: No existe urls.txt")
@@ -93,19 +97,25 @@ def revisar_ofertas():
         if not linea or "," not in linea:
             continue
             
-        partes = linea.split(",")
-        url_base = partes[0].strip()
-        presupuesto_max = int(partes[1].strip())
-        nombre_seccion = partes[2].strip()
+        try:
+            # SOLUCIÓN INGENIERIL: Dividimos desde la derecha rsplit() maximo 2 veces.
+            # Así protegemos los enlaces que tengan comas internas por filtros de marcas.
+            partes = linea.rsplit(",", 2)
+            url_base = partes[0].strip()
+            presupuesto_max = int(partes[1].strip())
+            nombre_seccion = partes[2].strip()
+        except Exception as e:
+            print(f"⚠️ Saltando línea inválida en urls.txt por formato: {linea}. Error: {e}")
+            continue
         
-        # Bucle optimizado: solo revisa Página 1 y Página 2
+        print(f"\n📂 Procesando sección: {nombre_seccion}")
+        
         for pagina in range(1, 3):
             url_paginada = url_base
             
             if pagina > 1:
-                # Evitamos alterar URLs fijas de buscadores de farmacias que no soportan paginación simple
                 if "mifarma.com" in url_base or "inkafarma.pe" in url_base:
-                    continue # Las farmacias solo las lee una vez para evitar errores
+                    continue 
                 
                 if "samsung.com" in url_base:
                     if "?" in url_base:
@@ -141,16 +151,16 @@ def revisar_ofertas():
                 
                 historial[id_producto] = precio_actual
             
-            time.sleep(3) # Pausa entre páginas
+            time.sleep(4) # Pausa preventiva para no saturar
         
-        time.sleep(4) # Pausa entre tiendas
+        time.sleep(5) 
     
     guardar_historial(historial)
     
     if hubo_baja:
         enviar_telegram(alertas_baja_precio)
     else:
-        print("\nEl robot terminó con éxito. Sin caídas de precio en esta ronda de 2 páginas.")
+        print("\nEl robot terminó con éxito. Todo el catálogo se encuentra estable.")
 
 if __name__ == "__main__":
     revisar_ofertas()
