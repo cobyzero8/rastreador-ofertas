@@ -13,6 +13,18 @@ st.set_page_config(
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
+# --- INICIALIZAR SESIÓN PARA LIMPIAR CASILLEROS ---
+if "tienda" not in st.session_state:
+    st.session_state.tienda = "Adidas"
+if "seccion" not in st.session_state:
+    st.session_state.seccion = "Casacas"
+if "url" not in st.session_state:
+    st.session_state.url = ""
+if "precio" not in st.session_state:
+    st.session_state.precio = 100
+if "talla" not in st.session_state:
+    st.session_state.talla = "M"
+
 def cargar_historial():
     if os.path.exists(HISTORIAL_FILE):
         try:
@@ -25,6 +37,7 @@ def cargar_historial():
 def cargar_urls():
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
+            # Retorna la lista tal cual está en el archivo
             return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
     return []
 
@@ -114,23 +127,23 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
     st.subheader("🔗 Administrador Avanzado de URLs")
     lineas_actuales = cargar_urls()
     
-    # INTERFAZ DIRECTA (SIN FORMULARIO COMPLEJO TRABADO)
+    # INTERFAZ ASOCIADA AL SESSION_STATE
     col_t1, col_t2 = st.columns(2)
-    tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"])
-    seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Casacas, Polos):", "Casacas")
+    tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"], key="tienda")
+    seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Casacas, Polos):", key="seccion")
     
-    nueva_url = st.text_input("3. Pegar URL exacta de la sección:")
+    nueva_url = st.text_input("3. Pegar URL exacta de la sección:", key="url")
     
     col_p1, col_p2 = st.columns(2)
-    nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, value=100)
-    talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, S):", "M")
+    nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, key="precio")
+    talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, S):", key="talla")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Botón libre e independiente
+    # BOTÓN DE PROCESAMIENTO
     if st.button("🚀 AÑADIR AL RADAR EN TIEMPO REAL", type="primary"):
         if nueva_url and seccion_nom:
-            # Limpieza forzada de caracteres y espacios fantasmas
+            # Limpieza de caracteres y espacios fantasmas
             seccion_limpia = "".join(c for c in seccion_nom if c.isalnum() or c in ("_", "-")).strip("_")
             talla_limpia = "".join(c for c in talla_filtro if c.isalnum()).upper()
             
@@ -140,31 +153,48 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             identificador_completo = f"{tienda_sel}_{seccion_limpia}_{talla_limpia}"
             nueva_linea = f"{nueva_url.strip()},{int(nuevo_limite)},{identificador_completo}"
             
-            # Quitar si ya existía una idéntica y meter la nueva
+            # Quitar duplicados si existía el mismo identificador
             lineas_filtradas = [l for l in lineas_actuales if not l.endswith(identificador_completo)]
-            lineas_filtradas.append(nueva_linea)
             
+            # 🔥 CRUCIAL: Insertar la nueva línea AL INICIO de la lista (index 0)
+            lineas_filtradas.insert(0, nueva_linea)
+            
+            # Guardar el archivo ordenado
             guardar_urls(lineas_filtradas)
-            st.success(f"🎯 ¡Guardado exitoso para: {identificador_completo}!")
+            
+            # ✨ MENSAJE FLOTANTE SÚPER SATISFACTORIO DE ÉXITO
+            st.toast(f"✅ ¡Guardado satisfactoriamente: {identificador_completo}!", icon="🎯")
+            
+            # 🧹 LIMPIAR LOS CASILLEROS RESTABLECIENDO EL STATE
+            st.session_state.url = ""
+            st.session_state.seccion = "Casacas"
+            st.session_state.precio = 100
+            st.session_state.talla = "M"
+            
             st.rerun()
         else:
             st.error("⚠️ Falta rellenar la URL o el Nombre de la Sección.")
 
     st.markdown("---")
     st.markdown("### 📋 Cola Actual de Escaneo")
-    lineas_actuales = cargar_urls() # Recarga fresca
     
-    for i, linea in enumerate(lineas_actuales):
-        partes = linea.split(",")
-        if len(partes) == 3:
-            col_info, col_btn = st.columns([8, 2])
-            meta = partes[2].split("_")
-            tienda_txt = meta[0] if len(meta) > 0 else "Desconocida"
-            cat_txt = meta[1] if len(meta) > 1 else "General"
-            talla_txt = meta[2] if len(meta) > 2 else "Todas"
-            
-            col_info.code(f"🏪 {tienda_txt} | 📦 {cat_txt} | 👟 Talla: {talla_txt} | 🚨 Alerta si baja de: S/. {partes[1]}")
-            if col_btn.button("🗑️ Borrar", key=f"del_{i}"):
-                lineas_actuales.pop(i)
-                guardar_urls(lineas_actuales)
-                st.rerun()
+    # Recargar de nuevo para renderizar
+    lineas_render = cargar_urls()
+    
+    if not lineas_render:
+        st.info("No hay enlaces en el radar. Registra tu primer enlace arriba.")
+    else:
+        for i, linea in enumerate(lineas_render):
+            partes = linea.split(",")
+            if len(partes) == 3:
+                col_info, col_btn = st.columns([8, 2])
+                meta = partes[2].split("_")
+                tienda_txt = meta[0] if len(meta) > 0 else "Desconocida"
+                cat_txt = meta[1] if len(meta) > 1 else "General"
+                talla_txt = meta[2] if len(meta) > 2 else "Todas"
+                
+                col_info.code(f"🏪 {tienda_txt} | 📦 {cat_txt} | 👟 Talla: {talla_txt} | 🚨 Alerta si baja de: S/. {partes[1]}")
+                if col_btn.button("🗑️ Borrar", key=f"del_{i}"):
+                    lineas_render.pop(i)
+                    guardar_urls(lineas_render)
+                    st.rerun()
