@@ -22,16 +22,47 @@ def cargar_historial():
             return {}
     return {}
 
+import base64
+
 def cargar_urls():
+    # Intenta leer local, si no, jala de GitHub
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
             return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
     return []
 
 def guardar_urls(lista_lineas):
+    # 1. Guardar de forma local en Streamlit
     with open(URLS_FILE, "w", encoding="utf-8") as f:
         for linea in lista_lineas:
             f.write(f"{linea}\n")
+            
+    # 2. ENVIAR DIRECTO A GITHUB (Sincronización Total al instante)
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+        repo = st.secrets["GITHUB_REPO"]
+        url_api = f"https://api.github.com/repos/{repo}/contents/{URLS_FILE}"
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        
+        # Obtener el sha del archivo actual para poder reemplazarlo
+        res_get = requests.get(url_api, headers=headers)
+        sha = res_get.json().get("sha", "") if res_get.status_code == 200 else ""
+        
+        contenido_completo = "\n".join(lista_lineas) + "\n"
+        contenido_bytes = contenido_completo.encode("utf-8")
+        contenido_base64 = base64.b64encode(contenido_bytes).decode("utf-8")
+        
+        payload = {
+            "message": "🔗 Enlace actualizado desde el Panel Web Pro",
+            "content": contenido_base64,
+            "branch": "main"
+        }
+        if sha:
+            payload["sha"] = sha
+            
+        requests.put(url_api, headers=headers, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Error de sincronización con GitHub: {e}")
 
 def disparar_escaneo_github():
     try:
