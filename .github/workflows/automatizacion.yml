@@ -3,7 +3,7 @@ name: Ejecutor de Rastreador de Ofertas
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 5,11,17,1'
+    - cron: '0 5,11,17,23 * * *'
 
 jobs:
   ejecutar-script:
