@@ -2,47 +2,27 @@ import streamlit as st
 import json
 import os
 import pandas as pd
-from scraper import revisar_ofertas # Importamos directo
 
 st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
 
-HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
+HISTORIAL_FILE = "historial_precios.json"
 
-# --- SIDEBAR: CONTROL MAESTRO ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ Control Maestro")
-    if st.button("💥 FORZAR ESCANEO", use_container_width=True):
-        with st.spinner("🚀 Ejecutando rastreo..."):
-            try:
-                revisar_ofertas()
-                st.success("✅ Escaneo terminado con éxito.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Falló el escaneo: {e}")
-    
-    st.write("---")
+    st.info("Para forzar el escaneo, usa el botón de abajo.")
+    if st.button("💥 FORZAR ESCANEO"):
+        # Escribimos un flag para que el bot de GitHub lo detecte
+        with open("trigger_scan.txt", "w") as f:
+            f.write("run")
+        st.success("✅ Trigger enviado. El robot en GitHub se activará en breve.")
+
     menu = st.radio("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces"])
 
-# --- LÓGICA DE DICCIONARIO ---
-def obtener_datos_configurados():
-    datos = {}
-    if os.path.exists(URLS_FILE):
-        with open(URLS_FILE, "r") as f:
-            for line in f.readlines():
-                parts = line.strip().split(",")
-                if len(parts) >= 3:
-                    # ID es Tienda_Nombre_Talla
-                    datos[parts[2]] = {"url": parts[0]}
-    return datos
-
-# --- PANTALLA: DASHBOARD ---
+# --- DASHBOARD ---
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Radar Familiar Pro")
-    st.subheader("📊 Dashboard: Artículos bajo vigilancia")
-    
-    config = obtener_datos_configurados()
-    
     if os.path.exists(HISTORIAL_FILE):
         with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
             try:
@@ -50,46 +30,33 @@ if menu == "📈 Ver Dashboard":
                 lista = []
                 for id_prod, hist in data.items():
                     parts = id_prod.split("_")
-                    # Buscamos la URL original que registraste
-                    link_info = config.get(id_prod, {"url": "#"})
-                    
                     lista.append({
                         "Tienda": parts[0],
                         "Producto": parts[1].replace("-", " "),
-                        "Talla": parts[2] if len(parts) > 2 else "N/A",
-                        "Precio": f"S/. {list(hist.values())[-1]}",
-                        "Link": link_info["url"]
+                        "Precio": f"S/. {list(hist.values())[-1]}"
                     })
-                
-                df = pd.DataFrame(lista)
-                if not df.empty:
-                    st.data_editor(
-                        df,
-                        column_config={"Link": st.column_config.LinkColumn("Compra Directa")},
-                        hide_index=True,
-                        use_container_width=True
-                    )
-                else:
-                    st.info("Presiona 'FORZAR ESCANEO' para obtener datos.")
+                st.table(pd.DataFrame(lista))
             except:
-                st.error("Error al procesar el archivo de historial.")
+                st.error("Error leyendo datos.")
     else:
-        st.info("No hay datos históricos. Agrega productos y presiona 'FORZAR ESCANEO'.")
+        st.info("Presiona 'FORZAR ESCANEO' en el menú lateral.")
 
-# --- PANTALLA: GESTIÓN ---
+# --- GESTIÓN ---
 elif menu == "🛠️ Gestionar Enlaces":
     st.title("🛠️ Gestionar Enlaces Pro")
     with st.container(border=True):
-        c1, c2 = st.columns(2)
-        tienda = c1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley"])
-        url = c2.text_input("URL del producto")
-        c3, c4 = st.columns(2)
-        nombre = c3.text_input("Nombre (Sin espacios)")
-        talla = c4.text_input("Talla")
+        col1, col2 = st.columns(2)
+        tienda = col1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley"])
+        url = col2.text_input("URL exacta")
+        nombre = st.text_input("Nombre (Sin espacios)")
         
-        if st.button("💾 GUARDAR", type="primary"):
-            linea = f"{url},100,{tienda}_{nombre.replace(' ', '-')}_{talla}\n"
+        if st.button("💾 GUARDAR"):
             with open(URLS_FILE, "a") as f:
-                f.write(linea)
-            st.success("✅ Guardado correctamente.")
+                f.write(f"{url},100,{tienda}_{nombre}_M\n")
+            st.success("✅ Guardado.")
             st.rerun()
+
+    st.subheader("📋 Lista Actual")
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r") as f:
+            st.code(f.read())
