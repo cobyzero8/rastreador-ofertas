@@ -1,78 +1,50 @@
 import streamlit as st
+import pandas as pd
 import json
 import os
-import pandas as pd
 
-st.set_page_config(page_title="Radar Pro - Panel Central", layout="wide")
+st.set_page_config(page_title="Radar Pro - Panel", layout="wide")
 
-URLS_FILE = "urls.txt"
-HISTORIAL_FILE = "historial_precios.json"
+st.title("🕵️‍♂️ Radar Familiar Pro")
 
-# --- SIDEBAR: CONTROL MAESTRO ---
-with st.sidebar:
-    st.header("⚙️ Control Maestro")
-    
-    # FORZAR ESCANEO (Sin importar archivos, solo un trigger)
-    if st.button("🚀 FORZAR ESCANEO", use_container_width=True):
-        with st.spinner("Ejecutando proceso de fondo..."):
-            # Escribimos un archivo 'trigger' que tu script de robot debe detectar
-            with open("trigger_scan.txt", "w") as f:
-                f.write("run")
-            st.success("✅ ¡Orden enviada!")
-            st.rerun()
+# Navegación
+menu = st.sidebar.radio("Navegación", ["📈 Dashboard", "🛠️ Configuración"])
 
-    st.write("---")
-    menu = st.radio("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces"])
-
-# --- DASHBOARD ---
-if menu == "📈 Ver Dashboard":
-    st.title("📈 Dashboard de Ofertas")
-    if os.path.exists(HISTORIAL_FILE):
-        with open(HISTORIAL_FILE, "r") as f:
+if menu == "📈 Dashboard":
+    st.subheader("📊 Artículos bajo vigilancia")
+    if os.path.exists("historial_precios.json"):
+        with open("historial_precios.json", "r") as f:
             data = json.load(f)
             
-            # Cargar links para el cruce de datos
+            # Cargamos enlaces para el cruce
             links = {}
-            if os.path.exists(URLS_FILE):
-                with open(URLS_FILE, "r") as f:
+            if os.path.exists("urls.txt"):
+                with open("urls.txt", "r") as f:
                     for l in f.readlines():
                         p = l.strip().split(",")
                         if len(p) >= 3: links[p[2]] = p[0]
-            
+
             rows = []
             for id_prod, hist in data.items():
                 p = id_prod.split("_")
                 rows.append({
-                    "Tienda": p[0], 
-                    "Producto": p[1].replace("-", " "), 
-                    "Precio": f"S/. {list(hist.values())[-1]}", 
+                    "Producto": p[1].replace("-", " "),
+                    "Precio": f"S/. {list(hist.values())[-1]}",
                     "Link": links.get(id_prod, "#")
                 })
             
             if rows:
-                st.data_editor(pd.DataFrame(rows), column_config={"Link": st.column_config.LinkColumn()}, use_container_width=True)
+                df = pd.DataFrame(rows)
+                st.data_editor(df, column_config={"Link": st.column_config.LinkColumn()}, use_container_width=True)
             else:
-                st.info("Aún no hay datos.")
-    else:
-        st.info("El robot aún no ha generado datos. Presiona 'FORZAR ESCANEO'.")
+                st.info("El robot aún no ha escaneado datos.")
 
-# --- GESTIÓN ---
-elif menu == "🛠️ Gestionar Enlaces":
-    st.title("🛠️ Gestionar Enlaces")
-    with st.form("nuevo_link"):
-        c1, c2 = st.columns(2)
-        tienda = c1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley"])
-        url = c2.text_input("URL exacta")
+elif menu == "🛠️ Configuración":
+    st.subheader("➕ Agregar Nuevo Producto")
+    with st.form("nuevo"):
         nombre = st.text_input("Nombre (Sin espacios)")
-        talla = st.text_input("Talla")
-        
-        if st.form_submit_button("💾 GUARDAR"):
-            with open(URLS_FILE, "a") as f:
-                f.write(f"{url},100,{tienda}_{nombre}_{talla}\n")
-            st.success("¡Guardado!")
-            st.rerun()
-
-    st.subheader("📋 Enlaces actuales")
-    if os.path.exists(URLS_FILE):
-        with open(URLS_FILE, "r") as f:
-            st.code(f.read())
+        url = st.text_input("URL")
+        if st.form_submit_button("Guardar"):
+            with open("urls.txt", "a") as f:
+                f.write(f"{url},100,Tienda_{nombre}_M\n")
+            st.success("Guardado.")
