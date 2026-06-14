@@ -8,13 +8,23 @@ st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# --- SIDEBAR ---
+# --- SIDEBAR: CONTROL MAESTRO ---
 with st.sidebar:
     st.title("⚙️ Control Maestro")
+    
+    # Este botón ahora tiene feedback visual profesional
     if st.button("💥 FORZAR ESCANEO", use_container_width=True):
-        st.warning("Ejecutando escaneo...")
-        os.system("python scraper.py")
-        st.success("Escaneo terminado.")
+        # 1. Mensaje mientras trabaja
+        with st.spinner("🚀 Ejecutando rastreo intensivo... Esto puede tomar unos segundos."):
+            # Aquí llamamos a la función de escaneo
+            resultado = os.system("python scraper.py")
+            
+            # 2. Mensaje de confirmación o error
+            if resultado == 0:
+                st.success("✅ ¡Escaneo terminado con éxito! Revisa los resultados en el Dashboard.")
+            else:
+                st.error("❌ Hubo un problema al ejecutar el escaneo. Revisa los logs.")
+    
     st.write("---")
     menu = st.radio("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces"])
 
