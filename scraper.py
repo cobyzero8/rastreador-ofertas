@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import time
 import json
 import re
+from datetime import datetime
 
 # ===== TUS CREDENCIALES DE TELEGRAM =====
 TOKEN_REAL = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
@@ -74,7 +75,7 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
                         if precio_num <= limite_precio:
                             productos_encontrados.append({"nombre": nombre, "precio": precio_num, "texto": precio_texto})
 
-        # 🟢 MOTOR 2: FALABELLA (Inyección de datos crudos estructurados)
+        # 🟢 MOTOR 2: FALABELLA
         elif "falabella.com" in url:
             script_datos = soup.find('script', id='__NEXT_DATA__')
             if script_datos:
@@ -83,7 +84,6 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
                     items = datos_json['props']['pageProps']['results']
                     for item in items:
                         nombre = item.get('displayName', '').strip()
-                        # Buscamos el precio más bajo disponible (oferta o tarjeta)
                         precios = item.get('prices', [])
                         if precios and nombre:
                             precio_minimo = min([int(p['price'][0].replace('.', '').replace(',', '')) for p in precios if p.get('price')])
@@ -94,7 +94,6 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
 
         # 🟢 MOTOR 3: RIPLEY
         elif "ripley.com" in url:
-            # Ripley inyecta sus productos en una variable global de javascript llamada __PRELOADED_STATE__
             scripts = soup.find_all('script')
             for s in scripts:
                 if s.string and "__PRELOADED_STATE__" in s.string:
@@ -107,7 +106,7 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
                                 nombre = item.get('name', '').strip()
                                 precio_oferta = item.get('prices', {}).get('offer', 0) or item.get('prices', {}).get('card', 0)
                                 if precio_oferta and nombre:
-                                    precio_num = int(precio_oferta / 100) # Ripley guarda decimales pegados
+                                    precio_num = int(precio_oferta / 100)
                                     if precio_num <= limite_precio:
                                         productos_encontrados.append({"nombre": nombre, "precio": precio_num, "texto": f"S/. {precio_num}"})
                         except Exception as e:
@@ -119,13 +118,14 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
         return []
 
 def revisar_ofertas():
-    print("🚀 Iniciando rastreador Multi-Retailer Avanzado (Falabella/Ripley/Adidas)...")
+    print("🚀 Iniciando rastreador Multi-Retailer con Historial Temporal...")
     
     if not os.path.exists("urls.txt"):
         print("Error: No existe urls.txt")
         return
 
     historial = cargar_historial()
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d") # Fecha actual para el registro
     alertas_baja_precio = ""
     hubo_baja = False
     
@@ -170,9 +170,22 @@ def revisar_ofertas():
                 id_producto = f"{nombre_seccion}_{p['nombre']}"
                 precio_actual = p['precio']
                 
+                # --- SOLUCIÓN INGENIERIL: ESTRUCTURA CRONOLÓGICA ---
+                # Si el producto ya existía en el historial
                 if id_producto in historial:
-                    precio_anterior = historial[id_producto]
+                    registro_previo = historial[id_producto]
                     
+                    # Si tiene el formato antiguo de precio plano, lo migramos al formato nuevo
+                    if not isinstance(registro_previo, dict):
+                        historial[id_producto] = {"2026-06-13": registro_previo}
+                        registro_previo = historial[id_producto]
+                    
+                    # Obtenemos el último precio registrado antes de hoy
+                    fechas_ordenadas = sorted(registro_previo.keys())
+                    ultima_fecha = fechas_ordenadas[-1]
+                    precio_anterior = registro_previo[ultima_fecha]
+                    
+                    # Si el precio bajó respecto al último control, disparamos Telegram
                     if precio_actual < precio_anterior:
                         hubo_baja = True
                         alertas_baja_precio += (
@@ -183,10 +196,14 @@ def revisar_ofertas():
                             f"🔗 [Ir a la Oferta]({url_paginada})\n\n"
                             f"--- \n\n"
                         )
+                else:
+                    # Si es un producto nuevo, inicializamos su diccionario temporal
+                    historial[id_producto] = {}
                 
-                historial[id_producto] = precio_actual
+                # Guardamos el precio de hoy dentro de su historial de fechas
+                historial[id_producto][fecha_hoy] = precio_actual
             
-            time.sleep(5) # Pausa técnica anti-bloqueo entre páginas
+            time.sleep(5)
         time.sleep(5) 
     
     guardar_historial(historial)
@@ -194,7 +211,7 @@ def revisar_ofertas():
     if hubo_baja:
         enviar_telegram(alertas_baja_precio)
     else:
-        print("\nEl robot terminó con éxito. Todo el catálogo multi-retailer está analizado.")
+        print("\nEl robot terminó con éxito. Todo el catálogo se encuentra mapeado y actualizado por fecha.")
 
 if __name__ == "__main__":
     revisar_ofertas()
