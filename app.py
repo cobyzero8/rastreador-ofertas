@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import os
 import pandas as pd
+from datetime import datetime
 
 st.set_page_config(
     page_title="CobyZero8 - Radar App",
@@ -37,7 +38,7 @@ st.title("🕵️‍♂️ CobyZero8 - Radar & Panel de Control")
 st.markdown("---")
 
 # Menú lateral para navegar en la App
-menu = st.sidebar.selectbox("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces (Anti-Caídas)"])
+menu = st.sidebar.selectbox("Navegación", ["📈 Ver Dashboard", "📊 Gráficos de Tendencia", "🛠️ Gestionar Enlaces (Anti-Caídas)"])
 
 # ====== VISTA 1: EL DASHBOARD ======
 if menu == "📈 Ver Dashboard":
@@ -54,10 +55,17 @@ if menu == "📈 Ver Dashboard":
             else:
                 seccion, nombre_producto = "General", clave
             
+            # Si el historial guarda un diccionario con fechas, tomamos el último precio conocido
+            if isinstance(precio, dict):
+                ultimo_par de_fechas = sorted(precio.keys())[-1]
+                precio_final = precio[ultimo_par_de_fechas]
+            else:
+                precio_final = precio
+                
             lista_productos.append({
                 "Tienda/Sección": seccion,
                 "Producto": nombre_producto,
-                "Precio S/.": float(precio) if isinstance(precio, (int, float)) else precio
+                "Precio S/.": float(precio_final) if isinstance(precio_final, (int, float)) else precio_final
             })
         
         df = pd.DataFrame(lista_productos)
@@ -68,14 +76,67 @@ if menu == "📈 Ver Dashboard":
         
         st.dataframe(df, use_container_width=True)
 
-# ====== VISTA 2: GESTIÓN DE ENLACES ======
+# ====== VISTA 2: GRÁFICOS DE TENDENCIA (¡LO NUEVO!) ======
+elif menu == "📊 Gráficos de Tendencia":
+    st.subheader("📉 Análisis de Historial de Precios")
+    st.write("Selecciona un producto para verificar si su precio actual es una verdadera oferta o si está inflado.")
+    
+    datos = cargar_historial()
+    
+    if not datos:
+        st.info("⌛ No hay datos históricos suficientes para dibujar tendencias.")
+    else:
+        # Extraer lista limpia de productos disponibles para el selector
+        opciones_productos = list(datos.keys())
+        producto_seleccionado = st.selectbox("🔍 Selecciona el producto a analizar:", opciones_productos)
+        
+        if producto_seleccionado:
+            registro_precio = datos[producto_seleccionado]
+            
+            # Verificamos si los datos tienen estructura de fechas (Evolución Temporal)
+            if isinstance(registro_precio, dict):
+                # Creamos la tabla de tiempos
+                df_tiempo = pd.DataFrame(list(registro_precio.items()), columns=["Fecha", "Precio (S/.)"])
+                df_tiempo = df_tiempo.sort_values(by="Fecha")
+                
+                # Renderizar métricas clave de análisis
+                precios_numericos = pd.to_numeric(df_tiempo["Precio (S/.)"], errors='coerce')
+                precio_min = precios_numericos.min()
+                precio_max = precios_numericos.max()
+                precio_actual = precios_numericos.iloc[-1]
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("💰 Precio Actual", f"S/. {precio_actual}")
+                c2.metric("🟢 El más bajo registrado", f"S/. {precio_min}")
+                c3.metric("🔴 El más alto registrado", f"S/. {precio_max}")
+                
+                # Validar de forma inteligente el estado de la oferta
+                if precio_actual <= precio_min and precio_min != precio_max:
+                    st.success("🔥 ¡Ganga confirmada! Este producto está en su punto histórico más bajo.")
+                elif precio_actual >= precio_max and precio_min != precio_max:
+                    st.error("⚠️ Alerta: El precio está inflado. Te sugerimos esperar a que baje.")
+                else:
+                    st.info("⚖️ Precio estable: Se mantiene dentro del promedio habitual de mercado.")
+                
+                # Dibujar gráfico de líneas interactivo
+                st.markdown("#### 📈 Evolución del precio en el tiempo")
+                st.line_chart(df_tiempo.set_index("Fecha")["Precio (S/.)"])
+            else:
+                # Si el JSON solo tiene un precio plano (primer registro), creamos una simulación base inicial
+                fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+                st.warning("📊 El robot acaba de registrar este producto por primera vez. La línea de tendencia se irá dibujando automáticamente de forma diaria en las siguientes ejecuciones.")
+                
+                c1, c2 = st.columns(2)
+                c1.metric("💰 Precio Inicial", f"S/. {registro_precio}")
+                c2.metric("📅 Registrado el", fecha_hoy)
+
+# ====== VISTA 3: GESTIÓN DE ENLACES ======
 elif menu == "🛠️ Gestionar Enlaces (Anti-Caídas)":
     st.subheader("🔗 Administrador Remoto de URLs")
     st.write("Si una página cambia de dirección o se actualiza, edítala o cámbiala aquí desde tu celular.")
     
     lineas_actuales = cargar_urls()
     
-    # Formulario para AGREGAR o REEMPLAZAR un enlace
     with st.form("form_url"):
         st.markdown("### ➕ Registrar / Actualizar Enlace")
         nueva_url = st.text_input("Pegar URL de la tienda:")
@@ -85,19 +146,16 @@ elif menu == "🛠️ Gestionar Enlaces (Anti-Caídas)":
         boton_guardar = st.form_submit_button("Guardar en el Sistema")
         
         if boton_guardar and nueva_url and nuevo_nombre:
-            # Reemplazar espacios por guiones bajos para no romper el historial
             nombre_limpio = nuevo_nombre.replace(" ", "_")
             nueva_linea = f"{nueva_url},{nuevo_limite},{nombre_limpio}"
             
-            # Filtramos si ya existía una sección con ese nombre para actualizarla
             lineas_filtradas = [l for l in lineas_actuales if not l.endswith(nombre_limpio)]
             lineas_filtradas.append(nueva_linea)
             
             guardar_urls(lineas_filtradas)
-            st.success(f"✅ ¡Enlace de '{nombre_limpio}' guardado con éxito! El robot lo leerá en su próxima vuelta.")
+            st.success(f"✅ ¡Enlace de '{nombre_limpio}' guardado con éxito!")
             st.rerun()
 
-    # Mostrar lista actual con opción de borrar enlaces caídos
     st.markdown("### 📋 Enlaces actualmente activos en tu Robot")
     for i, linea in enumerate(lineas_actuales):
         partes = linea.split(",")
