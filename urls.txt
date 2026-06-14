@@ -1,1 +1,15 @@
-
+https://www.adidas.pe/zapatillas-mujer?sort=price-low-to-high&v_size_es_pe=us_5.5,150,Adidas Zapatillas Mujer 5.5US
+https://www.adidas.pe/zapatillas-ninos?sort=price-low-to-high&v_size_es_pe=us_1.5,150,Adidas Zapatillas Niños 1.5US
+https://www.adidas.pe/zapatillas-hombre?sort=price-low-to-high&v_size_es_pe=us_7|us_9.5,150,Adidas Zapatillas Hombre 7-9.5US
+https://www.triathlon.com.pe/zapatillas?_q=zapatillas&map=brand,brand,brand,talla,talla,talla,talla,tipo-de-producto&order=OrderByPriceASC&query=/adidas/nike/puma/2-us/5-5-us/7-us/9-5-us/zapatillas,150,Triathlon Catálogo Zapatillas
+https://www.triathlon.com.pe/ofertas?map=brand,brand,brand,talla,talla,talla,talla,productclusternames,tipo-de-producto&order=OrderByPriceASC&query=/adidas/nike/puma/2-us/5-5-us/7-us/9-5-us/ofertas/zapatillas,150,Triathlon Sección Ofertas
+https://www.marathon.store/pe/search?sort=price-asc&q=zapatillas:relevance:brand:M001:brand:M002:brand:M003:brand:M006:sizeFootwear:H%7C7:sizeFootwear:H%7C9.5:sizeFootwear:M%7C5.5:sizeFootwear:JUN%7C2,150,Marathon Zapatillas Combinadas
+https://www.falabella.com.pe/falabella-pe/search?Ntt=Zapatillas&sortBy=derived.price.search%2Casc&f.product.brandName=adidas%3A%3Anike%3A%3Apuma&f.variant.attribute.size=1.5+us%3A%3A5.5+us%3A%3A7+us%3A%3A9.5+us,150,Falabella Zapatillas Multimarca
+https://platanitos.com/pe/productos/categoria/hombres/zapatos?filter_sizes[]=7&filter_sizes[]=9.5&sort=price+asc&filter_brand[]=adidas&filter_brand[]=Nike&filter_brand[]=Puma,150,Platanitos Zapatillas Hombre
+https://platanitos.com/pe/productos/categoria/mujeres/zapatos?filter_sizes[]=5.5&sort=price+asc&filter_brand[]=adidas&filter_brand[]=Puma&filter_brand[]=Nike,150,Platanitos Zapatillas Mujer
+https://platanitos.com/pe/productos/categoria/ninas?filter_sizes[]=1.5&sort=price+asc&filter_brand[]=adidas,150,Platanitos Zapatillas Niñas
+https://simple.ripley.com.pe/calzado/marcas-zapatillas/ver-todo?brand=ADIDAS&brand=NIKE&brand=PUMA&facets=Talla+calzado%3A1.5&facets=Talla+calzado%3A5.5&facets=Talla+calzado%3A7&facets=Talla+calzado%3A9.5&orderBy=price_asc,150,Ripley Zapatillas Multimarca
+https://pe.puma.com/pe/es/search-results?q=zapatillas&filter[sizes]=9.5%2C2%2C7%2C5.5&orderType=PRICE_ASC,150,Puma Tienda Oficial
+https://www.nike.com.pe/search?q=zapatillas&prefn1=size&prefv1=2%7C5.5%7C7%7C9.5,150,Nike Tienda Oficial
+https://www.oechsle.pe/zapatillas?fq=C%3A%2F1223006%2F&fq=specificationFilter_10054%3A2&fq=specificationFilter_10054%3A2+US&fq=specificationFilter_10054%3A1.5+US&fq=specificationFilter_10054%3A5.5+US&fq=specificationFilter_10054%3A7+US&fq=specificationFilter_10054%3A9.5+US&fq=B%3A1033&fq=B%3A925&fq=B%3A844&O=OrderByPriceASC,150,Oechsle Zapatillas Multimarca
+https://listado.mercadolibre.com.pe/ropa-accesorios/calzado/zapatillas/adidas/nuevo/zapatillas_OrderId_PRICE_NoIndex_True,150,MercadoLibre Adidas Nuevos
