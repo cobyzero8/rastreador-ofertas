@@ -2,6 +2,18 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import time
+
+def cargar_urls():
+    if os.path.exists(URLS_FILE):
+        # Intentamos leer hasta 3 veces antes de rendirnos
+        for _ in range(3):
+            try:
+                with open(URLS_FILE, "r", encoding="utf-8") as f:
+                    return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
+            except Exception:
+                time.sleep(0.5) # Espera medio segundo si está bloqueado
+    return []
 
 def mostrar_dashboard():
     st.subheader("📊 Monitoreo de Ofertas en Tiempo Real")
