@@ -1,37 +1,38 @@
 name: Ejecutor de Rastreador de Ofertas
 
 on:
+  workflow_dispatch: # Te permite seguir lanzándolo manualmente desde la web o la app
   schedule:
-    # Corre automáticamente en la hora de Perú a las:
-    # 6:00 AM, 12:00 PM, 6:00 PM y 10:00 PM (Traducido a formato UTC)
-    - cron: '0 11,17,23,3 * * *'
-  workflow_dispatch: # Mantiene activo tu botón manual por si quieres forzar la revisión
+    # Programación inteligente en hora UTC (Restar 5 horas para obtener la hora de Perú)
+    # Corre a la medianoche, a las 6 AM, a las 12 PM y a las 8 PM (Horas clave de cambio de precios)
+    - cron: '0 5,11,17,1' 
 
 jobs:
   ejecutar-script:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Descargar mi código
+    - name: Post descargar mi código
       uses: actions/checkout@v4
 
-    - name: Configurar Entorno Python
+    - name: Post Configurar Entorno Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-python-version: '3.10'
 
     - name: Instalar herramientas necesarias
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install requests beautifulsoup4 pandas
 
     - name: Correr Rastreador y Enviar Mensaje
-      run: python scraper.py
-
-    # ESTO PERMITE AL ROBOT GUARDAR EL HISTORIAL DE PRECIOS EN TU REPOSITORIO
-    - name: Guardar Historial de Precios Actualizado
+      env:
+        PYTHONUNBUFFERED: "1"
       run: |
-        git config --global user.name "Bot de Ofertas"
-        git config --global user.email "bot@ofertas.com"
-        git add historial_precios.json || true
-        git commit -m "Actualizar historial de precios [skip ci]" || true
-        git push || true
+        python scraper.py
+
+    - name: Guardar Historial de Precios Actualizado
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "🤖 Radar actualizó base de datos cronológica [CyberDays Mode]"
+        file_pattern: 'historial_precios.json'
