@@ -39,7 +39,7 @@ def guardar_historial(historial):
         print(f"Error al guardar historial: {e}")
 
 def escanear_seccion(url, limite_precio, nombre_seccion):
-    print(f"🕵️‍♂️ Analizando: {nombre_seccion}...")
+    print(f"🕵️‍♂️ Analizando página: {url}...")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -75,7 +75,7 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
         return []
 
 def revisar_ofertas():
-    print("🚀 Iniciando rastreador con memoria histórica...")
+    print("🚀 Iniciando rastreador multidominio con paginación activa (4 páginas)...")
     
     if not os.path.exists("urls.txt"):
         print("Error: No existe urls.txt")
@@ -94,40 +94,66 @@ def revisar_ofertas():
             continue
             
         partes = linea.split(",")
-        url = partes[0].strip()
+        url_base = partes[0].strip()
         presupuesto_max = int(partes[1].strip())
         nombre_seccion = partes[2].strip()
         
-        productos = escanear_seccion(url, presupuesto_max, nombre_seccion)
+        print(f"\n📂 Iniciando rastreo profundo de 4 páginas para: {nombre_seccion}")
         
-        for p in productos:
-            id_producto = f"{nombre_seccion}_{p['nombre']}"
-            precio_actual = p['precio']
+        # Bucle para recorrer de la página 1 a la 4
+        for pagina in range(1, 5):
+            url_paginada = url_base
             
-            if id_producto in historial:
-                precio_anterior = historial[id_producto]
+            # Formateador inteligente de URLs según la tienda
+            if pagina > 1:
+                if "samsung.com" in url_base:
+                    # Samsung avanza agregando /page/2/ antes de los parámetros de búsqueda o al final
+                    if "?" in url_base:
+                        url_paginada = url_base.replace("?", f"page/{pagina}/?")
+                    else:
+                        url_paginada = f"{url_base.rstrip('/')}/page/{pagina}/"
+                elif "adidas.pe" in url_base or "puma.com" in url_base or "ripley.com" in url_base:
+                    conector = "&" if "?" in url_base else "?"
+                    url_paginada = f"{url_base}{conector}page={pagina}"
+                elif "platanitos.com" in url_base:
+                    conector = "&" if "?" in url_base else "?"
+                    url_paginada = f"{url_base}{conector}pag={pagina}"
+                elif "falabella.com" in url_base:
+                    conector = "&" if "?" in url_base else "?"
+                    url_paginada = f"{url_base}{conector}page={pagina}"
+            
+            productos = escanear_seccion(url_paginada, presupuesto_max, f"{nombre_seccion} Pág.{pagina}")
+            
+            for p in productos:
+                id_producto = f"{nombre_seccion}_{p['nombre']}"
+                precio_actual = p['precio']
                 
-                # Alerta si detecta que el precio bajó en comparación a la última revisión
-                if precio_actual < precio_anterior:
-                    hubo_baja = True
-                    alertas_baja_precio += (
-                        f"📉 *¡BAJÓ DE PRECIO INMEDIATO!* 📉\n"
-                        f"📦 *Producto:* {p['nombre']}\n"
-                        f"💰 *Antes:* S/. {precio_anterior} ➡️ *Ahora:* {p['texto']}\n"
-                        f"🏷️ *Sección:* {nombre_seccion}\n"
-                        f"🔗 [Ir a la Oferta]({url})\n\n"
-                    )
+                if id_producto in historial:
+                    precio_anterior = historial[id_producto]
+                    
+                    if precio_actual < precio_anterior:
+                        hubo_baja = True
+                        alertas_baja_precio += (
+                            f"📉 *¡BAJÓ DE PRECIO INMEDIATO!* 📉\n"
+                            f"📦 *Producto:* {p['nombre']}\n"
+                            f"💰 *Antes:* S/. {precio_anterior} ➡️ *Ahora:* {p['texto']}\n"
+                            f"🏷️ *Sección:* {nombre_seccion} (Pág. {pagina})\n"
+                            f"🔗 [Ir a la Oferta]({url_paginada})\n\n"
+                            f"--- \n\n"
+                        )
+                
+                historial[id_producto] = precio_actual
             
-            historial[id_producto] = precio_actual
+            time.sleep(3) # Pausa breve entre páginas para no saturar el servidor
         
-        time.sleep(4) # Pausa de seguridad
+        time.sleep(4) # Pausa de seguridad entre secciones diferentes
     
     guardar_historial(historial)
     
     if hubo_baja:
         enviar_telegram(alertas_baja_precio)
     else:
-        print("El robot terminó. No se detectaron caídas de precio en esta revisión.")
+        print("\nEl robot terminó. No se detectaron caídas de precio en esta revisión profunda.")
 
 if __name__ == "__main__":
     revisar_ofertas()
