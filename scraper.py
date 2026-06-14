@@ -11,6 +11,14 @@ ID_REAL = "8019752668"
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
+# ... dentro del bucle de productos en escanear_tienda ...
+# En lugar de solo guardar nombre y precio, guardaremos:
+productos_encontrados.append({
+    "nombre": nombre,
+    "precio": int(p_num),
+    "link": url_producto_encontrado, # Necesitas capturar el href de la tarjeta
+    "foto": url_imagen_encontrada    # Necesitas capturar el src de la imagen
+})
 def enviar_telegram_con_botones(mensaje, url_tienda, tienda_nombre):
     """Envía un reporte premium con botones interactivos directamente al chat"""
     url = f"https://api.telegram.org/bot{TOKEN_REAL}/sendMessage"
