@@ -8,25 +8,12 @@ st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# --- SIDEBAR: CONTROL MAESTRO ---
-with st.sidebar:
-    st.title("⚙️ Control Maestro")
-    
-    # Este botón ahora tiene feedback visual profesional
-    if st.button("💥 FORZAR ESCANEO", use_container_width=True):
-        # 1. Mensaje mientras trabaja
-        with st.spinner("🚀 Ejecutando rastreo intensivo... Esto puede tomar unos segundos."):
-            # Aquí llamamos a la función de escaneo
-            resultado = os.system("python scraper.py")
-            
-            # 2. Mensaje de confirmación o error
-            if resultado == 0:
-                st.success("✅ ¡Escaneo terminado con éxito! Revisa los resultados en el Dashboard.")
-            else:
-                st.error("❌ Hubo un problema al ejecutar el escaneo. Revisa los logs.")
-    
-    st.write("---")
-    menu = st.radio("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces"])
+# Cambia esto:
+with open("urls.txt", "r") as f:
+# Por esto (ruta absoluta):
+script_dir = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(script_dir, "urls.txt")
+with open(file_path, "r") as f:
 
 # --- DASHBOARD ---
 if menu == "📈 Ver Dashboard":
