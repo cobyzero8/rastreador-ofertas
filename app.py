@@ -1,72 +1,61 @@
 import streamlit as st
-import pandas as pd
 import json
 import os
-import time
+import pandas as pd
+import requests
 
-# BOTÓN DE PROCESAMIENTO BLINDADO
-    if st.button("🚀 AÑADIR AL RADAR", type="primary"):
-        if nueva_url and seccion_nom:
-            # Procesamiento lógico
-            identificador = f"{tienda_sel}_{seccion_nom.replace(' ', '_')}_{talla_filtro.upper()}"
-            nueva_linea = f"{nueva_url.strip()},{int(nuevo_limite)},{identificador}"
-            
-            # Guardado seguro
-            lineas = cargar_urls()
-            lineas.insert(0, nueva_linea)
-            guardar_urls(lineas)
-            
-            # EN LUGAR DE RERUN(), usamos una bandera para refrescar de forma limpia
-            st.session_state.mensaje_exito = "✅ Guardado con éxito"
-            st.rerun()
+st.set_page_config(page_title="CobyZero8 - Radar Familiar Pro", page_icon="🕵️‍♂️", layout="wide")
+
+HISTORIAL_FILE = "historial_precios.json"
+URLS_FILE = "urls.txt"
+
+# INICIALIZACIÓN DE ESTADO
+if "reset_key" not in st.session_state:
+    st.session_state.reset_key = 0
+
 def cargar_urls():
     if os.path.exists(URLS_FILE):
-        # Intentamos leer hasta 3 veces antes de rendirnos
-        for _ in range(3):
-            try:
-                with open(URLS_FILE, "r", encoding="utf-8") as f:
-                    return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
-            except Exception:
-                time.sleep(0.5) # Espera medio segundo si está bloqueado
+        with open(URLS_FILE, "r", encoding="utf-8") as f:
+            return [linea.strip() for linea in f.readlines() if linea.strip() and "," in linea]
     return []
 
-def mostrar_dashboard():
-    st.subheader("📊 Monitoreo de Ofertas en Tiempo Real")
-    
-    if not os.path.exists("historial_precios.json"):
-        st.info("⏳ Base de datos inicializada. Esperando que el robot cargue información.")
-        return
+def guardar_urls(lista_lineas):
+    with open(URLS_FILE, "w", encoding="utf-8") as f:
+        for linea in lista_lineas:
+            f.write(f"{linea}\n")
 
-    with open("historial_precios.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+st.title("🕵️‍♂️ CobyZero8 - Radar Familiar Pro")
+
+menu = st.sidebar.selectbox("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro"])
+
+if menu == "📈 Ver Dashboard":
+    st.subheader("📊 Monitoreo de Ofertas")
+    if os.path.exists(HISTORIAL_FILE):
+        with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            lista = []
+            for id_prod, hist in data.items():
+                tienda, cat, talla, nombre = id_prod.split("_", 3)
+                lista.append({"Tienda": tienda, "Producto": nombre.replace("_", " "), "Precio": list(hist.values())[-1]})
+            st.dataframe(pd.DataFrame(lista), use_container_width=True)
+
+elif menu == "🛠️ Gestionar Enlaces Pro":
+    st.subheader("🔗 Administrador Avanzado")
+    suffix = str(st.session_state.reset_key)
     
-    # Convertimos los datos del historial a un formato que Streamlit pueda mostrar en tabla
-    lista_productos = []
-    for id_prod, historico in data.items():
-        tienda, cat, talla, nombre = id_prod.split("_", 3)
-        ultimos_precios = list(historico.values())
-        precio_actual = ultimos_precios[-1]
-        
-        lista_productos.append({
-            "Tienda": tienda.upper(),
-            "Producto": nombre.replace("_", " "),
-            "Talla": talla,
-            "Precio": f"S/. {precio_actual}",
-            "Historial": ultimos_precios
-        })
-    
-    df = pd.DataFrame(lista_productos)
-    
-    # Creamos una columna interactiva con enlace para comprar
-    st.dataframe(
-        df,
-        column_config={
-            "Precio": st.column_config.TextColumn("Precio Actual"),
-            "Historial": st.column_config.LineChartColumn("Tendencia (Últimos días)")
-        },
-        hide_index=True,
-        use_container_width=True
-    )
-    
-    st.write("---")
-    st.write("👉 *Puedes ver el detalle histórico de cada producto en la tabla superior.*")
+    c1, c2 = st.columns(2)
+    tienda = c1.selectbox("Tienda", ["Adidas", "Falabella", "Marathon"], key="t_"+suffix)
+    seccion = c2.text_input("Sección", value="Zapatillas", key="s_"+suffix)
+    url = st.text_input("URL", value="", key="u_"+suffix)
+    c3, c4 = st.columns(2)
+    precio = c3.number_input("Tope", value=100, key="p_"+suffix)
+    talla = c4.text_input("Talla", value="M", key="talla_"+suffix)
+
+    if st.button("🚀 AÑADIR AL RADAR", type="primary"):
+        if url and seccion:
+            lineas = cargar_urls()
+            nueva_linea = f"{url},{precio},{tienda}_{seccion}_{talla}"
+            lineas.insert(0, nueva_linea)
+            guardar_urls(lineas)
+            st.session_state.reset_key += 1
+            st.rerun()
