@@ -39,7 +39,7 @@ def guardar_historial(historial):
         print(f"Error al guardar historial: {e}")
 
 def escanear_seccion(url, limite_precio, nombre_seccion):
-    print(f"🕵️‍♂️ Analizando página: {url}...")
+    print(f"🕵️‍♂️ Analizando: {url}")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -75,7 +75,7 @@ def escanear_seccion(url, limite_precio, nombre_seccion):
         return []
 
 def revisar_ofertas():
-    print("🚀 Iniciando rastreador multidominio con paginación activa (4 páginas)...")
+    print("🚀 Iniciando rastreador optimizado a 2 páginas...")
     
     if not os.path.exists("urls.txt"):
         print("Error: No existe urls.txt")
@@ -98,31 +98,28 @@ def revisar_ofertas():
         presupuesto_max = int(partes[1].strip())
         nombre_seccion = partes[2].strip()
         
-        print(f"\n📂 Iniciando rastreo profundo de 4 páginas para: {nombre_seccion}")
-        
-        # Bucle para recorrer de la página 1 a la 4
-        for pagina in range(1, 5):
+        # Bucle optimizado: solo revisa Página 1 y Página 2
+        for pagina in range(1, 3):
             url_paginada = url_base
             
-            # Formateador inteligente de URLs según la tienda
             if pagina > 1:
+                # Evitamos alterar URLs fijas de buscadores de farmacias que no soportan paginación simple
+                if "mifarma.com" in url_base or "inkafarma.pe" in url_base:
+                    continue # Las farmacias solo las lee una vez para evitar errores
+                
                 if "samsung.com" in url_base:
-                    # Samsung avanza agregando /page/2/ antes de los parámetros de búsqueda o al final
                     if "?" in url_base:
                         url_paginada = url_base.replace("?", f"page/{pagina}/?")
                     else:
                         url_paginada = f"{url_base.rstrip('/')}/page/{pagina}/"
-                elif "adidas.pe" in url_base or "puma.com" in url_base or "ripley.com" in url_base:
+                elif "adidas.pe" in url_base or "puma.com" in url_base or "ripley.com" in url_base or "falabella.com" in url_base:
                     conector = "&" if "?" in url_base else "?"
                     url_paginada = f"{url_base}{conector}page={pagina}"
                 elif "platanitos.com" in url_base:
                     conector = "&" if "?" in url_base else "?"
                     url_paginada = f"{url_base}{conector}pag={pagina}"
-                elif "falabella.com" in url_base:
-                    conector = "&" if "?" in url_base else "?"
-                    url_paginada = f"{url_base}{conector}page={pagina}"
             
-            productos = escanear_seccion(url_paginada, presupuesto_max, f"{nombre_seccion} Pág.{pagina}")
+            productos = escanear_seccion(url_paginada, presupuesto_max, f"{nombre_seccion} P{pagina}")
             
             for p in productos:
                 id_producto = f"{nombre_seccion}_{p['nombre']}"
@@ -144,16 +141,16 @@ def revisar_ofertas():
                 
                 historial[id_producto] = precio_actual
             
-            time.sleep(3) # Pausa breve entre páginas para no saturar el servidor
+            time.sleep(3) # Pausa entre páginas
         
-        time.sleep(4) # Pausa de seguridad entre secciones diferentes
+        time.sleep(4) # Pausa entre tiendas
     
     guardar_historial(historial)
     
     if hubo_baja:
         enviar_telegram(alertas_baja_precio)
     else:
-        print("\nEl robot terminó. No se detectaron caídas de precio en esta revisión profunda.")
+        print("\nEl robot terminó con éxito. Sin caídas de precio en esta ronda de 2 páginas.")
 
 if __name__ == "__main__":
     revisar_ofertas()
