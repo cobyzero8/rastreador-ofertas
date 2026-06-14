@@ -128,6 +128,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
         nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, value=150)
         talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, 5.5US, o dejar 'S_T' si es todo):", "S_T")
         
+        st.markdown("<small>*Nota: Si pones una talla, el bot priorizará notificarte cuando haya rebajas en esa medida exacta.*</small>", unsafe_allow_html=True)
         boton_guardar = st.form_submit_button("Añadir al Radar Familiar")
         
         if boton_guardar and nueva_url and seccion_nom:
