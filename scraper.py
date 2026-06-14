@@ -14,7 +14,8 @@ def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TOKEN_REAL}/sendMessage"
     payload = {"chat_id": ID_REAL, "text": mensaje, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload, timeout=10)
+        res = requests.post(url, json=payload, timeout=10)
+        print(f"Estado Telegram: {res.status_code}")
     except Exception as e:
         print(f"Error Telegram: {e}")
 
@@ -31,72 +32,79 @@ def guardar_historial(historial):
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
         json.dump(historial, f, indent=4)
 
-def procesar_comandos_telegram():
-    print("📥 Consultando órdenes pendientes en Telegram...")
-    url_get_updates = f"https://api.github.com" # Dummy check para limpiar cola rápida si es necesario
-    url_tg = f"https://api.telegram.org/bot{TOKEN_REAL}/getUpdates"
-    try:
-        res = requests.get(url_tg, timeout=10).json()
-        if res.get("ok") and res.get("result"):
-            for update in res["result"]:
-                msg = update.get("message", {})
-                chat_id = str(msg.get("chat", {}).get("id", ""))
-                texto = msg.get("text", "").strip().lower()
-                
-                if chat_id == ID_REAL and texto == "/resumen":
-                    if not os.path.exists(URLS_FILE):
-                        enviar_telegram("📭 Radar sin enlaces registrados.")
-                        return
-                    with open(URLS_FILE, "r", encoding="utf-8") as f:
-                        urls_activas = f.readlines()
-                    
-                    reporte = "📋 *Radares Activos en el Sistema Pro:*\n\n"
-                    for u in urls_activas:
-                        p = u.strip().split(",")
-                        if len(p) == 3:
-                            meta = p[2].split("_")
-                            tienda = meta[0] if len(meta) > 0 else "General"
-                            cat = meta[1] if len(meta) > 1 else "Filtro"
-                            talla = meta[2] if len(meta) > 2 else "Todas"
-                            reporte += f"🔸 *{tienda}* | {cat.replace('_',' ')} (Talla: {talla}) ➡️ Tope: `S/. {p[1]}`\n"
-                    
-                    reporte += "\n⚡ _Robot ejecutado bajo demanda desde el Panel Pro._"
-                    enviar_telegram(reporte)
-            
-            if res["result"]:
-                last_id = res["result"][-1]["update_id"]
-                requests.get(f"{url_tg}?offset={last_id + 1}")
-    except Exception as e:
-        print(f"Error procesando comandos: {e}")
-
 def escanear_tienda(url, limite_precio, tienda, categoria, talla_buscada):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept-Language": "es-ES,es;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"
     }
     productos_encontrados = []
     try:
         respuesta = requests.get(url, headers=headers, timeout=15)
         if respuesta.status_code != 200:
+            print(f"⚠️ {tienda} devolvió código {respuesta.status_code}")
             return []
+            
         soup = BeautifulSoup(respuesta.text, 'html.parser')
+        t_low = tienda.lower()
         
-        # 💥 EXTRACCIÓN DINÁMICA DE PRUEBA (Mantenemos la base estable de Adidas)
-        if "adidas" in url.lower():
-            tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', attrs={"data-glass-item": "product-card"})
+        # 🏢 MOTOR 1: ADIDAS
+        if "adidas" in t_low or "adidas" in url:
+            tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or \
+                       soup.find_all('div', attrs={"data-glass-item": "product-card"}) or \
+                       soup.find_all('div', class_=lambda x: x and 'grid-item' in x)
+                       
             for tarjeta in tarjetas:
-                titulo_reg = tarjeta.find('p') or tarjeta.find(class_=lambda x: x and 'title' in x)
-                precio_reg = tarjeta.find(class_=lambda x: x and 'price' in x)
-                if titulo_reg and precio_reg:
-                    nombre = titulo_reg.text.strip()
-                    numeros = ''.join(filter(str.isdigit, precio_reg.text.strip()))
-                    if numeros:
-                        precio_num = int(numeros)
-                        # Si el precio es menor o igual al presupuesto familiar
-                        if precio_num <= limite_precio:
-                            productos_encontrados.append({
-                                "nombre": nombre,
-                                "precio": precio_num
-                            })
+                tit = tarjeta.find('p') or tarjeta.find(class_=lambda x: x and 'title' in x) or tarjeta.find('span')
+                prc = tarjeta.find(class_=lambda x: x and 'price' in x) or tarjeta.find(class_=lambda x: x and 'sale' in x)
+                if tit and prc:
+                    nombre = tit.text.strip()
+                    nums = ''.join(filter(str.isdigit, prc.text.strip()))
+                    if nums:
+                        p_num = int(nums) / 100 if len(nums) > 4 else int(nums)
+                        if p_num <= limite_precio:
+                            productos_encontrados.append({"nombre": nombre, "precio": int(p_num)})
+
+        # 🏢 MOTOR 2: FALABELLA
+        elif "falabella" in t_low or "falabella" in url:
+            # Falabella usa contenedores tipo grid y clases 'pod-details' o estructuras 'sub-section'
+            tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or \
+                       soup.find_all('div', class_=lambda x: x and 'pod-details' in x) or \
+                       soup.find_all('div', attrs={"id": lambda x: x and 'testId-pod-' in x})
+                       
+            for tarjeta in tarjetas:
+                tit = tarjeta.find('b') or tarjeta.find(class_=lambda x: x and 'pod-title' in x) or tarjeta.find(class_=lambda x: x and 'title' in x)
+                # Buscar precios de oferta (cmr-price o sale-price)
+                prc = tarjeta.find(class_=lambda x: x and 'prices' in x) or tarjeta.find(class_=lambda x: x and 'price' in x) or tarjeta.find(lambda tag: tag.name in ['ol', 'div'] and 'price' in str(tag.get('class', '')))
+                if tit and prc:
+                    nombre = tit.text.strip()
+                    # Extraer el precio más bajo visible en el bloque
+                    text_precio = prc.text.strip()
+                    # Si tiene precio CMR o internet, nos quedamos con el menor numérico
+                    nums_lista = [int(s) for s in text_precio.split() if s.isdigit()]
+                    nums = ''.join(filter(str.isdigit, text_precio))
+                    if nums:
+                        # Control básico para limpiar si junta múltiples precios en texto largo
+                        p_num = int(nums[:4]) if len(nums) > 5 else int(nums)
+                        if p_num <= limite_precio:
+                            productos_encontrados.append({"nombre": nombre, "precio": int(p_num)})
+
+        # 🏢 MOTOR 3: MARATHON
+        elif "marathon" in t_low or "marathon" in url:
+            tarjetas = soup.find_all('div', class_=lambda x: x and 'product-item' in x) or \
+                       soup.find_all('div', class_=lambda x: x and 'productCard' in x)
+                       
+            for tarjeta in tarjetas:
+                tit = tarjeta.find('a', class_=lambda x: x and 'name' in x) or tarjeta.find(class_=lambda x: x and 'title' in x) or tarjeta.find('h3')
+                prc = tarjeta.find(class_=lambda x: x and 'price' in x) or tarjeta.find(class_=lambda x: x and 'best-price' in x)
+                if tit and prc:
+                    nombre = tit.text.strip()
+                    nums = ''.join(filter(str.isdigit, prc.text.strip()))
+                    if nums:
+                        p_num = int(nums) / 100 if len(nums) > 4 else int(nums)
+                        if p_num <= limite_precio:
+                            productos_encontrados.append({"nombre": nombre, "precio": int(p_num)})
+
         return productos_encontrados
     except Exception as e:
         print(f"Error escaneando {tienda}: {e}")
@@ -104,11 +112,11 @@ def escanear_tienda(url, limite_precio, tienda, categoria, talla_buscada):
 
 def revisar_ofertas():
     print("🚀 Iniciando control cronometrado...")
-    procesar_comandos_telegram()
     
     if not os.path.exists(URLS_FILE):
-        print("No hay urls.txt")
+        enviar_telegram("⚠️ El archivo `urls.txt` está vacío. Registra rutas en el panel.")
         return
+        
     historial = cargar_historial()
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
@@ -116,6 +124,7 @@ def revisar_ofertas():
         lineas = f.readlines()
 
     alertas_enviar = []
+    conteo_radares = 0
 
     for linea in lineas:
         linea = linea.strip()
@@ -125,51 +134,46 @@ def revisar_ofertas():
             partes = linea.split(",")
             url_base = partes[0].strip()
             presupuesto_max = int(partes[1].strip())
-            identificador = partes[2].strip() # Formato: Tienda_Categoria_Talla
+            identificador = partes[2].strip()
             
             meta = identificador.split("_")
             tienda = meta[0] if len(meta) > 0 else "General"
             categoria = meta[1] if len(meta) > 1 else "General"
             talla = meta[2] if len(meta) > 2 else "S_T"
             
+            conteo_radares += 1
             productos = escanear_tienda(url_base, presupuesto_max, tienda, categoria, talla)
             
             for p in productos:
-                # Nombre de clave único para la base de datos
-                nombre_limpio_prod = p['nombre'].replace(" ", "_").replace(",", "")
+                nombre_limpio_prod = p['nombre'].replace(" ", "_").replace(",", "").replace("\n", "")
                 id_producto = f"{tienda}_{categoria}_{talla}_{nombre_limpio_prod}"
                 precio_actual = p['precio']
                 
-                # Revisar si es una caída histórica o producto nuevo en oferta
                 es_nuevo = id_producto not in historial
-                
                 if es_nuevo:
                     historial[id_producto] = {}
                 
-                # Guardamos el precio de hoy
                 historial[id_producto][fecha_hoy] = precio_actual
                 
-                # Si es nuevo o bajó de precio respecto a la última fecha, disparamos alerta de Telegram
-                if es_nuevo:
+                if es_nuevo or (list(historial[id_producto].values())[-1] > precio_actual):
                     alertas_enviar.append(
-                        f"🚨 *¡OFERTA DETECTADA EN {tienda.upper()}!*\n"
-                        f"📦 Producto: `{p['nombre']}`\n"
-                        f"👟 Talla: *{talla}*\n"
-                        f"💰 Precio actual: *S/. {precio_actual}*\n"
-                        f"🎯 Presupuesto tope: S/. {presupuesto_max}\n"
+                        f"🏪 *Tienda:* {tienda.upper()}\n"
+                        f"📦 *Producto:* `{p['nombre']}`\n"
+                        f"👟 *Talla:* {talla}\n"
+                        f"💰 *Precio Oferta:* S/. {precio_actual}\n"
+                        f"🎯 *Tu Tope:* S/. {presupuesto_max}\n"
+                        f"🔗 [Ir al enlace]({url_base})\n"
                     )
         except Exception as e:
-            print(f"Error en línea: {e}")
+            print(f"Error procesando línea: {e}")
             continue
             
     guardar_historial(historial)
     
-    # Enviar alertas acumuladas si existen
     if alertas_enviar:
-        enviar_telegram("🔥 ¡Atención! El Radar detectó rebajas que entran en tu presupuesto:\n\n" + "\n".join(alertas_enviar))
-    
-    print("🏁 Ciclo completado con éxito.")
+        enviar_telegram("🔥 *¡El Radar encontró rebajas dentro de tu presupuesto!* 🔥\n\n" + "\n".join(alertas_enviar))
+    else:
+        enviar_telegram(f"✅ *Radar ejecutado con éxito.*\nSe revisaron `{conteo_radares}` enlaces activos, pero ninguno tiene ofertas por debajo de tus topes establecidos. ¡Seguimos vigilando!")
 
 if __name__ == "__main__":
-    revisar_ofertas()
-                             
+    revisar_offers = revisar_ofertas()
