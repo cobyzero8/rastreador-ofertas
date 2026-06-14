@@ -2,79 +2,81 @@ import streamlit as st
 import json
 import os
 import pandas as pd
+from scraper import revisar_ofertas # Importamos directo
 
-# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
+
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# --- LÓGICA DE ESCANEO (INTEGRADA) ---
-def ejecutar_escaneo():
-    try:
-        # Aquí llamaríamos a tu función de scraping real
-        # Por ahora, simulamos la ejecución para no bloquear la app
-        from scraper import revisar_ofertas
-        revisar_ofertas()
-        return True
-    except Exception as e:
-        st.error(f"Error técnico: {e}")
-        return False
-
-# --- SIDEBAR ---
+# --- SIDEBAR: CONTROL MAESTRO ---
 with st.sidebar:
     st.title("⚙️ Control Maestro")
     if st.button("💥 FORZAR ESCANEO", use_container_width=True):
         with st.spinner("🚀 Ejecutando rastreo..."):
-            if ejecutar_escaneo():
-                st.success("✅ Escaneo terminado.")
+            try:
+                revisar_ofertas()
+                st.success("✅ Escaneo terminado con éxito.")
                 st.rerun()
-            else:
-                st.error("❌ Falló el escaneo.")
-
+            except Exception as e:
+                st.error(f"❌ Falló el escaneo: {e}")
+    
     st.write("---")
     menu = st.radio("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces"])
 
-# --- DASHBOARD ---
+# --- LÓGICA DE DICCIONARIO ---
+def obtener_datos_configurados():
+    datos = {}
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r") as f:
+            for line in f.readlines():
+                parts = line.strip().split(",")
+                if len(parts) >= 3:
+                    # ID es Tienda_Nombre_Talla
+                    datos[parts[2]] = {"url": parts[0]}
+    return datos
+
+# --- PANTALLA: DASHBOARD ---
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Radar Familiar Pro")
     st.subheader("📊 Dashboard: Artículos bajo vigilancia")
     
+    config = obtener_datos_configurados()
+    
     if os.path.exists(HISTORIAL_FILE):
         with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Leer URLs para cruzar información
-            urls_map = {}
-            if os.path.exists(URLS_FILE):
-                with open(URLS_FILE, "r") as f:
-                    for l in f.readlines():
-                        p = l.strip().split(",")
-                        if len(p) >= 3: urls_map[p[2]] = p[0]
-
-            lista = []
-            for id_prod, hist in data.items():
-                parts = id_prod.split("_")
-                lista.append({
-                    "Tienda": parts[0],
-                    "Producto": parts[1].replace("-", " "),
-                    "Talla": parts[2] if len(parts) > 2 else "N/A",
-                    "Precio": f"S/. {list(hist.values())[-1]}",
-                    "Link": urls_map.get(id_prod, "#")
-                })
-            
-            if lista:
+            try:
+                data = json.load(f)
+                lista = []
+                for id_prod, hist in data.items():
+                    parts = id_prod.split("_")
+                    # Buscamos la URL original que registraste
+                    link_info = config.get(id_prod, {"url": "#"})
+                    
+                    lista.append({
+                        "Tienda": parts[0],
+                        "Producto": parts[1].replace("-", " "),
+                        "Talla": parts[2] if len(parts) > 2 else "N/A",
+                        "Precio": f"S/. {list(hist.values())[-1]}",
+                        "Link": link_info["url"]
+                    })
+                
                 df = pd.DataFrame(lista)
-                st.data_editor(
-                    df,
-                    column_config={"Link": st.column_config.LinkColumn("Compra Directa")},
-                    hide_index=True,
-                    use_container_width=True
-                )
-            else:
-                st.info("Aún no se han detectado ofertas.")
+                if not df.empty:
+                    st.data_editor(
+                        df,
+                        column_config={"Link": st.column_config.LinkColumn("Compra Directa")},
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.info("Presiona 'FORZAR ESCANEO' para obtener datos.")
+            except:
+                st.error("Error al procesar el archivo de historial.")
     else:
-        st.info("Presiona 'FORZAR ESCANEO' para iniciar.")
+        st.info("No hay datos históricos. Agrega productos y presiona 'FORZAR ESCANEO'.")
 
-# --- GESTIÓN ---
+# --- PANTALLA: GESTIÓN ---
 elif menu == "🛠️ Gestionar Enlaces":
     st.title("🛠️ Gestionar Enlaces Pro")
     with st.container(border=True):
@@ -89,5 +91,5 @@ elif menu == "🛠️ Gestionar Enlaces":
             linea = f"{url},100,{tienda}_{nombre.replace(' ', '-')}_{talla}\n"
             with open(URLS_FILE, "a") as f:
                 f.write(linea)
-            st.success("✅ Guardado.")
+            st.success("✅ Guardado correctamente.")
             st.rerun()
