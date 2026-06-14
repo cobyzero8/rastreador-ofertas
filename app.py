@@ -31,7 +31,7 @@ def guardar_urls(lista_lineas):
         for linea in lista_lineas:
             f.write(f"{linea}\n")
 
-st.title("🕵️‍♂️ CobyZero8 - Radar Familiar & Comparador")
+st.title("🕵️‍♂️ CobyZero8 - Radar Familiar & Panel de Control")
 st.markdown("---")
 
 menu = st.sidebar.selectbox("Navegación", [
@@ -40,16 +40,19 @@ menu = st.sidebar.selectbox("Navegación", [
     "🛠️ Gestionar Enlaces (Anti-Caídas)"
 ])
 
+# ====== VISTA 1: EL DASHBOARD ======
 if menu == "📈 Ver Dashboard":
     st.subheader("📊 Monitoreo en Tiempo Real")
     datos = cargar_historial()
     
     if not datos:
-        st.info("⌛ Base de datos inicializada. Esperando datos del robot.")
+        st.info("⌛ Base de datos inicializada. Esperando que el robot cargue los primeros productos.")
     else:
         lista_productos = []
         for clave, precio in datos.items():
             seccion, nombre_producto = clave.split("_", 1) if "_" in clave else ("General", clave)
+            
+            # Corrección de lectura segura de precios indexados cronológicamente
             if isinstance(precio, dict):
                 fechas_ordenadas = sorted(precio.keys())
                 precio_final = precio[fechas_ordenadas[-1]] if fechas_ordenadas else 0
@@ -68,22 +71,24 @@ if menu == "📈 Ver Dashboard":
         col2.metric("🏪 Categorías activas", df["Sección/Filtro"].nunique())
         st.dataframe(df, use_container_width=True)
 
+# ====== VISTA 2: COMPARADOR INTER-TIENDAS ======
 elif menu == "📊 Comparador Inter-Tiendas":
     st.subheader("⚔️ Comparativa de Tendencias de Mercado")
     datos = cargar_historial()
     
     if not datos:
-        st.info("⌛ No hay datos históricos suficientes.")
+        st.info("⌛ Agrega enlaces y ejecuta el robot para poblar las gráficas comparativas.")
     else:
         productos_unicos = set()
         for clave in datos.keys():
             nombre_p = clave.split("_", 1)[1] if "_" in clave else clave
             productos_unicos.add(nombre_p)
             
-        producto_buscado = st.selectbox("🔍 Selecciona un producto:", sorted(list(productos_unicos)))
+        producto_buscado = st.selectbox("🔍 Selecciona un producto para cruzar precios:", sorted(list(productos_unicos)))
         
         if producto_buscado:
             df_comparativo = pd.DataFrame()
+            
             for clave, registro_precio in datos.items():
                 if producto_buscado in clave and isinstance(registro_precio, dict):
                     tienda = clave.split("_", 1)[0] if "_" in clave else "General"
@@ -99,7 +104,10 @@ elif menu == "📊 Comparador Inter-Tiendas":
                 df_comparativo = df_comparativo.sort_values(by="Fecha").set_index("Fecha")
                 st.line_chart(df_comparativo)
                 st.dataframe(df_comparativo, use_container_width=True)
+            else:
+                st.warning("Puntos de precio insuficientes para generar curvas de tendencia.")
 
+# ====== VISTA 3: GESTIÓN DE ENLACES ======
 elif menu == "🛠️ Gestionar Enlaces (Anti-Caídas)":
     st.subheader("🔗 Administrador Remoto de URLs")
     lineas_actuales = cargar_urls()
@@ -117,7 +125,7 @@ elif menu == "🛠️ Gestionar Enlaces (Anti-Caídas)":
             lineas_filtradas = [l for l in lineas_actuales if not l.endswith(nombre_limpio)]
             lineas_filtradas.append(nueva_linea)
             guardar_urls(lineas_filtradas)
-            st.success(f"✅ ¡Enlace '{nombre_limpio}' indexado!")
+            st.success(f"✅ ¡Enlace '{nombre_limpio}' guardado!")
             st.rerun()
 
     st.markdown("### 📋 Radares en Cola de Escaneo")
