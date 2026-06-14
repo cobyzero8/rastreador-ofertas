@@ -3,24 +3,23 @@ import json
 import os
 import pandas as pd
 import requests
-import time
 
 st.set_page_config(
-    page_title="CobyZero8 - Radar Familiar",
+    page_title="CobyZero8 - Radar Familiar Pro",
     page_icon="🕵️‍♂️",
     layout="wide"
 )
 
-TOKEN_REAL = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
-ID_REAL = "8019752668"
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
 def cargar_historial():
     if os.path.exists(HISTORIAL_FILE):
         try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def cargar_urls():
@@ -31,80 +30,133 @@ def cargar_urls():
 
 def guardar_urls(lista_lineas):
     with open(URLS_FILE, "w", encoding="utf-8") as f:
-        for linea in lista_lineas: f.write(f"{linea}\n")
+        for linea in lista_lineas:
+            f.write(f"{linea}\n")
 
-def enviar_respuesta_telegram(texto):
-    url = f"https://api.telegram.org/bot{TOKEN_REAL}/sendMessage"
-    payload = {"chat_id": ID_REAL, "text": texto, "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload, timeout=10)
-    except: pass
-
-# 🔄 BUCLE DE ESCUCHA AUTOMÁTICA EN TIEMPO REAL (SIN BOTONES)
-@st.fragment(run_every=30)
-def motor_bot_tiempo_real():
-    url_get_updates = f"https://api.telegram.org/bot{TOKEN_REAL}/getUpdates"
+# ⚡ FUNCIÓN SECRETA PARA DESPERTAR A GITHUB ACTIONS
+def disparar_escaneo_github():
     try:
-        res = requests.get(url_get_updates, timeout=5).json()
-        if res.get("ok") and res.get("result"):
-            for update in res["result"]:
-                msg = update.get("message", {})
-                chat_id = str(msg.get("chat", {}).get("id", ""))
-                texto_recibido = msg.get("text", "").strip().lower()
-                
-                if chat_id == ID_REAL and texto_recibido == "/resumen":
-                    datos = cargar_historial()
-                    urls_activas = cargar_urls()
-                    
-                    if not datos:
-                        reporte = "📭 *Historial de ofertas vacío por hoy.*\n\n📍 *Radares activos esperando rebajas:*\n"
-                        for u in urls_activas:
-                            p = u.split(",")
-                            if len(p) == 3: reporte += f"🔸 `{p[2]}` (Máx: S/. {p[1]})\n"
-                    else:
-                        reporte = "📋 *Resumen de Precios en el Radar:* \n\n"
-                        for item, precio in datos.items():
-                            nombre_limpio = item.replace("_", " ")
-                            p_f = precio[sorted(precio.keys())[-1]] if isinstance(precio, dict) else precio
-                            reporte += f"📦 *{nombre_limpio}*\n💰 Precio: S/. {p_f}\n\n"
-                    
-                    enviar_respuesta_telegram(reporte)
-            
-            # Confirmar lectura de mensajes procesados
-            last_id = res["result"][-1]["update_id"]
-            requests.get(f"{url_get_updates}?offset={last_id + 1}")
-    except:
-        pass
+        token = st.secrets["GITHUB_TOKEN"]
+        repo = st.secrets["GITHUB_REPO"]
+        url = f"https://api.github.com/repos/{repo}/actions/workflows/automatizacion.yml/dispatches"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        data = {"ref": "main"}
+        res = requests.post(url, headers=headers, json=data, timeout=10)
+        if res.status_code == 204:
+            return True, "🚀 ¡Robot despertado con éxito! Revisa tu Telegram en 1 minuto."
+        else:
+            return False, f"❌ Error de conexión con GitHub (Código {res.status_code})"
+    except Exception as e:
+        return False, f"⚠️ Configuración incompleta: {str(e)}"
 
-# Ejecutamos el motor invisible en segundo plano
-motor_bot_tiempo_real()
-
-st.title("🕵️‍♂️ CobyZero8 - Radar Familiar")
+st.title("🕵️‍♂️ CobyZero8 - Radar Familiar Pro")
 st.markdown("---")
 
-menu = st.sidebar.selectbox("Navegación", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces (Anti-Caídas)"])
+# 🚨 BOTÓN EXPRESS EN LA BARRA LATERAL
+st.sidebar.markdown("### ⚡ Acciones Rápidas")
+if st.sidebar.button("💥 FORZAR ESCANEO AHORA"):
+    with st.sidebar.spinner("Despertando al robot en la nube..."):
+        exito, msg = disparar_escaneo_github()
+        if exito:
+            st.sidebar.success(msg)
+        else:
+            st.sidebar.error(msg)
+
+menu = st.sidebar.selectbox("Navegación", [
+    "📈 Ver Dashboard", 
+    "🛠️ Gestionar Enlaces Pro"
+])
 
 if menu == "📈 Ver Dashboard":
-    st.subheader("📊 Monitoreo en Tiempo Real")
+    st.subheader("📊 Monitoreo de Ofertas en Tiempo Real")
     datos = cargar_historial()
+    
     if not datos:
-        st.info("⌛ Base de datos inicializada. Esperando datos...")
+        st.info("⌛ Base de datos inicializada. Esperando que el robot cargue información.")
     else:
         lista_productos = []
         for clave, precio in datos.items():
-            seccion, nombre_producto = clave.split("_", 1) if "_" in clave else ("General", clave)
-            precio_final = precio[sorted(precio.keys())[-1]] if isinstance(precio, dict) else precio
-            lista_productos.append({"Sección": seccion, "Producto": nombre_producto, "Precio S/.": precio_final})
-        st.dataframe(pd.DataFrame(lista_productos), use_container_width=True)
+            # Formato esperado: Tienda_Seccion_Talla_Nombre
+            partes_clave = clave.split("_", 3)
+            tienda = partes_clave[0] if len(partes_clave) > 0 else "General"
+            seccion = partes_clave[1] if len(partes_clave) > 1 else "General"
+            talla = partes_clave[2] if len(partes_clave) > 2 else "Cualquiera"
+            nombre_producto = partes_clave[3] if len(partes_clave) > 3 else clave
+            
+            if isinstance(precio, dict):
+                fechas_ordenadas = sorted(precio.keys())
+                precio_final = precio[fechas_ordenadas[-1]] if fechas_ordenadas else 0
+            else:
+                precio_final = precio
+                
+            lista_productos.append({
+                "Tienda": tienda,
+                "Categoría": seccion,
+                "Talla Requerida": talla,
+                "Producto": nombre_producto.replace("_", " "),
+                "Precio S/.": float(precio_final) if isinstance(precio_final, (int, float)) else precio_final
+            })
+        
+        df = pd.DataFrame(lista_productos)
+        
+        # Filtros visuales interactivos
+        c1, col2, col3 = st.columns(3)
+        c1.metric("📦 Productos vigilados", len(df))
+        col2.metric("🏪 Tiendas activas", df["Tienda"].nunique())
+        
+        filtro_tienda = col3.selectbox("🔍 Filtrar vista por Tienda:", ["Todas"] + list(df["Tienda"].unique()))
+        if filtro_tienda != "Todas":
+            df = df[df["Tienda"] == filtro_tienda]
+            
+        st.dataframe(df, use_container_width=True)
 
-elif menu == "🛠️ Gestionar Enlaces (Anti-Caídas)":
-    st.subheader("🔗 Administrador Remoto de URLs")
+elif menu == "🛠️ Gestionar Enlaces Pro":
+    st.subheader("🔗 Administrador Avanzado de URLs (Con Filtro de Tallas)")
     lineas_actuales = cargar_urls()
+    
     with st.form("form_url"):
-        nueva_url = st.text_input("Pegar URL:")
-        nuevo_limite = st.number_input("Presupuesto Máximo (S/.)", min_value=1, value=250)
-        nuevo_nombre = st.text_input("Nombre sección (Ej: Adidas_Zapatillas):")
-        if st.form_submit_button("Guardar"):
-            if nueva_url and nuevo_nombre:
-                lineas_actuales.append(f"{nueva_url},{nuevo_limite},{nuevo_nombre.replace(' ', '_')}")
+        col_t1, col_t2 = st.columns(2)
+        tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"])
+        seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Zapatillas_Mujer):", "Zapatillas")
+        
+        nueva_url = st.text_input("3. Pegar URL exacta de la sección:")
+        
+        col_p1, col_p2 = st.columns(2)
+        nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, value=150)
+        talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, 5.5US, o dejar 'S_T' si es todo):", "S_T")
+        
+        boton_guardar = st.form_submit_button("Añadir al Radar Familiar")
+        
+        if boton_guardar and nueva_url and seccion_nom:
+            seccion_limpia = seccion_nom.replace(" ", "_")
+            talla_limpia = talla_filtro.replace(" ", "").upper()
+            
+            # Formato de guardado en urls.txt: URL,PRECIO,TIENDA_CATEGORIA_TALLA
+            identificador_completo = f"{tienda_sel}_{seccion_limpia}_{talla_limpia}"
+            nueva_linea = f"{nueva_url},{nuevo_limite},{identificador_completo}"
+            
+            # Evitar duplicar el mismo identificador exacto
+            lineas_filtradas = [l for l in lineas_actuales if not l.endswith(identificador_completo)]
+            lineas_filtradas.append(nueva_linea)
+            guardar_urls(lineas_filtradas)
+            st.success(f"✅ ¡Radar configurado para {identificador_completo}!")
+            st.rerun()
+
+    st.markdown("### 📋 Cola Actual de Escaneo")
+    for i, linea in enumerate(lineas_actuales):
+        partes = linea.split(",")
+        if len(partes) == 3:
+            col_info, col_btn = st.columns([8, 2])
+            meta = partes[2].split("_")
+            tienda_txt = meta[0] if len(meta) > 0 else "Desconocida"
+            cat_txt = meta[1] if len(meta) > 1 else "General"
+            talla_txt = meta[2] if len(meta) > 2 else "Todas"
+            
+            col_info.code(f"🏪 {tienda_txt} | 📦 {cat_txt} | 👟 Talla: {talla_txt} | 🚨 Alerta si baja de: S/. {partes[1]}")
+            if col_btn.button("🗑️ Borrar", key=f"del_{i}"):
+                lineas_actuales.pop(i)
                 guardar_urls(lineas_actuales)
                 st.rerun()
