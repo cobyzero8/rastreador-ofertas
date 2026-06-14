@@ -1,36 +1,41 @@
 name: Ejecutor de Rastreador de Ofertas
 
 on:
+  # 💥 Mantiene el botón manual de tu web funcionando
   workflow_dispatch:
+
+  # 🕒 PILOTO AUTOMÁTICO CRONOMETRADO (Corre solo todos los días)
   schedule:
-    - cron: '0 5,11,17,23 * * *'
+    # Nota: GitHub usa hora UTC. 
+    # El robot se ejecutará automáticamente a las 6:00 AM, 12:00 PM, 4:00 PM y 8:00 PM (Hora Perú)
+    - cron: '0 11,17,21,1 * * *'
 
 jobs:
-  ejecutar-script:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Descargar codigo del repositorio
-      uses: actions/checkout@v4
+    - name: Clonar Repositorio
+      uses: actions/checkout@v3
+      with:
+        persist-credentials: true
 
-    - name: Configurar Entorno Python
-      uses: actions/setup-python@v5
+    - name: Configurar Python
+      uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
-    - name: Instalar herramientas necesarias
+    - name: Instalar Librerías Pro
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 pandas
+        pip install requests beautifulsoup4
 
-    - name: Correr Rastreador y Responder Telegram
-      env:
-        PYTHONUNBUFFERED: "1"
+    - name: Ejecutar Motor Scraper
+      run: python scraper.py
+
+    - name: Guardar Cambios Automáticos en GitHub
       run: |
-        python scraper.py
-
-    - name: Guardar Base de Datos Actualizada
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "🤖 Radar actualizó base de datos [CyberDays Mode]"
-        file_pattern: 'historial_precios.json'
+        git config --global user.name "CobyZero8-Robot"
+        git config --global user.email "bot@cobyzero8.com"
+        git add urls.txt historial_precios.json || true
+        git commit -m "🤖 Actualización automática del historial de precios y enlaces [Skip CI]" || true
+        git push origin main || true
