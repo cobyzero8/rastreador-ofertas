@@ -15,6 +15,8 @@ https://www.oechsle.pe/zapatillas?fq=C%3A%2F1223006%2F&fq=specificationFilter_10
 https://listado.mercadolibre.com.pe/ropa-accesorios/calzado/zapatillas/adidas/nuevo/zapatillas_OrderId_PRICE_NoIndex_True,150,MercadoLibre Adidas Nuevos
 
 https://www.adidas.pe/ropa-hombre-outlet?sort=price-low-to-high&v_size_es_pe=m,100,Adidas Ropa Outlet Hombre M
+
+
 https://www.adidas.pe/hombre-outlet?sort=price-low-to-high&v_size_es_pe=m,100,Adidas Todo Outlet Hombre M
 https://www.adidas.pe/mujer-outlet?sort=price-low-to-high&v_size_es_pe=s,100,Adidas Todo Outlet Mujer S
 https://www.adidas.pe/ropa-mujer-outlet?sort=price-low-to-high&v_size_es_pe=s,100,Adidas Ropa Outlet Mujer S
@@ -58,3 +60,5 @@ https://www.jbl.com.pe/ofertas?prefn1=isRefurbished&prefv1=false&srule=price-low
 jabón 
 https://www.mifarma.com.pe/buscador?keyword=jabon%207
 https://inkafarma.pe/buscador?keyword=jabon
+
+https://www.samsung.com/pe/audio-devices/all-audio-devices/,800,Samsung Audio Todo Catálogo
