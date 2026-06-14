@@ -2,9 +2,10 @@ name: Ejecutor de Rastreador de Ofertas
 
 on:
   schedule:
-    # Corre automáticamente todos los días a las 7:00 AM hora de Perú (12:00 UTC)
-    - cron: '0 12 * * *'
-  workflow_dispatch: # Activa el botón manual
+    # Corre automáticamente en la hora de Perú a las:
+    # 6:00 AM, 12:00 PM, 6:00 PM y 10:00 PM (Traducido a formato UTC)
+    - cron: '0 11,17,23,3 * * *'
+  workflow_dispatch: # Mantiene activo tu botón manual por si quieres forzar la revisión
 
 jobs:
   ejecutar-script:
@@ -25,3 +26,12 @@ jobs:
 
     - name: Correr Rastreador y Enviar Mensaje
       run: python scraper.py
+
+    # ESTO PERMITE AL ROBOT GUARDAR EL HISTORIAL DE PRECIOS EN TU REPOSITORIO
+    - name: Guardar Historial de Precios Actualizado
+      run: |
+        git config --global user.name "Bot de Ofertas"
+        git config --global user.email "bot@ofertas.com"
+        git add historial_precios.json || true
+        git commit -m "Actualizar historial de precios [skip ci]" || true
+        git push || true
