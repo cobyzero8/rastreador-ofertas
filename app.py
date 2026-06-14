@@ -55,9 +55,9 @@ if menu == "📈 Ver Dashboard":
             else:
                 seccion, nombre_producto = "General", clave
             
-            # Si el historial guarda un diccionario con fechas, tomamos el último precio conocido
+            # PARCHE APLICADO: Sintaxis corregida y limpia
             if isinstance(precio, dict):
-                ultimo_par de_fechas = sorted(precio.keys())[-1]
+                ultimo_par_de_fechas = sorted(precio.keys())[-1]
                 precio_final = precio[ultimo_par_de_fechas]
             else:
                 precio_final = precio
@@ -76,7 +76,7 @@ if menu == "📈 Ver Dashboard":
         
         st.dataframe(df, use_container_width=True)
 
-# ====== VISTA 2: GRÁFICOS DE TENDENCIA (¡LO NUEVO!) ======
+# ====== VISTA 2: GRÁFICOS DE TENDENCIA ======
 elif menu == "📊 Gráficos de Tendencia":
     st.subheader("📉 Análisis de Historial de Precios")
     st.write("Selecciona un producto para verificar si su precio actual es una verdadera oferta o si está inflado.")
@@ -86,20 +86,16 @@ elif menu == "📊 Gráficos de Tendencia":
     if not datos:
         st.info("⌛ No hay datos históricos suficientes para dibujar tendencias.")
     else:
-        # Extraer lista limpia de productos disponibles para el selector
         opciones_productos = list(datos.keys())
         producto_seleccionado = st.selectbox("🔍 Selecciona el producto a analizar:", opciones_productos)
         
         if producto_seleccionado:
             registro_precio = datos[producto_seleccionado]
             
-            # Verificamos si los datos tienen estructura de fechas (Evolución Temporal)
             if isinstance(registro_precio, dict):
-                # Creamos la tabla de tiempos
                 df_tiempo = pd.DataFrame(list(registro_precio.items()), columns=["Fecha", "Precio (S/.)"])
                 df_tiempo = df_tiempo.sort_values(by="Fecha")
                 
-                # Renderizar métricas clave de análisis
                 precios_numericos = pd.to_numeric(df_tiempo["Precio (S/.)"], errors='coerce')
                 precio_min = precios_numericos.min()
                 precio_max = precios_numericos.max()
@@ -110,7 +106,6 @@ elif menu == "📊 Gráficos de Tendencia":
                 c2.metric("🟢 El más bajo registrado", f"S/. {precio_min}")
                 c3.metric("🔴 El más alto registrado", f"S/. {precio_max}")
                 
-                # Validar de forma inteligente el estado de la oferta
                 if precio_actual <= precio_min and precio_min != precio_max:
                     st.success("🔥 ¡Ganga confirmada! Este producto está en su punto histórico más bajo.")
                 elif precio_actual >= precio_max and precio_min != precio_max:
@@ -118,13 +113,11 @@ elif menu == "📊 Gráficos de Tendencia":
                 else:
                     st.info("⚖️ Precio estable: Se mantiene dentro del promedio habitual de mercado.")
                 
-                # Dibujar gráfico de líneas interactivo
                 st.markdown("#### 📈 Evolución del precio en el tiempo")
                 st.line_chart(df_tiempo.set_index("Fecha")["Precio (S/.)"])
             else:
-                # Si el JSON solo tiene un precio plano (primer registro), creamos una simulación base inicial
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-                st.warning("📊 El robot acaba de registrar este producto por primera vez. La línea de tendencia se irá dibujando automáticamente de forma diaria en las siguientes ejecuciones.")
+                st.warning("📊 El robot acaba de registrar este producto por primera vez. La línea de tendencia se irá dibujando automáticamente de forma diaria.")
                 
                 c1, c2 = st.columns(2)
                 c1.metric("💰 Precio Inicial", f"S/. {registro_precio}")
