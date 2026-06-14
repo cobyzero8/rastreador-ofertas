@@ -33,7 +33,6 @@ def guardar_urls(lista_lineas):
         for linea in lista_lineas:
             f.write(f"{linea}\n")
 
-# ⚡ FUNCIÓN SECRETA PARA DESPERTAR A GITHUB ACTIONS
 def disparar_escaneo_github():
     try:
         token = st.secrets["GITHUB_TOKEN"]
@@ -79,7 +78,6 @@ if menu == "📈 Ver Dashboard":
     else:
         lista_productos = []
         for clave, precio in datos.items():
-            # Formato esperado: Tienda_Seccion_Talla_Nombre
             partes_clave = clave.split("_", 3)
             tienda = partes_clave[0] if len(partes_clave) > 0 else "General"
             seccion = partes_clave[1] if len(partes_clave) > 1 else "General"
@@ -102,7 +100,6 @@ if menu == "📈 Ver Dashboard":
         
         df = pd.DataFrame(lista_productos)
         
-        # Filtros visuales interactivos
         c1, col2, col3 = st.columns(3)
         c1.metric("📦 Productos vigilados", len(df))
         col2.metric("🏪 Tiendas activas", df["Tienda"].nunique())
@@ -114,39 +111,49 @@ if menu == "📈 Ver Dashboard":
         st.dataframe(df, use_container_width=True)
 
 elif menu == "🛠️ Gestionar Enlaces Pro":
-    st.subheader("🔗 Administrador Avanzado de URLs (Con Filtro de Tallas)")
+    st.subheader("🔗 Administrador Avanzado de URLs")
     lineas_actuales = cargar_urls()
     
-    with st.form("form_url"):
-        col_t1, col_t2 = st.columns(2)
-        tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"])
-        seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Zapatillas_Mujer):", "Zapatillas")
-        
-        nueva_url = st.text_input("3. Pegar URL exacta de la sección:")
-        
-        col_p1, col_p2 = st.columns(2)
-        nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, value=150)
-        talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, 5.5US, o dejar 'S_T' si es todo):", "S_T")
-        
-        st.markdown("<small>*Nota: Si pones una talla, el bot priorizará notificarte cuando haya rebajas en esa medida exacta.*</small>", unsafe_allow_html=True)
-        boton_guardar = st.form_submit_button("Añadir al Radar Familiar")
-        
-        if boton_guardar and nueva_url and seccion_nom:
-            seccion_limpia = seccion_nom.replace(" ", "_")
-            talla_limpia = talla_filtro.replace(" ", "").upper()
+    # INTERFAZ DIRECTA (SIN FORMULARIO COMPLEJO TRABADO)
+    col_t1, col_t2 = st.columns(2)
+    tienda_sel = col_t1.selectbox("1. Elige la Tienda:", ["Adidas", "Falabella", "Ripley", "Marathon", "Platanitos", "Puma", "Nike"])
+    seccion_nom = col_t2.text_input("2. Nombre de Sección (Ej: Casacas, Polos):", "Casacas")
+    
+    nueva_url = st.text_input("3. Pegar URL exacta de la sección:")
+    
+    col_p1, col_p2 = st.columns(2)
+    nuevo_limite = col_p1.number_input("4. Presupuesto Máximo (S/.)", min_value=1, value=100)
+    talla_filtro = col_p2.text_input("5. Talla específica a vigilar (Ej: 41, M, S):", "M")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Botón libre e independiente
+    if st.button("🚀 AÑADIR AL RADAR EN TIEMPO REAL", type="primary"):
+        if nueva_url and seccion_nom:
+            # Limpieza forzada de caracteres y espacios fantasmas
+            seccion_limpia = "".join(c for c in seccion_nom if c.isalnum() or c in ("_", "-")).strip("_")
+            talla_limpia = "".join(c for c in talla_filtro if c.isalnum()).upper()
             
-            # Formato de guardado en urls.txt: URL,PRECIO,TIENDA_CATEGORIA_TALLA
+            if not seccion_limpia:
+                seccion_limpia = "Seccion"
+            
             identificador_completo = f"{tienda_sel}_{seccion_limpia}_{talla_limpia}"
-            nueva_linea = f"{nueva_url},{nuevo_limite},{identificador_completo}"
+            nueva_linea = f"{nueva_url.strip()},{int(nuevo_limite)},{identificador_completo}"
             
-            # Evitar duplicar el mismo identificador exacto
+            # Quitar si ya existía una idéntica y meter la nueva
             lineas_filtradas = [l for l in lineas_actuales if not l.endswith(identificador_completo)]
             lineas_filtradas.append(nueva_linea)
+            
             guardar_urls(lineas_filtradas)
-            st.success(f"✅ ¡Radar configurado para {identificador_completo}!")
+            st.success(f"🎯 ¡Guardado exitoso para: {identificador_completo}!")
             st.rerun()
+        else:
+            st.error("⚠️ Falta rellenar la URL o el Nombre de la Sección.")
 
+    st.markdown("---")
     st.markdown("### 📋 Cola Actual de Escaneo")
+    lineas_actuales = cargar_urls() # Recarga fresca
+    
     for i, linea in enumerate(lineas_actuales):
         partes = linea.split(",")
         if len(partes) == 3:
