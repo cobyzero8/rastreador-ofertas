@@ -4,6 +4,21 @@ import json
 import os
 import time
 
+# BOTÓN DE PROCESAMIENTO BLINDADO
+    if st.button("🚀 AÑADIR AL RADAR", type="primary"):
+        if nueva_url and seccion_nom:
+            # Procesamiento lógico
+            identificador = f"{tienda_sel}_{seccion_nom.replace(' ', '_')}_{talla_filtro.upper()}"
+            nueva_linea = f"{nueva_url.strip()},{int(nuevo_limite)},{identificador}"
+            
+            # Guardado seguro
+            lineas = cargar_urls()
+            lineas.insert(0, nueva_linea)
+            guardar_urls(lineas)
+            
+            # EN LUGAR DE RERUN(), usamos una bandera para refrescar de forma limpia
+            st.session_state.mensaje_exito = "✅ Guardado con éxito"
+            st.rerun()
 def cargar_urls():
     if os.path.exists(URLS_FILE):
         # Intentamos leer hasta 3 veces antes de rendirnos
