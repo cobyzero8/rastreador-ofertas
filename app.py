@@ -8,58 +8,66 @@ st.set_page_config(page_title="CobyZero8 - Radar Pro", layout="wide")
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# --- SIDEBAR: BOTÓN DE ACCIÓN RÁPIDA ---
+# --- SIDEBAR: CONTROL MAESTRO ---
 with st.sidebar:
     st.title("⚙️ Control Maestro")
-    if st.button("💥 FORZAR ESCANEO MANUAL", use_container_width=True):
-        st.warning("Ejecutando proceso...")
+    if st.button("💥 FORZAR ESCANEO", use_container_width=True):
+        st.warning("Ejecutando escaneo...")
         os.system("python scraper.py")
-        st.success("Escaneo finalizado.")
+        st.success("Escaneo terminado.")
+    st.write("---")
+    st.subheader("🔗 Enlaces registrados")
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r") as f:
+            for line in f.readlines():
+                st.caption(line[:30] + "...")
 
-# --- SECCIÓN SUPERIOR: AGREGAR ARTÍCULOS ---
-st.subheader("➕ Agregar Nuevo Artículo al Radar")
+# --- SECCIÓN SUPERIOR: FORMULARIO DE ALTA ---
+st.title("🕵️‍♂️ Radar Familiar Pro")
+st.subheader("➕ Agregar Nuevo Artículo")
 with st.container(border=True):
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
         tienda = st.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike"])
-        url = st.text_input("URL del producto")
-    with col2:
+        talla = st.text_input("Talla (Ej: 9.5US)")
+    with c2:
         nombre = st.text_input("Nombre del artículo")
         precio = st.number_input("Precio máximo (Tope S/.)", value=100)
-    with col3:
-        talla = st.text_input("Talla (Ej: 9.5US, M)")
+    with c3:
+        url = st.text_input("URL del producto")
+    with c4:
+        st.write("###") # Espaciador
         if st.button("💾 GUARDAR Y AGREGAR", type="primary", use_container_width=True):
             nueva_linea = f"{url},{precio},{tienda}_{nombre.replace(' ', '-')}_{talla}"
-            
-            # Cargar y guardar al inicio (primera fila)
             if os.path.exists(URLS_FILE):
-                with open(URLS_FILE, "r", encoding="utf-8") as f:
+                with open(URLS_FILE, "r") as f:
                     lineas = f.readlines()
             else:
                 lineas = []
-            
             lineas.insert(0, nueva_linea + "\n")
-            with open(URLS_FILE, "w", encoding="utf-8") as f:
+            with open(URLS_FILE, "w") as f:
                 f.writelines(lineas)
-            
-            st.toast("✅ Artículo agregado correctamente a la primera fila.")
-
-st.write("---")
+            st.toast("✅ Artículo agregado a la lista!")
 
 # --- SECCIÓN DASHBOARD ---
-st.subheader("📊 Artículos bajo vigilancia")
+st.write("---")
+st.subheader("📊 Dashboard: Artículos bajo vigilancia")
 if os.path.exists(HISTORIAL_FILE):
     with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        lista = []
-        for id_prod, hist in data.items():
-            parts = id_prod.split("_")
-            lista.append({
-                "Tienda": parts[0],
-                "Producto": parts[1].replace("-", " "),
-                "Talla": parts[2],
-                "Precio Actual": f"S/. {list(hist.values())[-1]}"
-            })
-    st.table(pd.DataFrame(lista))
+        try:
+            data = json.load(f)
+            lista = []
+            for id_prod, hist in data.items():
+                parts = id_prod.split("_")
+                lista.append({
+                    "Tienda": parts[0],
+                    "Producto": parts[1].replace("-", " "),
+                    "Talla": parts[2] if len(parts) > 2 else "N/A",
+                    "Precio Actual": f"S/. {list(hist.values())[-1]}"
+                })
+            df = pd.DataFrame(lista)
+            st.table(df)
+        except:
+            st.error("Error al leer el historial, el archivo podría estar vacío.")
 else:
-    st.info("Aún no hay artículos rastreados.")
+    st.info("No hay artículos en el historial. Agrega uno arriba y fuerza un escaneo.")
