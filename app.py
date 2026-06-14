@@ -23,6 +23,16 @@ with st.sidebar:
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Radar Familiar Pro")
     st.subheader("📊 Dashboard: Artículos bajo vigilancia")
+    
+    # Cargar URLs guardadas para poder crear los links de compra
+    links = {}
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r") as f:
+            for line in f.readlines():
+                parts = line.strip().split(",")
+                if len(parts) >= 3:
+                    links[parts[2]] = parts[0] # Guardamos la URL por el ID (tienda_nombre_talla)
+
     if os.path.exists(HISTORIAL_FILE):
         with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
             try:
@@ -30,22 +40,32 @@ if menu == "📈 Ver Dashboard":
                 lista = []
                 for id_prod, hist in data.items():
                     parts = id_prod.split("_")
+                    # Buscamos el link guardado si coincide el ID
+                    link = links.get(id_prod, "#")
                     lista.append({
                         "Tienda": parts[0],
                         "Producto": parts[1].replace("-", " "),
                         "Talla": parts[2] if len(parts) > 2 else "N/A",
-                        "Precio Actual": f"S/. {list(hist.values())[-1]}"
+                        "Precio": f"S/. {list(hist.values())[-1]}",
+                        "Link": link
                     })
-                st.table(pd.DataFrame(lista))
+                
+                df = pd.DataFrame(lista)
+                # Mostramos la tabla. Streamlit renderiza automáticamente los enlaces
+                st.data_editor(
+                    df,
+                    column_config={"Link": st.column_config.LinkColumn("Compra Directa")},
+                    hide_index=True,
+                    use_container_width=True
+                )
             except:
-                st.error("Error al leer el historial.")
+                st.error("Error al leer los datos.")
     else:
         st.info("No hay artículos rastreados aún.")
 
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
-    # Formulario estético
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -75,5 +95,5 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
     st.subheader("📋 Lista de Enlaces Activos")
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r") as f:
-            for i, line in enumerate(f.readlines()):
+            for line in f.readlines():
                 st.code(line.strip())
