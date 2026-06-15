@@ -266,15 +266,15 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
 
 # --- FORZAR ESCANEO ---
 elif menu == "💥 Forzar Escaneo":
-    st.title("💥 Forzar Escaneo Automático COBY & GEMINI")
-    st.subheader("Gatillo Manual del Rastreador de Élite")
-    
-    contenedor_mensaje = st.empty()
-    if st.button("💥 INICIAR ESCANEO INTENSIVO DE ELITE", type="primary", use_container_width=True):
-        contenedor_mensaje.info("⏳ Buscando ofertas, calculando tendencias semánticas en Telegram y barriendo cupones...")
-        try:
-            from scraper import revisar_ofertas
-            revisar_ofertas()
-            contenedor_mensaje.success("✅ ¡Escaneo completado con éxito! Revisa tu Telegram.")
-        except Exception as e: 
-            contenedor_mensaje.error(f"❌ Error al ejecutar el motor: {e}")
+    st.title("💥 Forzar Escaneo Automático")
+    if st.button("💥 INICIAR ESCANEO", type="primary"):
+        with st.status("Ejecutando motor...", expanded=True) as status:
+            try:
+                from scraper import revisar_ofertas
+                st.write("Llamando a revisar_ofertas()...")
+                revisar_ofertas()
+                status.update(label="✅ Escaneo finalizado", state="complete")
+                st.success("¡El reporte debería haber llegado a Telegram!")
+            except Exception as e:
+                status.update(label="❌ Error crítico", state="error")
+                st.error(f"El motor falló: {e}")
