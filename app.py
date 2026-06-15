@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.8_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.9_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Duplicados Activa**")
 st.sidebar.write("---")
 
@@ -76,44 +76,10 @@ if menu == "📈 Ver Dashboard":
                 prod_txt = "N/A"
                 if tot > 2: prod_txt = parts[2]
                 
-                # --- LÍNEA 73 TOTALMENTE SANEADA CON ASIGNACIÓN TRADICIONAL SEGURA ---
                 talla_txt = "Todas"
-                if tot > 3: 
-                    talla_txt = parts[3]
+                if tot > 3: talla_txt = parts[3]
                 
                 clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
                 link_final = links_mapeados.get(clave_link, "#")
                 
-                precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
-                ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
-                
-                item_dict = {}
-                item_dict["Tienda"] = tienda_txt.upper()
-                item_dict["Categoría"] = cat_txt
-                item_dict["Elemento"] = prod_txt.replace("_", " ")
-                item_dict["Detalle/Talla"] = talla_txt
-                item_dict["Precio Actual"] = f"S/. {ultimo_precio}" if ultimo_precio != "N/A" else "N/A"
-                item_dict["Compra"] = link_final
-                
-                if cat_txt in PRIMERA_NECESIDAD:
-                    lista_hogar.append(item_dict)
-                else:
-                    lista_personal.append(item_dict)
-            except:
-                pass
-
-    tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
-    with tab1:
-        if lista_hogar: st.data_editor(pd.DataFrame(lista_hogar), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-        else: st.info("No hay artículos esenciales registrados.")
-    with tab2:
-        if lista_personal: st.data_editor(pd.DataFrame(lista_personal), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-        else: st.info("No hay artículos personales registrados.")
-    with tab3:
-        if os.path.exists(CUPONES_FILE):
-            try:
-                with open(CUPONES_FILE, "r", encoding="utf-8") as f_cup: cupones_data = json.load(f_cup)
-                lista_cupones_tabla = []
-                for tnda, lista_c in cupones_data.items():
-                    for item_c in lista_c:
-                        lista_cupones_tabla.append({"Tienda": tnda.upper(), "Código": f"✨ {item_c['codigo']} ✨", "Descu
+                precios_reales =
