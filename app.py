@@ -10,7 +10,6 @@ st.set_page_config(page_title="Radar Pro - Panel Central", layout="wide")
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
-# Credenciales reales de tu bot de Telegram
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
@@ -118,10 +117,7 @@ elif menu == "💥 Forzar Escaneo":
         
         try:
             from scraper import revisar_ofertas
-            
-            # Ejecuta el robot independiente corregido
             revisar_ofertas()
-            
             contenedor_mensaje.success("✅ ¡Escaneo completado con éxito!")
         except Exception as e:
             contenedor_mensaje.error(f"❌ Error al ejecutar el rastreador externo: {e}")
