@@ -63,28 +63,4 @@ if menu == "📈 Ver Dashboard":
             lista_hogar, lista_personal = [], []
             
             for id_prod, hist in data.items():
-                if id_prod == "TOTAL_AHORRADO_SISTEMA": continue
-                parts = id_prod.split("-")
-                
-                # --- AQUÍ SE CORRIGIÓ EL BLOQUE QUE CAUSABA LA LÍNEA 66 ---
-                tienda_txt = parts[0] if len(parts) > 0 else "N/A"
-                cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-                prod_txt = parts[2] if len(parts) > 2 else "N/A"
-                talla_txt = parts[3] if len(parts) > 3 else "N/A"
-                
-                clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
-                link_final = links_mapeados.get(clave_link, "#")
-                
-                precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
-                ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
-                
-                item_dict = {
-                    "Tienda": tienda_txt.upper(), "Categoría": cat_txt,
-                    "Elemento": prod_txt.replace("_", " "), "Detalle/Talla": talla_txt,
-                    "Precio Actual": f"S/. {ultimo_precio}" if ultimo_precio != "N/A" else "N/A", "Compra": link_final
-                }
-                
-                if cat_txt in PRIMERA_NECESIDAD: lista_hogar.append(item_dict)
-                else: lista_personal.append(item_dict)
-            
-            tab1, tab2, tab3 = st
+                if id_prod == "TOTAL_AHORRADO
