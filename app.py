@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.8_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.9_")
 st.sidebar.caption("⚡ Sistema: **Numeración Dinámica Correlativa**")
 st.sidebar.write("---")
 
@@ -82,13 +82,14 @@ if menu == "📈 Ver Dashboard":
                     if type(v_h) in [int, float]:
                         precios_reales.append(v_h)
             
-            ultimo_precio = "N/A"
-            if precios_reales:
-                ultimo_precio = precios_reales[-1]
+            ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
+            
+            # --- LÍNEA 94 TOTALMENTE REESTRUCTURADA EN UN BLOQUE TRADICIONAL ULTRA CORTO ---
+            txt_precio = "N/A"
+            if ultimo_precio != "N/A":
+                txt_precio = f"S/. {ultimo_precio}"
             
             item_dict = {}
             item_dict["Tienda"] = tienda_txt.upper()
             item_dict["Categoría"] = cat_txt
-            item_dict["Elemento"] = prod_txt.replace("_", " ")
-            item_dict["Detalle/Talla"] = talla_txt
-            item_dict["Precio Actual"] = f"S/. {ultimo_precio}" if ultimo_
+            item_dict
