@@ -14,15 +14,6 @@ URLS_FILE = "urls.txt"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
-# --- FUNCIONES DE TELEGRAM ---
-def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-    payload = {"chat_id": CHAT_ID_TELEGRAM, "text": mensaje, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        st.sidebar.error(f"Error Telegram: {e}")
-
 # --- MENÚ DE NAVEGACIÓN ---
 st.sidebar.title("💥 Radar Familiar Pro")
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
@@ -88,7 +79,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             url = st.text_input("URL exacta del artículo")
             talla = st.text_input("Talla (Ej: 9.5US o M)")
         with c3:
-            precio_max = st.number_input("Precio máximo (Tope S/.)", value=150, min_value=1)
+            precio_max = st.number_input("Precio máximo (Tope S/.)", value=100, min_value=1)
             st.write("###")
             if st.button("💾 GUARDAR ARTÍCULO", type="primary", use_container_width=True):
                 if nombre and url:
@@ -98,7 +89,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     with open(URLS_FILE, "a", encoding="utf-8") as f:
                         f.write(nueva_linea)
                         
-                    st.toast("✅ ¡Artículo guardado correctamente!")
+                    st.toast("✅ ¡Artículo guardado correctamente con tu precio tope!")
                     st.rerun()
                 else:
                     st.error("❌ Por favor, completa los campos requeridos (Nombre y URL).")
@@ -118,7 +109,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
 # --- OPCIÓN 3: FORZAR ESCANEO ---
 elif menu == "💥 Forzar Escaneo":
     st.title("💥 Forzar Escaneo Automático")
-    st.write("Presiona el botón para enviar la orden de ejecución al sistema. Al finalizar, recibirás la confirmación en Telegram.")
+    st.write("Presiona el botón para enviar la orden de ejecución al sistema. Al finalizar, recibirás la confirmación en Telegram con los datos y el link del artículo.")
     
     contenedor_mensaje = st.empty()
     
@@ -126,11 +117,12 @@ elif menu == "💥 Forzar Escaneo":
         contenedor_mensaje.info("⏳ Ejecutando orden de rastreo... Por favor espera.")
         
         try:
-            # Importación segura dentro del botón para evitar problemas si el archivo tiene errores
             from scraper import revisar_ofertas
+            
+            # Ejecuta el robot independiente corregido
             revisar_ofertas()
-            contenedor_mensaje.success("✅ ¡Escaneo completado! Los resultados han sido procesados.")
-            enviar_telegram("💥 *¡Escaneo forzado desde la web completado con éxito!* 🫡")
+            
+            contenedor_mensaje.success("✅ ¡Escaneo completado con éxito!")
         except Exception as e:
             contenedor_mensaje.error(f"❌ Error al ejecutar el rastreador externo: {e}")
             st.code(str(e))
