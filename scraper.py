@@ -11,24 +11,37 @@ URLS_FILE = "urls.txt"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
-def enviar_telegram_con_botones(mensaje, url_compra, categoria):
-    url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
+# --- ENVIAR TELEGRAM CON FOTO Y BOTONES INTERACTIVOS (PASO A y C) ---
+def enviar_telegram_con_foto_y_botones(mensaje, url_compra, categoria, url_foto, id_radar):
+    url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
+    
+    # Botones Inline debajo de la foto: Compra, Ver Categoría y PAUSAR directo
     reply_markup = {
         "inline_keyboard": [
             [
                 {"text": "🛒 Ir a Comprar Oferta", "url": url_compra},
-                {"text": f"📦 Ver más de {categoria.upper()}", "callback_data": f"filter_{categoria}"}
+                {"text": f"📦 Ver #{categoria.upper()}", "callback_data": f"filter_{categoria}"}
+            ],
+            [
+                {"text": "🔕 Pausar este Radar", "callback_data": f"pausar_{id_radar}"}
             ]
         ]
     }
+    
+    # Si por alguna razón el scraper no halló foto, usamos una genérica de ofertas
+    foto_final = url_foto if url_foto and url_foto.startswith("http") else "https://images.unsplash.com/photo-1555529669-e69e7aa0ba9a?q=80&w=500"
+
     payload = {
         "chat_id": CHAT_ID_TELEGRAM, 
-        "text": mensaje, 
+        "photo": foto_final,
+        "caption": mensaje, 
         "parse_mode": "Markdown",
         "reply_markup": json.dumps(reply_markup)
     }
-    try: requests.post(url, json=payload, timeout=10)
-    except: pass
+    try:
+        requests.post(url, json=payload, timeout=12)
+    except:
+        pass
 
 def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
     productos_encontrados = []
@@ -37,14 +50,12 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
     }
     try:
         respuesta = requests.get(url_base, headers=headers, timeout=15)
-        if respuesta.status_code != 200:
-            return []
+        if respuesta.status_code != 200: return []
             
         soup = BeautifulSoup(respuesta.text, 'html.parser')
         t_low = tienda.lower()
         tarjetas = []
         
-        # Selectores específicos por tienda
         if "adidas" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', attrs={"data-glass-item": "product-card"})
         elif "falabella" in t_low:
@@ -53,23 +64,23 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
             tarjetas = soup.find_all('div', class_=lambda x: x and ('product-item' in x or 'productCard' in x or 'item' in x or 'vtex' in x))
         elif "ripley" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'catalog-product' in x) or soup.find_all('a', class_='ProductCard__ProductLink')
-        elif "mercado" in t_low:
-            tarjetas = soup.find_all('div', class_=lambda x: x and 'ui-search-result' in x) or soup.find_all('li', class_='ui-search-layout__item')
-        elif "mifarma" in t_low or "inkafarma" in t_low:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x))
-        elif "natura" in t_low or "lbel" in t_low or "esika" in t_low or "cyzone" in t_low:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x or 'showcase' in x))
         else:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'pod' in x))
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x))
 
-        if not tarjetas:
-            tarjetas = [soup]
+        if not tarjetas: tarjetas = [soup]
 
         for tarjeta in tarjetas:
             tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName|item__title|product-name)', re.I)) or tarjeta.find('p')
             if not tit: continue
             nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
             if len(nombre_prod) < 4 or "brand" in nombre_prod.lower(): continue
+
+            # --- NUEVO PASO A: BUSCAR ENLACE DE LA IMAGEN ---
+            img_tag = tarjeta.find('img', src=True) or tarjeta.find('img', attrs={"data-src": True})
+            link_foto = ""
+            if img_tag:
+                link_foto = img_tag.get('data-src') or img_tag.get('src', '')
+                link_foto = urljoin(url_base, link_foto)
 
             pct_tag = tarjeta.find(text=re.compile(r'-\d+%\s*|%\s*OFF', re.I)) or tarjeta.find(class_=re.compile(r'(discount|porcentaje|badge|pct)', re.I))
             porcentaje_txt = "N/A"
@@ -85,20 +96,17 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                 p_limpio = p_str.replace(',', '.')
                 try:
                     val = float(p_limpio)
-                    if val > 5 and val not in valores_limpios:
-                        valores_limpios.append(val)
+                    if val > 5 and val not in valores_limpios: valores_limpios.append(val)
                 except: continue
 
             if not valores_limpios: continue
-
             valores_limpios = sorted(valores_limpios)
             precio_descuento = valores_limpios[0]
             precio_original = valores_limpios[-1] if len(valores_limpios) > 1 else precio_descuento
 
             link_tag = tarjeta.find('a', href=True) or (tarjeta if tarjeta.name == 'a' and tarjeta.has_attr('href') else None)
             link_articulo = url_base
-            if link_tag and link_tag['href']:
-                link_articulo = urljoin(url_base, link_tag['href'])
+            if link_tag and link_tag['href']: link_articulo = urljoin(url_base, link_tag['href'])
 
             talla_check = str(talla_buscada).upper().strip()
             if talla_check and talla_check not in ["TODAS", "N/A", ""]:
@@ -111,12 +119,11 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                     "precio_original": precio_original,
                     "precio_descuento": precio_descuento,
                     "porcentaje": porcentaje_txt,
-                    "link": link_articulo
+                    "link": link_articulo,
+                    "foto": link_foto
                 })
-                
         return productos_encontrados
-    except:
-        return []
+    except: return []
 
 def revisar_ofertas():
     if not os.path.exists(URLS_FILE): return
@@ -145,7 +152,7 @@ def revisar_ofertas():
         except ValueError: presupuesto_max = 100.0
             
         identificador = partes[2].strip()
-        meta = identificador.split("_")
+        meta = identificador.split("-")
         
         tienda = meta[0] if len(meta) > 0 else "General"
         categoria = meta[1] if len(meta) > 1 else "Otros"
@@ -156,7 +163,7 @@ def revisar_ofertas():
         
         for p in productos:
             nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:20]
-            id_producto = f"{tienda}_{categoria}_{nombre_key}_{talla}"
+            id_producto = f"{tienda}-{categoria}-{nombre_key}-{talla}"
             precio_actual = p['precio_descuento']
             
             if id_producto in enviados_en_este_ciclo: continue
@@ -170,16 +177,17 @@ def revisar_ofertas():
                 enviados_en_este_ciclo.add(id_producto)
                 
                 reporte = (
-                    f"🚨 *¡OFERTÓN EN {tienda.upper().replace('-', ' ')}!* 🚨\n"
+                    f"🚨 *¡OFERTÓN EN {tienda.upper()}!* 🚨\n"
                     f"📂 *Categoría:* #{categoria.upper()}\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
-                    f"🧴 *Detalle/Volumen:* {talla}\n"
+                    f"📏 *Detalle/Talla:* {talla}\n"
                     f"💰 *Precio Regular:* S/. {p['precio_original']:.2f}\n"
                     f"📉 *Descuento:* {p['porcentaje']}\n"
                     f"🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n"
                     f"🎯 *Tope:* S/. {presupuesto_max:.2f}"
                 )
-                enviar_telegram_con_botones(reporte, p['link'], categoria)
+                # Pasamos identificador de la línea para el botón de pausar
+                enviar_telegram_con_foto_y_botones(reporte, p['link'], categoria, p['foto'], identificador)
                 
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
         json.dump(historial, f, indent=4)
