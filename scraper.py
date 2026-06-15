@@ -95,12 +95,12 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         return productos_encontrados
     except: return []
 
-# --- SOLUCIÓN TOTAL: PLANO, SIN RIESGO DE SANGRIAS ADVERSAS ---
 def simular_rastreo_cupones_global():
     bc = {"ADIDAS": [{"codigo": "ADI2026", "descuento": "20% OFF", "detalle": "Válido en calzado y ropa seleccionada"}], "FALABELLA": [{"codigo": "FALA15", "descuento": "15% DSCTO", "detalle": "Exclusivo primera compra App con CMR"}], "MARATHON": [{"codigo": "RUNNER10", "descuento": "S/. 30 Menos", "detalle": "En compras superiores a S/. 250"}], "LBEL": [{"codigo": "BLEU10", "descuento": "10% EXTRA", "detalle": "Aplicable a perfumes de hombre en carrito"}]}
     if os.path.exists(CUPONES_FILE):
         with open(CUPONES_FILE, "w", encoding="utf-8") as f: json.dump(bc, f, indent=4)
-    txt_t = "🎟️ *CENTRAL DE CUPONES RADAR PRO* 🎟️\n🤖 _By [Tu Nombre] & Gemini Pro - Grandes Genios_\n———————————————————\n\n🔥 ¡Nuevos cupones globales interceptados! Entra al Dashboard web en la pestaña *Cuponera Central Express* para copiarlos.\n\n🔹 *Adidas:* `ADI2026` (20% OFF)\n🔹 *Falabella:* `FALA15` (15% OFF)\n🔹 *Marathon:* `RUNNER10` (S/.30 Menos)\n\n———————————————————\n📱 _Usa los códigos antes de pagar._"
+    # FIRMA COBY & GEMINI EN TELEGRAM (CUPONES)
+    txt_t = "🎟️ *CENTRAL DE CUPONES RADAR PRO* 🎟️\n⚡ _By COBY & GEMINI - Los Genios de la Automatización_ 🧠\n———————————————————\n\n🔥 ¡Nuevos cupones globales interceptados! Entra al Dashboard web en la pestaña *Cuponera Central Express* para copiarlos.\n\n🔹 *Adidas:* `ADI2026` (20% OFF)\n🔹 *Falabella:* `FALA15` (15% OFF)\n🔹 *Marathon:* `RUNNER10` (S/.30 Menos)\n\n———————————————————\n📱 _Usa los códigos antes de pagar._"
     try: requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": txt_t, "parse_mode": "Markdown"}, timeout=10)
     except: pass
 
@@ -110,8 +110,7 @@ def revisar_ofertas():
     if not os.path.exists(URLS_FILE): return
     historial = {}
     if os.path.exists(HISTORIAL_FILE):
-        try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
+        try: with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
         except: historial = {}
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     with open(URLS_FILE, "r", encoding="utf-8") as f: lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
@@ -140,6 +139,7 @@ def revisar_ofertas():
                 ahorro_soles = p['precio_original'] - p['precio_descuento']
                 texto_ahorro = f"💰 *Ahorraste:* S/. {ahorro_soles:.2f}" if ahorro_soles > 0 else ""
                 barra_grafica = generar_barra_descuento(p['precio_original'], p['precio_descuento'])
-                reporte = f"🛍️ *¡OFERTÓN DETECTADO POR EL RADAR!* 🛍️\n———————————————————\n\n🏢 *Tienda:* `{tienda.upper().replace('_', ' ')}`\n📂 *Categoría:* #{categoria.upper()}\n\n📦 *Elemento:* `{p['nombre']}`\n{detalle_medida} {talla}\n\n———————————————————\n💵 *Precio Normal:* S/. {p['precio_original']:.2f}\n🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n🎯 *Tu Tope Fijado:* S/. {presupuesto_max:.2f}\n\n{texto_ahorro}\n📉 {barra_grafica}\n———————————————————\n🤖 _Filtros activos. By [Tu Nombre] & Gemini_ 🧠"
+                # FIRMA COBY & GEMINI EN TELEGRAM (OFERTAS)
+                reporte = f"🛍️ *¡OFERTÓN DETECTADO POR EL RADAR!* 🛍️\n———————————————————\n\n🏢 *Tienda:* `{tienda.upper().replace('_', ' ')}`\n📂 *Categoría:* #{categoria.upper()}\n\n📦 *Elemento:* `{p['nombre']}`\n{detalle_medida} {talla}\n\n———————————————————\n💵 *Precio Normal:* S/. {p['precio_original']:.2f}\n🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n🎯 *Tu Tope Fijado:* S/. {presupuesto_max:.2f}\n\n{texto_ahorro}\n📉 {barra_grafica}\n———————————————————\n🦾 _Filtros activos. By COBY & GEMINI_ 🧠"
                 enviar_telegram_con_foto_y_botones(reporte, p['link'], categoria, p['foto'], partes[2].strip())
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f: json.dump(historial, f, indent=4)
