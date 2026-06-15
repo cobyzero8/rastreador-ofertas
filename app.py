@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v9.1_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v9.2_")
 st.sidebar.caption("⚡ Estatus: **12 Mejoras Premium Activas**")
 st.sidebar.write("---")
 
@@ -99,7 +99,7 @@ if menu == "📈 Ver Dashboard":
             except: st.info("Cuponera lista.")
         else: st.info("Cuponera lista.")
 
-# --- INTELIGENCIA COMERCIAL BLINDADA ---
+# --- INTELIGENCIA COMERCIAL ---
 elif menu == "📊 Inteligencia Comercial":
     st.title("📊 Inteligencia Comercial y Horarios de Remate")
     st.subheader("🕵️‍♂️ Análisis Estadístico de Caídas de Precio")
@@ -107,42 +107,4 @@ elif menu == "📊 Inteligencia Comercial":
     logs = {}
     if os.path.exists(HISTORIAL_FILE):
         try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: data = json.load(f)
-            logs = data.get("LOG_HORARIOS_OFERTAS", {})
-        except: pass
-        
-    if logs:
-        st.write("### 📉 Distribución de Ofertas por Hora del Día")
-        df_horas = pd.DataFrame(list(logs.items()), columns=["Hora", "Cantidad de Ofertas"]).set_index("Hora")
-        st.bar_chart(df_horas)
-        st.success("💡 Tip de Compra: Las tiendas suelen soltar la mayoría de remates en las horas con barras más altas.")
-    else:
-        st.info("📊 Recolectando datos de horarios... En los próximos escaneos automáticos se dibujará la gráfica de tendencias aquí.")
-
-# --- MÈTRICAS DE AHORRO BLINDADA ---
-elif menu == "💰 Métricas de Ahorro":
-    st.title("💰 Balance de Ahorro COBY & GEMINI")
-    total_ahorrado = 0.0
-    if os.path.exists(HISTORIAL_FILE):
-        try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: h_data = json.load(f)
-            total_ahorrado = h_data.get("TOTAL_AHORRADO_SISTEMA", 124.50)
-        except: total_ahorrado = 124.50
-        
-    c1, c2 = st.columns(2)
-    with c1: st.metric(label="💵 Total Ahorrado Acumulado", value=f"S/. {total_ahorrado:.2f}", delta="¡Economía Resguardada!")
-    with c2:
-        st.write("### 📈 Impacto Mensual")
-        df_sim = pd.DataFrame({"Mes": ["Abril", "Mayo", "Junio"], "Soles Ahorrados": [45.0, 89.2, total_ahorrado]}).set_index("Mes")
-        st.bar_chart(df_sim)
-
-# --- GESTIONAR ENLACES PRO ---
-elif menu == "🛠️ Gestionar Enlaces Pro":
-    st.title("🛠️ Gestionar Enlaces Pro")
-    lista_tiendas = obtener_tiendas_dinamicas()
-    try:
-        res_back = supabase.table("radares").select("url", "precio_max", "identificador").execute()
-        if res_back.data:
-            df_backup = pd.DataFrame(res_back.data)
-            csv_data = df_backup.to_csv(index=False).encode('utf-8')
-            st.download_button(label="📥 EXPORTAR RESPALDO DE SEGURIDAD (CSV)", data=csv_data, file_name="
+            with open(HISTORIAL_
