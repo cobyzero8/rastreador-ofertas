@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.6_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.7_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Duplicados Activa**")
 st.sidebar.write("---")
 
@@ -63,7 +63,6 @@ if menu == "📈 Ver Dashboard":
         for id_prod, hist in data.items():
             if id_prod in ["TOTAL_AHORRADO_SISTEMA", "LOG_HORARIOS_OFERTAS"]: continue
             
-            # --- ESTRUCTURA PROTEGIDA TOTALMENTE (LÍNEA 77 SANEADA Y ENCAPSULADA) ---
             try:
                 parts = id_prod.split("-")
                 tot = len(parts)
@@ -71,16 +70,4 @@ if menu == "📈 Ver Dashboard":
                 tienda_txt = parts[0] if tot > 0 else "N/A"
                 cat_txt = parts[1].upper() if tot > 1 else "OTROS"
                 prod_txt = parts[2] if tot > 2 else "N/A"
-                talla_txt = parts[3] if tot > 3 else "Todas"
-                
-                clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
-                link_final = links_mapeados.get(clave_link, "#")
-                
-                precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
-                ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
-                
-                item_dict = {
-                    "Tienda": tienda_txt.upper(),
-                    "Categoría": cat_txt,
-                    "Elemento": prod_txt.replace("_", " "),
-                    "Detalle/Talla": talla_txt,
+                talla_txt =
