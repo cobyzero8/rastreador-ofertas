@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.4_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.5_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Bloqueo Activa**")
 st.sidebar.write("---")
 
@@ -75,6 +75,12 @@ if menu == "📈 Ver Dashboard":
             clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
             link_final = links_mapeados.get(clave_link, "#")
             
-            # --- LÍNEA 81 REPARADA CON COMPARACIÓN DIRECTA INMUNE A RECORTES ---
+            # --- LÍNEA 80 COMPLETAMENTE REMOVIDA Y REDISEÑADA EN REGLAS SÚPER CORTAS INDESTRUCTIBLES ---
             precios_reales = []
-            if
+            items_hist = getattr(hist, "items", None)
+            if items_hist:
+                for k_h, v_h in items_hist():
+                    if type(v_h) in [int, float]:
+                        precios_reales.append(v_h)
+            
+            ultimo_precio = precios_reales[-1] if
