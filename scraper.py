@@ -33,74 +33,88 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         t_low = tienda.lower()
         tarjetas = []
         
+        # Selectores de bloques de producto
         if "adidas" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', attrs={"data-glass-item": "product-card"})
         elif "falabella" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', class_=lambda x: x and 'pod-details' in x)
-        elif "marathon" in t_low:
-            tarjetas = soup.find_all('div', class_=lambda x: x and 'product-item' in x) or soup.find_all('div', class_=lambda x: x and 'productCard' in x)
+        elif "marathon" in t_low or "triathlon" in t_low:
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product-item' in x or 'productCard' in x or 'item' in x))
         elif "ripley" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'catalog-product' in x) or soup.find_all('a', class_='ProductCard__ProductLink')
         else:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x))
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'pod' in x))
+
+        # Si no detecta tarjetas individuales, analizamos el cuerpo entero (para páginas de un solo producto)
+        if not tarjetas:
+            tarjetas = [soup]
 
         for tarjeta in tarjetas:
-            tit = tarjeta.find(['p', 'b', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title)', re.I)) or tarjeta.find('p')
-            
-            # Buscamos elementos de precio evitando confundirlos con etiquetas de porcentaje
-            precios_tags = tarjeta.find_all(class_=re.compile(r'(price|sale|oferta|current)', re.I)) or tarjeta.find_all(lambda tag: tag.name in ['span', 'div'] and 'S/.' in tag.text)
-            
-            # Buscar explícitamente si hay un porcentaje de descuento visual en la tarjeta
-            pct_tag = tarjeta.find(text=re.compile(r'%\s*(OFF|descuento)?', re.I)) or tarjeta.find(class_=re.compile(r'(discount|porcentaje|pct)', re.I))
+            # 1. Buscar Título
+            tit = tarjeta.find(['p', 'b', 'h1', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName)', re.I)) or tarjeta.find('p')
+            if not tit:
+                continue
+            nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
+            if not nombre_prod or len(nombre_prod) < 4:
+                continue
+
+            # 2. Buscar Porcentaje de Descuento (ej: -61%)
+            pct_tag = tarjeta.find(text=re.compile(r'-\d+%\s*|%\s*OFF', re.I)) or tarjeta.find(class_=re.compile(r'(discount|porcentaje|badge|pct)', re.I))
             porcentaje_txt = "N/A"
             if pct_tag:
-                match_pct = re.search(r'(\d+)\s*%', pct_tag.text if hasattr(pct_tag, 'text') else str(pct_tag))
+                match_pct = re.search(r'(-\d+%|\d+%)', pct_tag.text if hasattr(pct_tag, 'text') else str(pct_tag))
                 if match_pct:
-                    porcentaje_txt = f"{match_pct.group(1)}%"
+                    porcentaje_txt = match_pct.group(1)
 
+            # 3. Extraer todos los precios limpios con Regex (Maneja S/.109.90 o S/. 109,90)
+            texto_tarjeta = tarjeta.text
+            # Buscamos patrones de precio como S/. 109.90 o S/ 279.90
+            precios_encontrados = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', texto_tarjeta)
+            
+            valores_limpios = []
+            for p_str in precios_encontrados:
+                # Cambiamos comas por puntos y lo pasamos a número decimal (float)
+                p_limpio = p_str.replace(',', '.')
+                try:
+                    val = float(p_limpio)
+                    # Filtro inteligente para ignorar números sospechosos (como el % de las cuotas)
+                    if val > 5 and val not in valores_limpios:
+                        valores_limpios.append(val)
+                except:
+                    continue
+
+            if not valores_limpios:
+                continue
+
+            # El menor siempre será el precio con oferta, el mayor el regular
+            valores_limpios = sorted(valores_limpios)
+            precio_descuento = valores_limpios[0]
+            precio_original = valores_limpios[-1] if len(valores_limpios) > 1 else precio_descuento
+
+            # 4. Capturar Link del artículo
             link_tag = tarjeta.find('a', href=True) or (tarjeta if tarjeta.name == 'a' and tarjeta.has_attr('href') else None)
             link_articulo = url_base
             if link_tag and link_tag['href']:
                 link_articulo = urljoin(url_base, link_tag['href'])
 
-            if tit and precios_tags:
-                nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
-                
-                valores_precios = []
-                for p_tag in precios_tags:
-                    texto_p = p_tag.text.strip()
-                    # Si contiene el símbolo de porcentaje, lo ignoramos para que no contamine los números de precio
-                    if "%" in texto_p:
-                        continue
-                    nums = ''.join(filter(str.isdigit, texto_p))
-                    if nums:
-                        p_num = int(nums) / 100 if len(nums) > 4 and ("adidas" in t_low or "marathon" in t_low) else int(nums[:4]) if len(nums) > 5 else int(nums)
-                        valores_precios.append(int(p_num))
-                
-                if not valores_precios:
+            # Filtro de talla si aplica
+            talla_check = str(talla_buscada).upper().strip()
+            if talla_check and talla_check not in ["TODAS", "N/A", ""]:
+                patron = r'\b' + re.escape(talla_check) + r'\b'
+                if not re.search(patron, tarjeta.text.upper()):
                     continue
-                
-                # Ordenamos los precios detectados: el menor será el precio de oferta y el mayor el original
-                valores_precios = sorted(list(set(valores_precios)))
-                precio_descuento = valores_precios[0]
-                precio_actual_lista = valores_precios[-1] if len(valores_precios) > 1 else precio_descuento
 
-                if precio_descuento <= limite_precio:
-                    talla_check = str(talla_buscada).upper().strip()
-                    if talla_check and talla_check not in ["TODAS", "N/A", ""]:
-                        patron = r'\b' + re.escape(talla_check) + r'\b'
-                        if not re.search(patron, tarjeta.text.upper()):
-                            continue
-                    
-                    productos_encontrados.append({
-                        "nombre": nombre_prod, 
-                        "precio_original": precio_actual_lista,
-                        "precio_descuento": precio_descuento,
-                        "porcentaje": porcentaje_txt,
-                        "link": link_articulo
-                    })
+            if precio_descuento <= limite_precio:
+                productos_encontrados.append({
+                    "nombre": nombre_prod, 
+                    "precio_original": precio_original,
+                    "precio_descuento": precio_descuento,
+                    "porcentaje": porcentaje_txt,
+                    "link": link_articulo
+                })
+                
         return productos_encontrados
-    except:
+    except Exception as e:
         return []
 
 def revisar_ofertas():
@@ -125,6 +139,7 @@ def revisar_ofertas():
 
     conteo_radares = 0
     encontrado_oferta = False
+    enviados_en_este_ciclo = set() # Sistema estricto anti-duplicados
 
     for linea in lineas:
         partes = linea.split(",")
@@ -133,9 +148,9 @@ def revisar_ofertas():
             
         url_base = partes[0].strip()
         try:
-            presupuesto_max = int(partes[1].strip())
+            presupuesto_max = float(partes[1].strip())
         except ValueError:
-            presupuesto_max = 100
+            presupuesto_max = 100.0
             
         identificador = partes[2].strip()
         
@@ -148,10 +163,15 @@ def revisar_ofertas():
         productos = escanear_tienda(url_base, presupuesto_max, tienda, talla)
         
         for p in productos:
-            nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:30]
+            # Crear una clave única por nombre abreviado para evitar duplicados en la base de datos
+            nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:25]
             id_producto = f"{tienda}_{categoria}_{talla}_{nombre_key}"
             precio_actual = p['precio_descuento']
             
+            # Control anti-duplicados en el mismo envío de Telegram
+            if id_producto in enviados_en_este_ciclo:
+                continue
+                
             if id_producto not in historial:
                 historial[id_producto] = {}
                 
@@ -160,16 +180,16 @@ def revisar_ofertas():
             
             if len(precios_previos) == 1 or (len(precios_previos) > 1 and precio_actual < precios_previos[-2]):
                 encontrado_oferta = True
+                enviados_en_este_ciclo.add(id_producto)
                 
-                # REPORTE MEJORADO CON PRECIO ORIGINAL, PORCENTAJE Y PRECIO DE DESCUENTO
                 reporte = (
                     f"🚨 *¡OFERTÓN DETECTADO EN {tienda.upper()}!* 🚨\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
                     f"👟 *Talla:* {talla}\n"
-                    f"💰 *Precio Regular:* S/. {p['precio_original']}\n"
+                    f"💰 *Precio Regular:* S/. {p['precio_original']:.2f}\n"
                     f"📉 *Descuento:* {p['porcentaje']}\n"
-                    f"🔥 *PRECIO CON DESCUENTO:* S/. {p['precio_descuento']}\n"
-                    f"🎯 *Tu Límite Asignado:* S/. {presupuesto_max}\n\n"
+                    f"🔥 *PRECIO CON DESCUENTO:* S/. {p['precio_descuento']:.2f}\n"
+                    f"🎯 *Tu Límite Asignado:* S/. {presupuesto_max:.2f}\n\n"
                     f"🔗 *LINK DIRECTO DE COMPRA:* {p['link']}"
                 )
                 enviar_telegram(reporte)
@@ -178,4 +198,4 @@ def revisar_ofertas():
         json.dump(historial, f, indent=4)
         
     if not encontrado_oferta:
-        enviar_telegram(f"✅ *Escaneo completado.*\nSe revisaron `{conteo_radares}` radares. No se encontraron rebajas adicionales por debajo del límite. 🫡")
+        enviar_telegram(f"✅ *Escaneo completado.*\nSe revisaron `{conteo_radares}` radares. Los precios se mantienen estables. 🫡")
