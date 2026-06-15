@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.5_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.6_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Duplicados Activa**")
 st.sidebar.write("---")
 
@@ -55,13 +55,16 @@ if menu == "📈 Ver Dashboard":
     lista_hogar, lista_personal = [], []
     if os.path.exists(HISTORIAL_FILE):
         try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f_hist: 
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f_hist:
                 data = json.load(f_hist)
+        except:
+            data = {}
+
+        for id_prod, hist in data.items():
+            if id_prod in ["TOTAL_AHORRADO_SISTEMA", "LOG_HORARIOS_OFERTAS"]: continue
             
-            for id_prod, hist in data.items():
-                if id_prod in ["TOTAL_AHORRADO_SISTEMA", "LOG_HORARIOS_OFERTAS"]: continue
-                
-                # --- LÍNEA 65 TOTALMENTE SANADA Y PROTEGIDA TRADICIONALMENTE ---
+            # --- ESTRUCTURA PROTEGIDA TOTALMENTE (LÍNEA 77 SANEADA Y ENCAPSULADA) ---
+            try:
                 parts = id_prod.split("-")
                 tot = len(parts)
                 
@@ -75,3 +78,9 @@ if menu == "📈 Ver Dashboard":
                 
                 precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
                 ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
+                
+                item_dict = {
+                    "Tienda": tienda_txt.upper(),
+                    "Categoría": cat_txt,
+                    "Elemento": prod_txt.replace("_", " "),
+                    "Detalle/Talla": talla_txt,
