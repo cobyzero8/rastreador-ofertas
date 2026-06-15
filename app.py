@@ -42,8 +42,8 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v12.2_")
-st.sidebar.caption("⚡ Sistema: **Protección Absoluta Anti-Cortes**")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v12.3_")
+st.sidebar.caption("⚡ Sistema: **Estructura de Navegación Corregida**")
 st.sidebar.write("---")
 
 menu = st.sidebar.radio(
@@ -56,7 +56,9 @@ if "mod_nombre" not in st.session_state: st.session_state.mod_nombre = ""
 if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
-# --- PESTAÑA 1: DASHBOARD ---
+# =========================================================================
+# --- OPCIÓN 1: DASHBOARD ---
+# =========================================================================
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Central COBY & GEMINI")
     st.subheader("📊 Dashboard de Control Personal")
@@ -86,10 +88,4 @@ if menu == "📈 Ver Dashboard":
             tienda_txt = parts[0]
             cat_txt = parts[1].upper()
             prod_txt = parts[2]
-            talla_txt = parts[3] if tot > 3 else "Todas"
-            
-            clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
-            link_final = links_mapeados.get(clave_link, "#")
-            
-            precios_reales = []
-            items_hist = getattr
+            talla_txt = parts[3]
