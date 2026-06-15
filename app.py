@@ -95,12 +95,13 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
                 "Lbel", "Esika", "Cyzone"
             ])
-            # AQUÍ AGREGUÉ 'PANTALON DEPORTIVO' DE FORMA SEGURA
+            # AQUÍ AGREGUÉ TUS NUEVAS CATEGORÍAS MANUALMENTE
             categoria = st.selectbox("Categoría del Objeto", [
-                "Zapatillas", "Polos", "Poleras", "Casacas", "Pantalon deportivo", "Perfumes", "Shampoo", "Otros"
+                "Zapatillas", "Polos", "Poleras", "Casacas", "Pantalon deportivo", 
+                "Perfumes", "Shampoo", "Desodorante", "Jabon", "Otros"
             ])
         with c2:
-            nombre = st.text_input("Nombre del producto (Usa guiones abajo si deseas, ej: Pantalon_Adidas_Negro)")
+            nombre = st.text_input("Nombre del producto (Usa guiones abajo si deseas, ej: Short_Negro)")
             url = st.text_input("URL exacta del artículo")
         with c3:
             talla = st.text_input("Talla/Volumen (Ej: 9.5US, M, 100ml)")
