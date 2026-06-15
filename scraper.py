@@ -11,9 +11,26 @@ URLS_FILE = "urls.txt"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
-def enviar_telegram(mensaje):
+# --- ENVIAR TELEGRAM CON BOTONES INTERACTIVOS ---
+def enviar_telegram_con_botones(mensaje, url_compra, categoria):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-    payload = {"chat_id": CHAT_ID_TELEGRAM, "text": mensaje, "parse_mode": "Markdown", "disable_web_page_preview": False}
+    
+    # Creamos dos botones debajo del mensaje
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🛒 Ir a Comprar Oferta", "url": url_compra},
+                {"text": f"📦 Ver más de {categoria.upper()}", "callback_data": f"filter_{categoria}"}
+            ]
+        ]
+    }
+    
+    payload = {
+        "chat_id": CHAT_ID_TELEGRAM, 
+        "text": mensaje, 
+        "parse_mode": "Markdown",
+        "reply_markup": json.dumps(reply_markup)
+    }
     try:
         requests.post(url, json=payload, timeout=10)
     except:
@@ -33,7 +50,6 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         t_low = tienda.lower()
         tarjetas = []
         
-        # Selectores de bloques de producto
         if "adidas" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', attrs={"data-glass-item": "product-card"})
         elif "falabella" in t_low:
@@ -43,22 +59,19 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         elif "ripley" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'catalog-product' in x) or soup.find_all('a', class_='ProductCard__ProductLink')
         else:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'pod' in x))
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x))
 
-        # Si no detecta tarjetas individuales, analizamos el cuerpo entero (para páginas de un solo producto)
         if not tarjetas:
             tarjetas = [soup]
 
         for tarjeta in tarjetas:
-            # 1. Buscar Título
             tit = tarjeta.find(['p', 'b', 'h1', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName)', re.I)) or tarjeta.find('p')
             if not tit:
                 continue
             nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
-            if not nombre_prod or len(nombre_prod) < 4:
+            if len(nombre_prod) < 4:
                 continue
 
-            # 2. Buscar Porcentaje de Descuento (ej: -61%)
             pct_tag = tarjeta.find(text=re.compile(r'-\d+%\s*|%\s*OFF', re.I)) or tarjeta.find(class_=re.compile(r'(discount|porcentaje|badge|pct)', re.I))
             porcentaje_txt = "N/A"
             if pct_tag:
@@ -66,18 +79,14 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                 if match_pct:
                     porcentaje_txt = match_pct.group(1)
 
-            # 3. Extraer todos los precios limpios con Regex (Maneja S/.109.90 o S/. 109,90)
             texto_tarjeta = tarjeta.text
-            # Buscamos patrones de precio como S/. 109.90 o S/ 279.90
             precios_encontrados = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', texto_tarjeta)
             
             valores_limpios = []
             for p_str in precios_encontrados:
-                # Cambiamos comas por puntos y lo pasamos a número decimal (float)
                 p_limpio = p_str.replace(',', '.')
                 try:
                     val = float(p_limpio)
-                    # Filtro inteligente para ignorar números sospechosos (como el % de las cuotas)
                     if val > 5 and val not in valores_limpios:
                         valores_limpios.append(val)
                 except:
@@ -86,18 +95,15 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
             if not valores_limpios:
                 continue
 
-            # El menor siempre será el precio con oferta, el mayor el regular
             valores_limpios = sorted(valores_limpios)
             precio_descuento = valores_limpios[0]
             precio_original = valores_limpios[-1] if len(valores_limpios) > 1 else precio_descuento
 
-            # 4. Capturar Link del artículo
             link_tag = tarjeta.find('a', href=True) or (tarjeta if tarjeta.name == 'a' and tarjeta.has_attr('href') else None)
             link_articulo = url_base
             if link_tag and link_tag['href']:
                 link_articulo = urljoin(url_base, link_tag['href'])
 
-            # Filtro de talla si aplica
             talla_check = str(talla_buscada).upper().strip()
             if talla_check and talla_check not in ["TODAS", "N/A", ""]:
                 patron = r'\b' + re.escape(talla_check) + r'\b'
@@ -114,7 +120,7 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                 })
                 
         return productos_encontrados
-    except Exception as e:
+    except:
         return []
 
 def revisar_ofertas():
@@ -123,57 +129,46 @@ def revisar_ofertas():
         
     historial = {}
     if os.path.exists(HISTORIAL_FILE):
-        try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
-                historial = json.load(f)
-        except:
-            historial = {}
+        try: with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
+        except: historial = {}
             
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
     with open(URLS_FILE, "r", encoding="utf-8") as f:
         lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
 
-    if not lineas:
-        return
+    if not lineas: return
 
     conteo_radares = 0
     encontrado_oferta = False
-    enviados_en_este_ciclo = set() # Sistema estricto anti-duplicados
+    enviados_en_este_ciclo = set()
 
     for linea in lineas:
         partes = linea.split(",")
-        if len(partes) < 3:
-            continue
+        if len(partes) < 3: continue
             
         url_base = partes[0].strip()
-        try:
-            presupuesto_max = float(partes[1].strip())
-        except ValueError:
-            presupuesto_max = 100.0
+        try: presupuesto_max = float(partes[1].strip())
+        except ValueError: presupuesto_max = 100.0
             
         identificador = partes[2].strip()
-        
         meta = identificador.split("_")
+        
+        # Estructura Nueva: Tienda_Categoria_Nombre_Talla
         tienda = meta[0] if len(meta) > 0 else "General"
-        categoria = meta[1] if len(meta) > 1 else "General"
-        talla = meta[2] if len(meta) > 2 else "Todas"
+        categoria = meta[1] if len(meta) > 1 else "Otros"
+        talla = meta[3] if len(meta) > 3 else meta[2] if len(meta) > 2 else "Todas"
         
         conteo_radares += 1
         productos = escanear_tienda(url_base, presupuesto_max, tienda, talla)
         
         for p in productos:
-            # Crear una clave única por nombre abreviado para evitar duplicados en la base de datos
-            nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:25]
-            id_producto = f"{tienda}_{categoria}_{talla}_{nombre_key}"
+            nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:20]
+            id_producto = f"{tienda}_{categoria}_{nombre_key}_{talla}"
             precio_actual = p['precio_descuento']
             
-            # Control anti-duplicados en el mismo envío de Telegram
-            if id_producto in enviados_en_este_ciclo:
-                continue
-                
-            if id_producto not in historial:
-                historial[id_producto] = {}
+            if id_producto in enviados_en_este_ciclo: continue
+            if id_producto not in historial: historial[id_producto] = {}
                 
             historial[id_producto][fecha_hoy] = precio_actual
             precios_previos = list(historial[id_producto].values())
@@ -183,19 +178,17 @@ def revisar_ofertas():
                 enviados_en_este_ciclo.add(id_producto)
                 
                 reporte = (
-                    f"🚨 *¡OFERTÓN DETECTADO EN {tienda.upper()}!* 🚨\n\n"
+                    f"🚨 *¡OFERTÓN EN {tienda.upper()}!* 🚨\n"
+                    f"📂 *Categoría:* #{categoria.upper()}\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
                     f"👟 *Talla:* {talla}\n"
                     f"💰 *Precio Regular:* S/. {p['precio_original']:.2f}\n"
                     f"📉 *Descuento:* {p['porcentaje']}\n"
-                    f"🔥 *PRECIO CON DESCUENTO:* S/. {p['precio_descuento']:.2f}\n"
-                    f"🎯 *Tu Límite Asignado:* S/. {presupuesto_max:.2f}\n\n"
-                    f"🔗 *LINK DIRECTO DE COMPRA:* {p['link']}"
+                    f"🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n"
+                    f"🎯 *Tope:* S/. {presupuesto_max:.2f}"
                 )
-                enviar_telegram(reporte)
+                # Enviamos el mensaje con los botones incrustados
+                enviar_telegram_con_botones(reporte, p['link'], categoria)
                 
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
         json.dump(historial, f, indent=4)
-        
-    if not encontrado_oferta:
-        enviar_telegram(f"✅ *Escaneo completado.*\nSe revisaron `{conteo_radares}` radares. Los precios se mantienen estables. 🫡")
