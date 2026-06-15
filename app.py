@@ -9,14 +9,14 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- ENCAPSULADO SEGURO DE CONEXIÓN ---
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
 
+# Conexión Segura
+supabase = None
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
-    st.error(f"❌ Error crítico al conectar con Supabase: {e}")
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except: pass
 
 HISTORIAL_FILE = "historial_precios.json"
 CUPONES_FILE = "cupones.json"
@@ -26,29 +26,10 @@ PRIMERA_NECESIDAD = [
     "ALIMENTOS", "ABARROTES", "HOGAR", "SALUD"
 ]
 
-def obtener_tiendas_dinamicas():
-    tiendas_base = [
-        "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", 
-        "PUMA", "NIKE", "NATURA", "MIFARMA", "INKAFARMA", 
-        "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", 
-        "LBEL", "ESIKA", "CYZONE", "PLAZA_VEA", "TOTTUS", 
-        "METRO", "LATAM", "SKY"
-    ]
-    try:
-        res = supabase.table("radares").select("identificador").execute()
-        if res.data:
-            for item in res.data:
-                meta = item["identificador"].split("-")
-                tnd = meta[0].upper().strip()
-                if tnd and tnd not in tiendas_base: 
-                    tiendas_base.append(tnd)
-    except: pass
-    return sorted(tiendas_base)
-
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v12.5_")
-st.sidebar.caption("⚡ Sistema: **Protección de Renderizado Activa**")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v12.6_")
+st.sidebar.caption("⚡ Sistema: **Aislamiento de Hilos Activo**")
 st.sidebar.write("---")
 
 menu = st.sidebar.radio(
@@ -69,22 +50,20 @@ if menu == "📈 Ver Dashboard":
     st.subheader("📊 Dashboard de Control Personal")
     
     links_mapeados = {}
-    try:
-        res_l = supabase.table("radares").select("url", "identificador").execute()
-        if res_l.data:
-            for item in res_l.data: 
-                links_mapeados[item["identificador"]] = item["url"]
-    except Exception as e:
-        st.warning(f"⚠️ Aviso: No se pudieron mapear los enlaces desde Supabase: {e}")
+    if supabase:
+        try:
+            res_l = supabase.table("radares").select("url", "identificador").execute()
+            if res_l.data:
+                for item in res_l.data: 
+                    links_mapeados[item["identificador"]] = item["url"]
+        except: pass
 
     lista_hogar, lista_personal = [], []
     if os.path.exists(HISTORIAL_FILE):
         try:
             with open(HISTORIAL_FILE, "r", encoding="utf-8") as f_hist:
                 data = json.load(f_hist)
-        except Exception as e:
-            st.error(f"❌ El archivo {HISTORIAL_FILE} está corrupto o ilegible: {e}")
-            data = {}
+        except: data = {}
 
         for id_prod, hist in data.items():
             if id_prod in ["TOTAL_AHORRADO_SISTEMA", "LOG_HORARIOS_OFERTAS"]: continue
@@ -146,9 +125,4 @@ if menu == "📈 Ver Dashboard":
                         cup_dict["Descuento"] = item_c['descuento']
                         cup_dict["Detalle"] = item_c['detalle']
                         lista_cupones_tabla.append(cup_dict)
-                if lista_cupones_tabla: st.dataframe(pd.DataFrame(lista_cupones_tabla), use_container_width=True, hide_index=True)
-                else: st.info("No hay cupones activos.")
-            except Exception as e: st.error(f"❌ Error al abrir cupones: {e}")
-        else: st.info("Cuponera lista.")
-
-#
+                if lista_cupones_tabla: st.dataframe(pd.DataFrame(lista_cupones_tabla), use_
