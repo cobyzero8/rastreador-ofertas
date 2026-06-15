@@ -71,7 +71,6 @@ if menu == "📈 Ver Dashboard":
                 clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
                 link_final = links_mapeados.get(clave_link, "#")
                 
-                # Filtrar si tiene registro de historial de precios reales
                 precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
                 ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
                 
@@ -105,34 +104,4 @@ if menu == "📈 Ver Dashboard":
         except Exception as e: st.error(f"Error: {e}")
 
 # --- MEJORA 3: CALCULADORA DE AHORRO FAMILIAR ACUMULADO ---
-elif menu == "💰 Métricas de Ahorro":
-    st.title("💰 Balance de Ahorro Familiar COBY & GEMINI")
-    st.subheader("📊 Historial de dinero resguardado por el sistema")
-    
-    total_ahorrado = 0.0
-    if os.path.exists(HISTORIAL_FILE):
-        try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: h_data = json.load(f)
-            total_ahorrado = h_data.get("TOTAL_AHORRADO_SISTEMA", 124.50) # Valor base dinámico
-        except: total_ahorrado = 124.50
-        
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric(label="💵 Total Ahorrado Acumulado (Efectivo Real)", value=f"S/. {total_ahorrado:.2f}", delta="¡Economía Protegida!")
-    with c2:
-        st.write("### 📈 Impacto Mensual de Eficiencia")
-        df_ahorro_simulado = pd.DataFrame({"Mes": ["Abril", "Mayo", "Junio"], "Soles Ahorrados": [45.0, 89.2, total_ahorrado]}).set_index("Mes")
-        st.bar_chart(df_ahorro_simulado)
-
-# --- GESTIONAR ENLACES PRO (CON REPORTE DE LINKS MUERTOS MEJORA 5) ---
-elif menu == "🛠️ Gestionar Enlaces Pro":
-    st.title("🛠️ Gestionar Enlaces Pro")
-    lista_tiendas = obtener_tiendas_dinamicas()
-    
-    with st.container(border=True):
-        st.write("### 📝 Registrar / Modificar Artículo Clasificado")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            tienda_sel = st.selectbox("Tienda Seleccionada", lista_tiendas)
-            tienda_manual = st.text_input("✍️ O registrar Nueva Tienda", "").strip().upper()
-            tienda_final = tienda_manual if tienda_manual else
+elif menu == "💰 Métricas de
