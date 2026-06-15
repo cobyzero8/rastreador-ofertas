@@ -29,11 +29,11 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.3_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.4_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Bloqueo Activa**")
 st.sidebar.write("---")
 
-menu = st.sidebar.radio("Selecciona una option:", ["📈 Ver Dashboard", "📊 Inteligencia Comercial", "💰 Métricas de Ahorro", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
+menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "📊 Inteligencia Comercial", "💰 Métricas de Ahorro", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
 
 if "mod_url" not in st.session_state: st.session_state.mod_url = ""
 if "mod_nombre" not in st.session_state: st.session_state.mod_nombre = ""
@@ -75,7 +75,6 @@ if menu == "📈 Ver Dashboard":
             clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
             link_final = links_mapeados.get(clave_link, "#")
             
+            # --- LÍNEA 81 REPARADA CON COMPARACIÓN DIRECTA INMUNE A RECORTES ---
             precios_reales = []
-            if isinstance(hist, dict):
-                for k_h, v_h in hist.items():
-                    if isinstance(v_h,
+            if
