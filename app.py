@@ -8,6 +8,9 @@ st.set_page_config(page_title="Radar Pro - Panel Central", layout="wide")
 HISTORIAL_FILE = "historial_precios.json"
 URLS_FILE = "urls.txt"
 
+TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
+CHAT_ID_TELEGRAM = "8019752668"
+
 st.sidebar.title("💥 Radar Familiar Pro")
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
 
@@ -26,8 +29,10 @@ if menu == "📈 Ver Dashboard":
                 if len(p) >= 3:
                     links_mapeados[p[2]] = p[0]
                     meta = p[2].split("_")
-                    if len(meta) > 1 and meta[1] not in categorias_disponibles:
-                        categorias_disponibles.append(meta[1])
+                    # Resguardo seguro si la línea vieja no tiene categoría
+                    cat_check = meta[1].lower() if len(meta) > 2 else "otros"
+                    if cat_check not in categorias_disponibles:
+                        categorias_disponibles.append(cat_check)
 
     categoria_seleccionada = st.selectbox("🔍 Filtrar visualización por Categoría:", categorias_disponibles)
 
@@ -39,17 +44,27 @@ if menu == "📈 Ver Dashboard":
                 for id_prod, hist in data.items():
                     parts = id_prod.split("_")
                     
+                    # Control y blindaje estricto de índices para el Dashboard
                     tienda_txt = parts[0] if len(parts) > 0 else "N/A"
-                    cat_txt = parts[1] if len(parts) > 1 else "Otros"
-                    prod_txt = parts[2].replace("-", " ") if len(parts) > 2 else "N/A"
-                    talla_txt = parts[3] if len(parts) > 3 else "N/A"
+                    if len(parts) >= 4:
+                        cat_txt = parts[1]
+                        prod_txt = parts[2].replace("-", " ")
+                        talla_txt = parts[3]
+                    else:
+                        cat_txt = "otros"
+                        prod_txt = parts[1].replace("-", " ") if len(parts) > 1 else "N/A"
+                        talla_txt = parts[2] if len(parts) > 2 else "N/A"
                     
-                    clave_link = f"{tienda_txt}_{cat_txt}_{parts[2]}_{talla_txt}"
+                    clave_link = f"{tienda_txt}_{cat_txt}_{prod_txt.replace(' ', '-')}_{talla_txt}"
                     link_final = links_mapeados.get(clave_link, "#")
                     if link_final == "#" and links_mapeados:
-                        link_final = list(links_mapeados.values())[0]
+                        # Búsqueda de respaldo por si el ID cambió de formato
+                        for k, v in links_mapeados.items():
+                            if prod_txt.replace(" ", "-") in k:
+                                link_final = v
+                                break
 
-                    if categoria_seleccionada != "Todos" and cat_txt != categoria_seleccionada:
+                    if categoria_seleccionada != "Todos" and cat_txt.lower() != categoria_seleccionada.lower():
                         continue
 
                     lista.append({
@@ -75,7 +90,8 @@ if menu == "📈 Ver Dashboard":
             st.error(f"Error al cargar el historial: {e}")
     else:
         st.info("No hay datos históricos disponibles.")
-# --- OPCIÓN 2: GESTIONAR ENLACES PRO (CORREGIDO) ---
+
+# --- OPCIÓN 2: GESTIONAR ENLACES PRO ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -129,12 +145,20 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     precio_display = partes[1]
                     meta_parts = partes[2].split("_")
                     
+                    # --- ESCUDO ANTI INDICE FUERA DE RANGO ---
                     tnd = meta_parts[0].upper().replace("-", " ")
-                    cat = meta_parts[1].upper()
-                    prod = meta_parts[2].replace("-", " ")
-                    tll = meta_parts[3] if len(meta_parts) > 3 else "N/A"
                     
-                    # CORRECCIÓN AQUÍ: Proporción de columnas segura [8, 2] en vez de [0, 1]
+                    # Si tiene el nuevo formato de 4 partes usa la estructura normal
+                    if len(meta_parts) >= 4:
+                        cat = meta_parts[1].upper()
+                        prod = meta_parts[2].replace("-", " ")
+                        tll = meta_parts[3]
+                    else:
+                        # Si es una línea antigua de 3 partes, le asigna "OTROS" automáticamente
+                        cat = "OTROS"
+                        prod = meta_parts[1].replace("-", " ") if len(meta_parts) > 1 else "N/A"
+                        tll = meta_parts[2] if len(meta_parts) > 2 else "N/A"
+                    
                     col_info, col_btn = st.columns([8, 2])
                     with col_info:
                         st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Talla: `{tll}` | Tope: `S/. {precio_display}`")
@@ -166,7 +190,4 @@ elif menu == "💥 Forzar Escaneo":
             contenedor_mensaje.success("✅ ¡Escaneo completado! Revisa tu Telegram y el Dashboard.")
             st.rerun()
         except Exception as e:
-            contenedor_mensaje.error(f"❌ Error: {e}")
-
-
             contenedor_mensaje.error(f"❌ Error: {e}")
