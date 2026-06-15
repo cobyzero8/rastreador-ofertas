@@ -71,4 +71,30 @@ if menu == "📈 Ver Dashboard":
                 clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
                 link_final = links_mapeados.get(clave_link, "#")
                 
-                precios_reales =
+                # --- LINEA 74 COMPLETAMENTE CORREGIDA AQUÍ ---
+                precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
+                ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
+                
+                item_dict = {
+                    "Tienda": tienda_txt.upper(), "Categoría": cat_txt,
+                    "Elemento": prod_txt.replace("_", " "), "Detalle/Talla": talla_txt,
+                    "Precio Actual": f"S/. {ultimo_precio}" if ultimo_precio != "N/A" else "N/A", "Compra": link_final
+                }
+                
+                if cat_txt in PRIMERA_NECESIDAD: lista_hogar.append(item_dict)
+                else: lista_personal.append(item_dict)
+            
+            tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
+            
+            with tab1:
+                if lista_hogar: st.data_editor(pd.DataFrame(lista_hogar), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+                else: st.info("No hay artículos esenciales registrados.")
+            with tab2:
+                if lista_personal: st.data_editor(pd.DataFrame(lista_personal), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+                else: st.info("No hay artículos personales registrados.")
+            with tab3:
+                if os.path.exists(CUPONES_FILE):
+                    with open(CUPONES_FILE, "r", encoding="utf-8") as f_cup: cupones_data = json.load(f_cup)
+                    lista_cupones_tabla = []
+                    for tnda, lista_c in cupones_data.items():
+                        for item_c in lista
