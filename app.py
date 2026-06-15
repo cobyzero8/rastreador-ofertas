@@ -29,8 +29,8 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v9.3_")
-st.sidebar.caption("⚡ Estatus: **12 Mejoras Premium Activas**")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v9.5_")
+st.sidebar.caption("⚡ Estatus: **14 Mejoras Premium Activas**")
 st.sidebar.write("---")
 
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "📊 Inteligencia Comercial", "💰 Métricas de Ahorro", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
@@ -107,7 +107,6 @@ elif menu == "📊 Inteligencia Comercial":
     logs = {}
     if os.path.exists(HISTORIAL_FILE):
         try:
-            # --- LÍNEA 110 TOTALMENTE PARCHADA, COMPLETADA Y REASIGNADA EN UN SOLO BLOQUE ---
             with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: data = json.load(f)
             logs = data.get("LOG_HORARIOS_OFERTAS", {})
         except: pass
@@ -139,15 +138,26 @@ elif menu == "💰 Métricas de Ahorro":
 
 # --- GESTIONAR ENLACES PRO ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
-    st.title("🛠️ Gestionar Enlaces Pro")
+    st.title("🛠️ Central de Gestión de Radares Pro")
     lista_tiendas = obtener_tiendas_dinamicas()
+    
     try:
         res_back = supabase.table("radares").select("url", "precio_max", "identificador").execute()
-        if res_back.data:
-            df_backup = pd.DataFrame(res_back.data)
-            csv_data = df_backup.to_csv(index=False).encode('utf-8')
-            st.download_button(label="📥 EXPORTAR RESPALDO DE SEGURIDAD (CSV)", data=csv_data, file_name="respaldo_radares_coby_gemini.csv", mime="text/csv", use_container_width=True)
-    except: pass
+        lineas = res_back.data if res_back.data else []
+    except: lineas = []
+    
+    # --- MEJORA 1: CONTADOR DE SEGURIDAD EN TIEMPO REAL ---
+    st.metric(label="📊 Total de Radares Registrados en la Nube", value=f"{len(lineas)} Radares Activos")
+    
+    if lineas:
+        df_backup = pd.DataFrame(lineas)
+        csv_data = df_backup.to_csv(index=False).encode('utf-8')
+        st.download_button(label="📥 EXPORTAR RESPALDO DE SEGURIDAD (CSV)", data=csv_data, file_name="respaldo_radares_coby_gemini.csv", mime="text/csv", use_container_width=True)
+        
+        # --- MEJORA 2: BOTÓN EXPANDIBLE DE INSPECCIÓN ABSOLUTA ---
+        with st.expander("👁️‍🗨️ VER TODOS MIS ENLACES GUARDADOS EN TABLA MAESTRA (Filtro Rápido)", expanded=False):
+            st.write("### 📋 Vista Completa Directa desde Supabase")
+            st.dataframe(df_backup[["identificador", "precio_max", "url"]], use_container_width=True, hide_index=True)
     
     st.write("---")
     with st.container(border=True):
@@ -179,16 +189,15 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 st.rerun()
 
     st.write("---")
-    st.subheader("📋 Registro Actual de la Base de Datos")
-    try:
-        res_d = supabase.table("radares").select("*").order("id", desc=True).execute()
-        lineas = res_d.data if res_d.data else []
-    except: lineas = []
+    st.subheader("📋 Bloques de Edición Rápida (Últimos agregados)")
     
     if lineas:
+        # Mostrar los bloques uno a uno (por si quieres editar o eliminar rápido)
         for index, item in enumerate(lineas):
             meta_parts = item["identificador"].split("-")
-            tnd, cat, lbl = meta_parts[0].upper(), meta_parts[1].upper(), meta_parts[2].replace("_", " ")
+            tnd = meta_parts[0].upper() if len(meta_parts) > 0 else "OTRA"
+            cat = meta_parts[1].upper() if len(meta_parts) > 1 else "OTROS"
+            lbl = meta_parts[2].replace("_", " ") if len(meta_parts) > 2 else "Item"
             tll = meta_parts[3] if len(meta_parts) > 3 else "Todas"
             url_real = item["url"]
             
