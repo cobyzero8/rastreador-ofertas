@@ -4,7 +4,10 @@ import os
 import pandas as pd
 from supabase import create_client, Client
 
-st.set_page_config(page_title="COBY & GEMINI - Sistema Inteligente", layout="wide")
+st.set_page_config(
+    page_title="COBY & GEMINI - Sistema Inteligente", 
+    layout="wide"
+)
 
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
@@ -13,27 +16,40 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 HISTORIAL_FILE = "historial_precios.json"
 CUPONES_FILE = "cupones.json"
 
-PRIMERA_NECESIDAD = ["SHAMPOO", "DESODORANTE", "JABON", "PERFUMES", "ALIMENTOS", "ABARROTES", "HOGAR", "SALUD"]
+PRIMERA_NECESIDAD = [
+    "SHAMPOO", "DESODORANTE", "JABON", "PERFUMES", 
+    "ALIMENTOS", "ABARROTES", "HOGAR", "SALUD"
+]
 
 def obtener_tiendas_dinamicas():
-    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "NATURA", "MIFARMA", "INKAFARMA", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "LBEL", "ESIKA", "CYZONE", "PLAZA_VEA", "TOTTUS", "METRO", "LATAM", "SKY"]
+    tiendas_base = [
+        "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", 
+        "PUMA", "NIKE", "NATURA", "MIFARMA", "INKAFARMA", 
+        "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", 
+        "LBEL", "ESIKA", "CYZONE", "PLAZA_VEA", "TOTTUS", 
+        "METRO", "LATAM", "SKY"
+    ]
     try:
         res = supabase.table("radares").select("identificador").execute()
         if res.data:
             for item in res.data:
                 meta = item["identificador"].split("-")
                 tnd = meta[0].upper().strip()
-                if tnd and tnd not in tiendas_base: tiendas_base.append(tnd)
+                if tnd and tnd not in tiendas_base: 
+                    tiendas_base.append(tnd)
     except: pass
     return sorted(tiendas_base)
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.9_")
-st.sidebar.caption("⚡ Sistema: **Numeración Dinámica Correlativa**")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v12.0_")
+st.sidebar.caption("⚡ Sistema: **Protección Absoluta Anti-Cortes**")
 st.sidebar.write("---")
 
-menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "📊 Inteligencia Comercial", "💰 Métricas de Ahorro", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
+menu = st.sidebar.radio(
+    "Selecciona una opción:", 
+    ["📈 Ver Dashboard", "📊 Inteligencia Comercial", "💰 Métricas de Ahorro", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"]
+)
 
 if "mod_url" not in st.session_state: st.session_state.mod_url = ""
 if "mod_nombre" not in st.session_state: st.session_state.mod_nombre = ""
@@ -49,7 +65,8 @@ if menu == "📈 Ver Dashboard":
     try:
         res_l = supabase.table("radares").select("url", "identificador").execute()
         if res_l.data:
-            for item in res_l.data: links_mapeados[item["identificador"]] = item["url"]
+            for item in res_l.data: 
+                links_mapeados[item["identificador"]] = item["url"]
     except: pass
 
     lista_hogar, lista_personal = [], []
@@ -68,28 +85,4 @@ if menu == "📈 Ver Dashboard":
             if tot < 3: continue
             
             tienda_txt = parts[0]
-            cat_txt = parts[1].upper()
-            prod_txt = parts[2]
-            talla_txt = parts[3] if tot > 3 else "Todas"
-            
-            clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
-            link_final = links_mapeados.get(clave_link, "#")
-            
-            precios_reales = []
-            items_hist = getattr(hist, "items", None)
-            if items_hist:
-                for k_h, v_h in items_hist():
-                    if type(v_h) in [int, float]:
-                        precios_reales.append(v_h)
-            
-            ultimo_precio = precios_reales[-1] if precios_reales else "N/A"
-            
-            # --- LÍNEA 94 TOTALMENTE REESTRUCTURADA EN UN BLOQUE TRADICIONAL ULTRA CORTO ---
-            txt_precio = "N/A"
-            if ultimo_precio != "N/A":
-                txt_precio = f"S/. {ultimo_precio}"
-            
-            item_dict = {}
-            item_dict["Tienda"] = tienda_txt.upper()
-            item_dict["Categoría"] = cat_txt
-            item_dict
+            cat_txt = parts
