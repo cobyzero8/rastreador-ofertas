@@ -6,9 +6,13 @@ from datetime import datetime
 import re
 import random
 from urllib.parse import urljoin
+from supabase import create_client, Client # NUEVO ACCESO DESDE GITHUB ACTIONS
+
+SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
+SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HISTORIAL_FILE = "historial_precios.json"
-URLS_FILE = "urls.txt"
 CUPONES_FILE = "cupones.json"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
@@ -27,8 +31,7 @@ def generar_barra_descuento(precio_orig, precio_desc):
         if porcentaje <= 0: return ""
         bloques_llenos = int(round(porcentaje / 10))
         bloques_llenos = max(1, min(bloques_llenos, 10))
-        bloques_vacios = 10 - bloques_llenos
-        barra = "█" * bloques_llenos + "░" * bloques_vacios
+        barra = "█" * bloques_llenos + "░" * (10 - bloques_llenos)
         return f"`[{barra}]` *¡Ahorro del {porcentaje:.0f}%!*"
     except: return ""
 
@@ -47,7 +50,7 @@ def enviar_telegram_con_foto_y_botones(mensaje, url_compra, categoria, url_foto,
 
 def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
     productos_encontrados = []
-    headers = {"User-Agent": random.choice(USER_AGENTS_POOL), "Accept-Language": "es-PE,es;q=0.9", "Referer": "https://www.google.com/"}
+    headers = {"User-Agent": random.choice(USER_AGENTS_POOL), "Accept-Language": "es-PE,es;q=0.9"}
     try:
         respuesta = requests.get(url_base, headers=headers, timeout=12)
         if respuesta.status_code != 200: return []
@@ -99,7 +102,6 @@ def simular_rastreo_cupones_global():
     bc = {"ADIDAS": [{"codigo": "ADI2026", "descuento": "20% OFF", "detalle": "Válido en calzado y ropa seleccionada"}], "FALABELLA": [{"codigo": "FALA15", "descuento": "15% DSCTO", "detalle": "Exclusivo primera compra App con CMR"}], "MARATHON": [{"codigo": "RUNNER10", "descuento": "S/. 30 Menos", "detalle": "En compras superiores a S/. 250"}], "LBEL": [{"codigo": "BLEU10", "descuento": "10% EXTRA", "detalle": "Aplicable a perfumes de hombre en carrito"}]}
     if os.path.exists(CUPONES_FILE):
         with open(CUPONES_FILE, "w", encoding="utf-8") as f: json.dump(bc, f, indent=4)
-    # FIRMA COBY & GEMINI EN TELEGRAM (CUPONES)
     txt_t = "🎟️ *CENTRAL DE CUPONES RADAR PRO* 🎟️\n⚡ _By COBY & GEMINI - Los Genios de la Automatización_ 🧠\n———————————————————\n\n🔥 ¡Nuevos cupones globales interceptados! Entra al Dashboard web en la pestaña *Cuponera Central Express* para copiarlos.\n\n🔹 *Adidas:* `ADI2026` (20% OFF)\n🔹 *Falabella:* `FALA15` (15% OFF)\n🔹 *Marathon:* `RUNNER10` (S/.30 Menos)\n\n———————————————————\n📱 _Usa los códigos antes de pagar._"
     try: requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": txt_t, "parse_mode": "Markdown"}, timeout=10)
     except: pass
@@ -107,25 +109,31 @@ def simular_rastreo_cupones_global():
 def revisar_ofertas():
     try: simular_rastreo_cupones_global()
     except: pass
-    if not os.path.exists(URLS_FILE): return
+    
+    # NUEVA CONSULTA DIRECTA DESDE LA NUBE SUPABASE EN VEZ DE LOCAL FILE
+    try:
+        res_s = supabase.table("radares").select("*").execute()
+        lineas = res_s.data if res_s.data else []
+    except: return
+
+    if not lineas: return
     historial = {}
     if os.path.exists(HISTORIAL_FILE):
         try: with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
         except: historial = {}
+        
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    with open(URLS_FILE, "r", encoding="utf-8") as f: lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
-    if not lineas: return
     enviados_en_este_ciclo = set()
-    for linea in lineas:
-        partes = linea.split(",")
-        if len(partes) < 3: continue
-        url_base = partes[0].strip()
-        try: presupuesto_max = float(partes[1].strip())
-        except: presupuesto_max = 100.0
-        meta = partes[2].strip().split("-")
+    
+    for item in lineas:
+        url_base = item["url"].strip()
+        presupuesto_max = float(item["precio_max"])
+        meta = item["identificador"].strip().split("-")
+        
         tienda = meta[0] if len(meta) > 0 else "General"
         categoria = meta[1] if len(meta) > 1 else "Otros"
         talla = meta[3] if len(meta) > 3 else meta[2] if len(meta) > 2 else "Todas"
+        
         productos = escanear_tienda(url_base, presupuesto_max, tienda, talla)
         for p in productos:
             id_producto = f"{tienda}-{categoria}-{''.join(c for c in p['nombre'] if c.isalnum() or c=='_')[:20]}-{talla}"
@@ -139,7 +147,6 @@ def revisar_ofertas():
                 ahorro_soles = p['precio_original'] - p['precio_descuento']
                 texto_ahorro = f"💰 *Ahorraste:* S/. {ahorro_soles:.2f}" if ahorro_soles > 0 else ""
                 barra_grafica = generar_barra_descuento(p['precio_original'], p['precio_descuento'])
-                # FIRMA COBY & GEMINI EN TELEGRAM (OFERTAS)
                 reporte = f"🛍️ *¡OFERTÓN DETECTADO POR EL RADAR!* 🛍️\n———————————————————\n\n🏢 *Tienda:* `{tienda.upper().replace('_', ' ')}`\n📂 *Categoría:* #{categoria.upper()}\n\n📦 *Elemento:* `{p['nombre']}`\n{detalle_medida} {talla}\n\n———————————————————\n💵 *Precio Normal:* S/. {p['precio_original']:.2f}\n🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n🎯 *Tu Tope Fijado:* S/. {presupuesto_max:.2f}\n\n{texto_ahorro}\n📉 {barra_grafica}\n———————————————————\n🦾 _Filtros activos. By COBY & GEMINI_ 🧠"
-                enviar_telegram_con_foto_y_botones(reporte, p['link'], categoria, p['foto'], partes[2].strip())
+                enviar_telegram_con_foto_y_botones(reporte, p['link'], categoria, p['foto'], item["identificador"].strip())
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f: json.dump(historial, f, indent=4)
