@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.3_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.4_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Duplicados Activa**")
 st.sidebar.write("---")
 
@@ -53,6 +53,13 @@ if menu == "📈 Ver Dashboard":
     except: pass
 
     lista_hogar, lista_personal = [], []
+    # --- LÍNEA 58 TOTALMENTE PARCHADA Y ASEGURADA CONTRA CORTES ---
     if os.path.exists(HISTORIAL_FILE):
         try:
-            with open(HIST
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f_hist: 
+                data = json.load(f_hist)
+            for id_prod, hist in data.items():
+                if id_prod in ["TOTAL_AHORRADO_SISTEMA", "LOG_HORARIOS_OFERTAS"]: continue
+                parts = id_prod.split("-")
+                
+                total_
