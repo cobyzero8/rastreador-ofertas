@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.7_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v11.8_")
 st.sidebar.caption("⚡ Sistema: **Numeración Dinámica Correlativa**")
 st.sidebar.write("---")
 
@@ -91,22 +91,4 @@ if menu == "📈 Ver Dashboard":
             item_dict["Categoría"] = cat_txt
             item_dict["Elemento"] = prod_txt.replace("_", " ")
             item_dict["Detalle/Talla"] = talla_txt
-            item_dict["Precio Actual"] = f"S/. {ultimo_precio}" if ultimo_precio != "N/A" else "N/A"
-            item_dict["Compra"] = link_final
-            
-            if cat_txt in PRIMERA_NECESIDAD:
-                lista_hogar.append(item_dict)
-            else:
-                lista_personal.append(item_dict)
-
-    tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
-    with tab1:
-        if lista_hogar: st.data_editor(pd.DataFrame(lista_hogar), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-        else: st.info("No hay artículos esenciales registrados.")
-    with tab2:
-        if lista_personal: st.data_editor(pd.DataFrame(lista_personal), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-        else: st.info("No hay artículos personales registrados.")
-    with tab3:
-        if os.path.exists(CUPONES_FILE):
-            try:
-                with open(C
+            item_dict["Precio Actual"] = f"S/. {ultimo_precio}" if ultimo_
