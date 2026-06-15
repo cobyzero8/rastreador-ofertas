@@ -81,7 +81,7 @@ if menu == "📈 Ver Dashboard":
     else:
         st.info("No hay datos históricos disponibles.")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES PRO ---
+# --- OPCIÓN 2: GESTIONAR ENLACES PRO (DINÁMICO CON AGREGADO MANUAL) ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -95,13 +95,21 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
                 "Lbel", "Esika", "Cyzone"
             ])
-            # AQUÍ AGREGUÉ TUS NUEVAS CATEGORÍAS MANUALMENTE
-            categoria = st.selectbox("Categoría del Objeto", [
+            
+            # Categorías rápidas sugeridas
+            cat_sugerida = st.selectbox("Seleccionar Categoría Frecuente", [
                 "Zapatillas", "Polos", "Poleras", "Casacas", "Pantalon deportivo", 
                 "Perfumes", "Shampoo", "Desodorante", "Jabon", "Otros"
             ])
+            
+            # CASILLA MÁGICA: Escribe lo que quieras aquí y creará la categoría en vivo
+            cat_manual = st.text_input("✍️ O escribir Nueva Categoría (Ej: gorras, casacas...)", "").strip()
+            
+            # Si el usuario escribió algo en la casilla manual, se prioriza sobre el selectbox
+            categoria_final = cat_manual if cat_manual else cat_sugerida
+
         with c2:
-            nombre = st.text_input("Nombre del producto (Usa guiones abajo si deseas, ej: Short_Negro)")
+            nombre = st.text_input("Nombre del producto (Usa guiones abajo, ej: Buzo_Entrenamiento)")
             url = st.text_input("URL exacta del artículo")
         with c3:
             talla = st.text_input("Talla/Volumen (Ej: 9.5US, M, 100ml)")
@@ -111,7 +119,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
         if st.button("💾 GUARDAR ARTÍCULO CLASIFICADO", type="primary", use_container_width=True):
             if nombre and url:
                 nombre_limpio = nombre.replace(" ", "_").strip()
-                cat_limpia = categoria.upper().strip()
+                cat_limpia = categoria_final.upper().strip()
                 tienda_limpia = tienda.upper().strip()
                 talla_limpia = talla.strip() if talla.strip() else "TODAS"
                 
@@ -120,7 +128,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 with open(URLS_FILE, "a", encoding="utf-8") as f:
                     f.write(nueva_linea)
                     
-                st.toast(f"✅ ¡{tienda} - {categoria} guardado correctamente!")
+                st.toast(f"✅ ¡{tienda} - {categoria_final.upper()} guardado correctamente!")
                 st.rerun()
             else:
                 st.error("❌ Completa los campos requeridos (Nombre y URL).")
@@ -151,8 +159,8 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                         if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
                             lineas.pop(index)
                             with open(URLS_FILE, "w", encoding="utf-8") as f_web:
-                                for l_restante in lineas:
-                                    f_web.write(l_restante + "\n")
+                                    for l_restante in lineas:
+                                        f_web.write(l_restante + "\n")
                             st.toast("🗑️ Artículo eliminado con éxito.")
                             st.rerun()
                 st.write("")
