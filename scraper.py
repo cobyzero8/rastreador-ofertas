@@ -11,11 +11,8 @@ URLS_FILE = "urls.txt"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
-# --- ENVIAR TELEGRAM CON BOTONES INTERACTIVOS ---
 def enviar_telegram_con_botones(mensaje, url_compra, categoria):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-    
-    # Creamos dos botones debajo del mensaje
     reply_markup = {
         "inline_keyboard": [
             [
@@ -24,17 +21,14 @@ def enviar_telegram_con_botones(mensaje, url_compra, categoria):
             ]
         ]
     }
-    
     payload = {
         "chat_id": CHAT_ID_TELEGRAM, 
         "text": mensaje, 
         "parse_mode": "Markdown",
         "reply_markup": json.dumps(reply_markup)
     }
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except:
-        pass
+    try: requests.post(url, json=payload, timeout=10)
+    except: pass
 
 def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
     productos_encontrados = []
@@ -50,36 +44,42 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         t_low = tienda.lower()
         tarjetas = []
         
+        # Selectores específicos por tienda
         if "adidas" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', attrs={"data-glass-item": "product-card"})
         elif "falabella" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'product-card' in x) or soup.find_all('div', class_=lambda x: x and 'pod-details' in x)
         elif "marathon" in t_low or "triathlon" in t_low:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product-item' in x or 'productCard' in x or 'item' in x))
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product-item' in x or 'productCard' in x or 'item' in x or 'vtex' in x))
         elif "ripley" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and 'catalog-product' in x) or soup.find_all('a', class_='ProductCard__ProductLink')
+        elif "mercado" in t_low:
+            tarjetas = soup.find_all('div', class_=lambda x: x and 'ui-search-result' in x) or soup.find_all('li', class_='ui-search-layout__item')
+        elif "mifarma" in t_low or "inkafarma" in t_low:
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x))
+        elif "natura" in t_low:
+            tarjetas = soup.find_all('div', class_=lambda x: x and 'product' in x)
         else:
-            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x))
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'pod' in x))
 
         if not tarjetas:
             tarjetas = [soup]
 
         for tarjeta in tarjetas:
-            tit = tarjeta.find(['p', 'b', 'h1', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName)', re.I)) or tarjeta.find('p')
-            if not tit:
-                continue
+            # Ignoramos etiquetas sueltas de metadatos de marcas para evitar errores 'brand'
+            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName|item__title)', re.I)) or tarjeta.find('p')
+            if not tit: continue
             nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
-            if len(nombre_prod) < 4:
-                continue
+            if len(nombre_prod) < 4 or "brand" in nombre_prod.lower(): continue
 
             pct_tag = tarjeta.find(text=re.compile(r'-\d+%\s*|%\s*OFF', re.I)) or tarjeta.find(class_=re.compile(r'(discount|porcentaje|badge|pct)', re.I))
             porcentaje_txt = "N/A"
             if pct_tag:
                 match_pct = re.search(r'(-\d+%|\d+%)', pct_tag.text if hasattr(pct_tag, 'text') else str(pct_tag))
-                if match_pct:
-                    porcentaje_txt = match_pct.group(1)
+                if match_pct: porcentaje_txt = match_pct.group(1)
 
             texto_tarjeta = tarjeta.text
+            # Captura formatos de precio de Perú (S/. 120, S/120.00, S/.120.90)
             precios_encontrados = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', texto_tarjeta)
             
             valores_limpios = []
@@ -89,11 +89,9 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                     val = float(p_limpio)
                     if val > 5 and val not in valores_limpios:
                         valores_limpios.append(val)
-                except:
-                    continue
+                except: continue
 
-            if not valores_limpios:
-                continue
+            if not valores_limpios: continue
 
             valores_limpios = sorted(valores_limpios)
             precio_descuento = valores_limpios[0]
@@ -107,8 +105,7 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
             talla_check = str(talla_buscada).upper().strip()
             if talla_check and talla_check not in ["TODAS", "N/A", ""]:
                 patron = r'\b' + re.escape(talla_check) + r'\b'
-                if not re.search(patron, tarjeta.text.upper()):
-                    continue
+                if not re.search(patron, tarjeta.text.upper()): continue
 
             if precio_descuento <= limite_precio:
                 productos_encontrados.append({
@@ -124,16 +121,14 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         return []
 
 def revisar_ofertas():
-    if not os.path.exists(URLS_FILE):
-        return
-        
+    if not os.path.exists(URLS_FILE): return
     historial = {}
     if os.path.exists(HISTORIAL_FILE):
-        try: with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
+        try:
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
         except: historial = {}
             
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    
     with open(URLS_FILE, "r", encoding="utf-8") as f:
         lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
 
@@ -154,7 +149,6 @@ def revisar_ofertas():
         identificador = partes[2].strip()
         meta = identificador.split("_")
         
-        # Estructura Nueva: Tienda_Categoria_Nombre_Talla
         tienda = meta[0] if len(meta) > 0 else "General"
         categoria = meta[1] if len(meta) > 1 else "Otros"
         talla = meta[3] if len(meta) > 3 else meta[2] if len(meta) > 2 else "Todas"
@@ -178,16 +172,15 @@ def revisar_ofertas():
                 enviados_en_este_ciclo.add(id_producto)
                 
                 reporte = (
-                    f"🚨 *¡OFERTÓN EN {tienda.upper()}!* 🚨\n"
+                    f"🚨 *¡OFERTÓN EN {tienda.upper().replace('-', ' ')}!* 🚨\n"
                     f"📂 *Categoría:* #{categoria.upper()}\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
-                    f"👟 *Talla:* {talla}\n"
+                    f"👟 *Detalle/Talla:* {talla}\n"
                     f"💰 *Precio Regular:* S/. {p['precio_original']:.2f}\n"
                     f"📉 *Descuento:* {p['porcentaje']}\n"
                     f"🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n"
                     f"🎯 *Tope:* S/. {presupuesto_max:.2f}"
                 )
-                # Enviamos el mensaje con los botones incrustados
                 enviar_telegram_con_botones(reporte, p['link'], categoria)
                 
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
