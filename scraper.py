@@ -18,8 +18,9 @@ TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
 USER_AGENTS_POOL = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/16.6 Safari/605.1.15"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 ]
 
 def generar_barra_descuento(precio_orig, precio_desc):
@@ -34,29 +35,32 @@ def generar_barra_descuento(precio_orig, precio_desc):
 
 def enviar_telegram_con_foto_y_botones(mensaje, url_compra, url_foto):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
-    reply_markup = {"inline_keyboard": [[{"text": "🛒 Ir a la Oferta / Comprar", "url": url_compra}]]}
+    reply_markup = {"inline_keyboard": [[{"text": "🛒 Ir al Catálogo / Comprar", "url": url_compra}]]}
     foto_final = url_foto if url_foto and url_foto.startswith("http") else "https://images.unsplash.com/photo-1555529669-e69e7aa0ba9a?q=80&w=500"
     try: requests.post(url, json={"chat_id": CHAT_ID_TELEGRAM, "photo": foto_final, "caption": mensaje, "parse_mode": "Markdown", "reply_markup": json.dumps(reply_markup)}, timeout=10)
     except: pass
 
 def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
     productos_encontrados = []
-    headers = {"User-Agent": random.choice(USER_AGENTS_POOL)}
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS_POOL),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9",
+        "Referer": "https://www.google.com/"
+    }
     try:
-        respuesta = requests.get(url_base, headers=headers, timeout=12)
+        respuesta = requests.get(url_base, headers=headers, timeout=15)
         
+        # --- AQUÍ CORREGIMOS EL ERROR: YA NO MARCA COMO MUERTO EN LA BASE DE DATOS POR UN BLOQUEO TEMPORAL ---
         if respuesta.status_code != 200:
-            try: 
-                supabase.table("radares").update({"url": "https://muerto_o_sin_stock"}).eq("id", item_id).execute()
-            except: 
-                pass
-            return []
+            return [] # Solo ignora el turno actual, no rompe el enlace en Supabase
             
         soup = BeautifulSoup(respuesta.text, 'html.parser')
-        tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x)) or [soup]
+        # Buscar estructuras comunes de productos en catálogos de Adidas, Ripley, Falabella, etc.
+        tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'grid' in x)) or [soup]
 
         for tarjeta in tarjetas:
-            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|name|pod)', re.I)) or tarjeta.find('p')
+            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|name|pod|glass-product-card__title)', re.I)) or tarjeta.find('p')
             if not tit: continue
             nombre_prod = re.sub(r'\s+', ' ', tit.text.strip().replace(",", ""))
             if len(nombre_prod) < 4: continue
@@ -107,7 +111,7 @@ def revisar_ofertas():
     hora_actual = datetime.now().hour
     
     es_madrugada = (hora_actual >= 23 or hora_actual <= 5)
-    header_mensaje = "🌙 *[PROMO NOCTURNA FLASH]* 🌙" if es_madrugada else "🛍️ *¡OFERTÓN DETECTADO POR EL RADAR!* 🛍️"
+    header_mensaje = "🌙 *[PROMO NOCTURNA CATALOGO]* 🌙" if es_madrugada else "🛍️ *¡OFERTAS DE CATÁLOGO DETECTADAS!* 🛍️"
 
     total_ahorrado_acumulado = historial.get("TOTAL_AHORRADO_SISTEMA", 124.50)
 
@@ -126,20 +130,19 @@ def revisar_ofertas():
             precio_promedio = sum(precios_anteriores) / len(precios_anteriores) if precios_anteriores else p['precio_original']
             
             if precios_anteriores and p['precio_descuento'] > (precio_promedio * 1.05):
-                alert_estafa = "⚠️ *ALERTA:* _Falsa oferta detectada (Precio inflado)._"
+                alert_estafa = "⚠️ *ALERTA:* _Falsa oferta detectada (Precio inflado en lista)._"
             else:
-                alert_estafa = "✅ *OFERTA REAL RECOMENDADA*"
+                alert_estafa = "✅ *OFERTA EN LISTA RECOMENDADA*"
 
-            # MEJORA: Analizador Estadístico de Tendencia
-            tendencia_txt = "🆕 *TENDENCIA:* Primer registro capturado del artículo."
+            tendencia_txt = "🆕 *TENDENCIA:* Elemento detectado en el barrido de lista."
             if len(precios_anteriores) >= 1:
                 ultimo_p = precios_anteriores[-1]
                 if p['precio_descuento'] < ultimo_p:
-                    tendencia_txt = "📉 *TENDENCIA:* ¡PRECIO EN CAÍDA LIBRE! 🎯"
+                    tendencia_txt = "📉 *TENDENCIA:* ¡Bajón de precio en catálogo! 🎯"
                 elif p['precio_descuento'] > ultimo_p:
-                    tendencia_txt = "⚠️ *TENDENCIA:* Rebote de precio (Subiendo)."
+                    tendencia_txt = "⚠️ *TENDENCIA:* El artículo volvió a subir en la lista."
                 else:
-                    tendencia_txt = "📊 *TENDENCIA:* Precio estable en piso mínimo."
+                    tendencia_txt = "📊 *TENDENCIA:* Precio estable en el catálogo."
 
             historial[id_producto][fecha_hoy] = p['precio_descuento']
             
@@ -153,14 +156,14 @@ def revisar_ofertas():
                 f"———————————————————\n\n"
                 f"🏢 *Tienda:* `{tienda.upper()}` | 📂 #{categoria.upper()}\n"
                 f"📦 *Elemento:* `{p['nombre']}` ({talla})\n\n"
-                f"💵 *Normal:* S/. {p['precio_original']:.2f} | 🔥 *ACTUAL:* S/. {p['precio_descuento']:.2f}\n"
-                f"🎯 *Tu Tope:* S/. {item['precio_max']:.2f}\n\n"
-                f"💰 *Ahorro en este ítem:* S/. {ahorro_soles:.2f}\n"
+                f"💵 *Normal en Lista:* S/. {p['precio_original']:.2f} | 🔥 *OFERTA:* S/. {p['precio_descuento']:.2f}\n"
+                f"🎯 *Tu Tope Configurado:* S/. {item['precio_max']:.2f}\n\n"
+                f"💰 *Ahorro estimado:* S/. {ahorro_soles:.2f}\n"
                 f"{tendencia_txt}\n"
                 f"📉 {barra_grafica}\n"
                 f"{alert_estafa}\n"
                 f"———————————————————\n"
-                f"🦾 _Filtros Activos. COBY & GEMINI System_ 🧠"
+                f"🦾 _Rastreador de Catálogos. COBY & GEMINI_ 🧠"
             )
             enviar_telegram_con_foto_y_botones(reporte, p['link'], p['foto'])
             
