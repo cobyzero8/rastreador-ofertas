@@ -75,8 +75,7 @@ if menu == "📈 Ver Dashboard":
             st.error(f"Error al cargar el historial: {e}")
     else:
         st.info("No hay datos históricos disponibles.")
-
-# --- OPCIÓN 2: GESTIONAR ENLACES PRO (AHORA CON FUNCIÓN DE BORRADO) ---
+# --- OPCIÓN 2: GESTIONAR ENLACES PRO (CORREGIDO) ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -123,7 +122,6 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             lineas = [l.strip() for l in f.readlines() if l.strip()]
             
         if lineas:
-            # Creamos una lista organizada para mostrar en la interfaz con botones individuales
             for index, linea in enumerate(lineas):
                 partes = linea.split(",")
                 if len(partes) >= 3:
@@ -136,13 +134,12 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     prod = meta_parts[2].replace("-", " ")
                     tll = meta_parts[3] if len(meta_parts) > 3 else "N/A"
                     
-                    # Dibujamos una fila limpia por cada producto con un botón de basura al lado
-                    col_info, col_btn = st.columns([0, 1])
+                    # CORRECCIÓN AQUÍ: Proporción de columnas segura [8, 2] en vez de [0, 1]
+                    col_info, col_btn = st.columns([8, 2])
                     with col_info:
                         st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Talla: `{tll}` | Tope: `S/. {precio_display}`")
                     with col_btn:
-                        # Si presionas este botón, se elimina la línea exacta del archivo
-                        if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary"):
+                        if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
                             lineas.pop(index)
                             with open(URLS_FILE, "w", encoding="utf-8") as f_web:
                                 for l_restante in lineas:
@@ -169,4 +166,7 @@ elif menu == "💥 Forzar Escaneo":
             contenedor_mensaje.success("✅ ¡Escaneo completado! Revisa tu Telegram y el Dashboard.")
             st.rerun()
         except Exception as e:
+            contenedor_mensaje.error(f"❌ Error: {e}")
+
+
             contenedor_mensaje.error(f"❌ Error: {e}")
