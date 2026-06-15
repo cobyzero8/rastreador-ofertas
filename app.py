@@ -44,7 +44,7 @@ if menu == "📈 Ver Dashboard":
                         "Tienda": parts[0] if len(parts) > 0 else "N/A",
                         "Producto": parts[1].replace("-", " ") if len(parts) > 1 else "N/A",
                         "Talla": parts[2] if len(parts) > 2 else "N/A",
-                        "Precio": f"S/. {list(hist.values())[-1]}" if hist else "N/A",
+                        "Precio Final": f"S/. {list(hist.values())[-1]}" if hist else "N/A",
                         "Link de Compra": link_final
                     })
                 
@@ -88,7 +88,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     with open(URLS_FILE, "a", encoding="utf-8") as f:
                         f.write(nueva_linea)
                         
-                    st.toast("✅ ¡Artículo guardado correctamente con tu precio tope!")
+                    st.toast("✅ ¡Artículo guardado correctamente!")
                     st.rerun()
                 else:
                     st.error("❌ Por favor, completa los campos requeridos (Nombre y URL).")
