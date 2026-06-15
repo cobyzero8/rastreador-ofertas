@@ -48,11 +48,9 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
             tit = tarjeta.find(['p', 'b', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title)', re.I)) or tarjeta.find('p')
             prc = tarjeta.find(class_=re.compile(r'(price|sale|oferta|current)', re.I)) or tarjeta.find(lambda tag: tag.name in ['span', 'div'] and 'S/.' in tag.text)
             
-            # --- DETECCIÓN DEL LINK COMPLETO DEL ARTÍCULO ---
             link_tag = tarjeta.find('a', href=True) or (tarjeta if tarjeta.name == 'a' and tarjeta.has_attr('href') else None)
             link_articulo = url_base
             if link_tag and link_tag['href']:
-                # urljoin junta la URL base con el link relativo (ej: /producto/123 -> https://tienda.com/producto/123)
                 link_articulo = urljoin(url_base, link_tag['href'])
 
             if tit and prc:
@@ -110,7 +108,13 @@ def revisar_ofertas():
             continue
             
         url_base = partes[0].strip()
-        presupuesto_max = int(partes[1].strip())
+        
+        # --- EL ESCUDO DE SEGURIDAD CONTRA EL ERROR 'BRAND' ---
+        try:
+            presupuesto_max = int(partes[1].strip())
+        except ValueError:
+            presupuesto_max = 100  # Si encuentra texto roto o 'brand', le asigna 100 por defecto para no colapsar
+            
         identificador = partes[2].strip()
         
         meta = identificador.split("_")
@@ -132,11 +136,9 @@ def revisar_ofertas():
             historial[id_producto][fecha_hoy] = precio_actual
             precios_previos = list(historial[id_producto].values())
             
-            # Si el producto es nuevo o bajó de precio respecto al registro anterior
             if len(precios_previos) == 1 or (len(precios_previos) > 1 and precio_actual < precios_previos[-2]):
                 encontrado_oferta = True
                 
-                # REPORTE PROFESIONAL CON LA INFORMACIÓN COMPLETA Y EL LINK DIRECTO
                 reporte = (
                     f"🚨 *¡OFERTÓN DETECTADO EN {tienda.upper()}!* 🚨\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
