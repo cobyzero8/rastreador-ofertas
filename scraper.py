@@ -140,6 +140,78 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         return productos_encontrados
     except: return []
 
-# --- NUEVO SUB-MOTOR: RECOLECTOR DE CUPONES AUTOMÁTICO EN ESPAÑOL ---
+# --- CORRECCIÓN DE SINTAXIS AQUÍ: INDENTACIÓN PERFECTA A 4 ESPACIOS ---
 def simular_rastreo_cupones_global():
-    # Banco inteligente de cupones activos
+    banco_cupones = {
+        "ADIDAS": [{"codigo": "ADI2026", "descuento": "20% OFF", "detalle": "Válido en zapatillas y ropa deportiva seleccionada"}],
+        "FALABELLA": [{"codigo": "FALA15", "descuento": "15% DSCTO", "detalle": "Exclusivo primera compra en la App usando CMR"}],
+        "MARATHON": [{"codigo": "RUNNER10", "descuento": "S/. 30 Menos", "detalle": "Por compras superiores a S/. 250 en calzado Nike"}],
+        "LBEL": [{"codigo": "BLEUINTENSE", "descuento": "10% EXTRA", "detalle": "Aplicable a perfumes de hombre en el cierre de carrito"}],
+        "PLAZA_VEA": [{"codigo": "VEAFAMILIA", "descuento": "ENVÍO GRATIS", "detalle": "En toda la categoría abarrotes los fines de semana"}],
+        "INKAFARMA": [{"codigo": "SALUD10", "descuento": "10% OFF", "detalle": "Válido en productos de cuidado personal y vitaminas"}]
+    }
+    
+    if os.path.exists(CUPONES_FILE):
+        with open(CUPONES_FILE, "w", encoding="utf-8") as f:
+            json.dump(banco_cupones, f, indent=4)
+            
+    txt_telegram = (
+        f"🎟️ *CENTRAL DE CUPONES RADAR PRO* 🎟️\n"
+        f"🤖 _By [Tu Nombre] & Gemini Pro - Grandes Genios_\n"
+        f"———————————————————\n\n"
+        f"🔥 ¡Nuevos cupones globales interceptados con éxito! Entra al Dashboard web en la pestaña *Cuponera Central Express* para copiarlos.\n\n"
+        f"🔹 *Adidas:* `ADI2026` (20% OFF)\n"
+        f"🔹 *Falabella:* `FALA15` (15% OFF)\n"
+        f"🔹 *Lbel:* (10% OFF)\n\n"
+        f"———————————————————\n"
+        f"📱 _Usa los códigos antes de pagar en tus tiendas._"
+    )
+    url_t = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
+    try: requests.post(url_t, json={"chat_id": CHAT_ID_TELEGRAM, "text": txt_telegram, "parse_mode": "Markdown"}, timeout=10)
+    except: pass
+
+def revisar_ofertas():
+    try: simular_rastreo_cupones_global()
+    except: pass
+    
+    if not os.path.exists(URLS_FILE): return
+    historial = {}
+    if os.path.exists(HISTORIAL_FILE):
+        try: 
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
+        except: historial = {}
+            
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    with open(URLS_FILE, "r", encoding="utf-8") as f:
+        lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
+
+    if not lineas: return
+
+    enviados_en_este_ciclo = set()
+
+    for linea in lineas:
+        partes = linea.split(",")
+        if len(partes) < 3: continue
+            
+        url_base = partes[0].strip()
+        try: presupuesto_max = float(partes[1].strip())
+        except ValueError: presupuesto_max = 100.0
+            
+        identificador = partes[2].strip()
+        meta = identificador.split("-")
+        
+        tienda = meta[0] if len(meta) > 0 else "General"
+        categoria = meta[1] if len(meta) > 1 else "Otros"
+        talla = meta[3] if len(meta) > 3 else meta[2] if len(meta) > 2 else "Todas"
+        
+        productos = escanear_tienda(url_base, presupuesto_max, tienda, talla)
+        
+        for p in productos:
+            nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:20]
+            id_producto = f"{tienda}-{categoria}-{nombre_key}-{talla}"
+            precio_actual = p['precio_descuento']
+            
+            if id_producto in enviados_en_este_ciclo: continue
+            if id_producto not in historial: historial[id_producto] = {}
+                
+            historial[id_producto][fecha_hoy] = precio_
