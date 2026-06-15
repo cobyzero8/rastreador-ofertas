@@ -56,4 +56,13 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
         soup = BeautifulSoup(respuesta.text, 'html.parser')
         tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'grid' in x or 'tile' in x)) or [soup]
 
-        for
+        for tarjeta in tarjetas:
+            texto_tarjeta = tarjeta.text.upper()
+            
+            # --- LÍNEA 59 TOTALMENTE REESCRITA Y SANEADA CON TEXTO PLANO SEGURO ---
+            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'span', 'a'])
+            if not tit: continue
+            nombre_prod = re.sub(r'\s+', ' ', tit.text.strip().replace(",", ""))
+            if len(nombre_prod) < 4: continue
+            
+            img_tag = tarjeta
