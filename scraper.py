@@ -57,8 +57,8 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
             tarjetas = soup.find_all('div', class_=lambda x: x and 'ui-search-result' in x) or soup.find_all('li', class_='ui-search-layout__item')
         elif "mifarma" in t_low or "inkafarma" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x))
-        elif "natura" in t_low:
-            tarjetas = soup.find_all('div', class_=lambda x: x and 'product' in x)
+        elif "natura" in t_low or "lbel" in t_low or "esika" in t_low or "cyzone" in t_low:
+            tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x or 'showcase' in x))
         else:
             tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'pod' in x))
 
@@ -66,8 +66,7 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
             tarjetas = [soup]
 
         for tarjeta in tarjetas:
-            # Ignoramos etiquetas sueltas de metadatos de marcas para evitar errores 'brand'
-            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName|item__title)', re.I)) or tarjeta.find('p')
+            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title|productName|item__title|product-name)', re.I)) or tarjeta.find('p')
             if not tit: continue
             nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
             if len(nombre_prod) < 4 or "brand" in nombre_prod.lower(): continue
@@ -79,7 +78,6 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                 if match_pct: porcentaje_txt = match_pct.group(1)
 
             texto_tarjeta = tarjeta.text
-            # Captura formatos de precio de Perú (S/. 120, S/120.00, S/.120.90)
             precios_encontrados = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', texto_tarjeta)
             
             valores_limpios = []
@@ -175,7 +173,7 @@ def revisar_ofertas():
                     f"🚨 *¡OFERTÓN EN {tienda.upper().replace('-', ' ')}!* 🚨\n"
                     f"📂 *Categoría:* #{categoria.upper()}\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
-                    f"👟 *Detalle/Talla:* {talla}\n"
+                    f"🧴 *Detalle/Volumen:* {talla}\n"
                     f"💰 *Precio Regular:* S/. {p['precio_original']:.2f}\n"
                     f"📉 *Descuento:* {p['porcentaje']}\n"
                     f"🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n"
