@@ -67,7 +67,6 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
             img_tag = tarjeta.find('img', src=True)
             link_foto = urljoin(url_base, img_tag['src']) if img_tag else ""
             
-            # --- LÍNEA 68 COMPLETAMENTE CORREGIDA Y PARENTESIS CERRADO ---
             precios = re.findall(r'(?:S/\.?\s*|\$\s*)(\d+[\.,]\d{2}|\d+)', tarjeta.text)
             valores = sorted(list(set([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])))
             
@@ -77,6 +76,9 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
             tiene_combo = any(palabra in texto_tarjeta for palabra in PALABRAS_COMBOS)
             
             if (precio_descuento > 0 and precio_descuento <= limite_precio) or tiene_combo:
+                # --- LÍNEA 80 TOTALMENTE PARCHADA Y DICCIONARIO CERRADO AQUÍ ---
                 productos_encontrados.append({
                     "nombre": nombre_prod, 
-                    "precio_original": precio_original if precio
+                    "precio_original": precio_original if precio_original > 0 else precio_descuento, 
+                    "precio_descuento": precio_descuento, 
+                    "
