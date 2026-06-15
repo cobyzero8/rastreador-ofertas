@@ -32,8 +32,8 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v8.0_")
-st.sidebar.caption("⚡ Estatus: **8 Mejoras Premium Activas**")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v8.5_")
+st.sidebar.caption("⚡ Tipo de Base de Datos: **🛡️ PERSISTENCIA CLOUD**")
 st.sidebar.write("---")
 
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "💰 Métricas de Ahorro", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
@@ -63,10 +63,7 @@ if menu == "📈 Ver Dashboard":
             lista_hogar, lista_personal = [], []
             
             for id_prod, hist in data.items():
-                # --- LÍNEA 66 TOTALMENTE REPARADA Y CERRADA AQUÍ ---
-                if id_prod == "TOTAL_AHORRADO_SISTEMA": 
-                    continue
-                    
+                if id_prod == "TOTAL_AHORRADO_SISTEMA": continue
                 parts = id_prod.split("-")
                 tienda_txt = parts[0] if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
@@ -145,7 +142,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
     st.write("---")
 
     with st.container(border=True):
-        st.write("### 📝 Registrar / Modificar Artículo Clasificado")
+        st.write("### 📝 Registrar / Modificar Radar en la Base de Datos")
         c1, c2, c3 = st.columns(3)
         with c1:
             tienda_sel = st.selectbox("Tienda Seleccionada", lista_tiendas)
@@ -153,15 +150,17 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             tienda_final = tienda_manual if tienda_manual else tienda_sel
             categoria_final = st.selectbox("Categoría", ["Zapatillas", "Polos", "Poleras", "Perfumes", "Shampoo", "Jabon", "Abarrotes", "Vuelos", "Otros"]).upper()
         with c2:
-            nombre = st.text_input("Nombre del Artículo", value=st.session_state.mod_nombre)
-            url = st.text_input("URL exacta del producto", value=st.session_state.mod_url)
+            nombre = st.text_input("Nombre / Etiqueta del Radar", value=st.session_state.mod_nombre)
+            url = st.text_input("URL exacta del producto o catálogo", value=st.session_state.mod_url)
         with c3:
-            talla = st.text_input("Talla / Volumen", value=st.session_state.mod_talla)
-            precio_max = st.number_input("Precio máximo tope (S/.)", value=int(st.session_state.mod_precio), min_value=1)
+            talla = st.text_input("Talla / Volumen / Filtro", value=st.session_state.mod_talla)
+            precio_max = st.number_input("Precio máximo tope de oferta (S/.)", value=int(st.session_state.mod_precio), min_value=1)
             
         if st.button("💾 GUARDAR CAMBIOS EN LA NUBE", type="primary", use_container_width=True):
             if nombre and url:
-                nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.strip()}-{nombre.replace(' ', '_').strip()}-{talla.strip() if talla.strip() else 'TODAS'}"
+                nombre_limpio = nombre.replace(" ", "_").strip()
+                talla_limpia = talla.strip() if talla.strip() else "TODAS"
+                nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.strip()}-{nombre_limpio}-{talla_limpia}"
                 
                 es_duplicado = False
                 if not st.session_state.mod_url:
@@ -171,7 +170,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     except: pass
                 
                 if es_duplicado:
-                    st.error("⚠️ ¡ALERTA DE DUPLICADO! Esta URL ya está siendo rastreada en tu sistema. No desperdiciaremos base de datos.")
+                    st.error("⚠️ ¡ALERTA DE DUPLICADO! Esta URL ya está siendo rastreada en tu sistema.")
                 else:
                     try: supabase.table("radares").delete().eq("identificador", nuevo_id).execute()
                     except: pass
@@ -179,13 +178,13 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                         try: supabase.table("radares").delete().eq("url", st.session_state.mod_url).execute()
                         except: pass
                     
-                    supabase.table("radares").insert({"url": url, "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                    supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
                     st.session_state.mod_url, st.session_state.mod_nombre, st.session_state.mod_talla, st.session_state.mod_precio = "", "", "", 100
-                    st.toast("✅ ¡Guardado de forma indestructible en la Nube Supabase!")
+                    st.toast("✅ ¡Línea de base de datos actualizada en Supabase!")
                     st.rerun()
 
     st.write("---")
-    st.subheader("📋 Panel de Control de Radares")
+    st.subheader("📋 Registro Actual de la Base de Datos (Radares Activos)")
     try:
         res_d = supabase.table("radares").select("*").order("id", desc=True).execute()
         lineas = res_d.data if res_d.data else []
@@ -194,23 +193,30 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
     if lineas:
         for index, item in enumerate(lineas):
             meta_parts = item["identificador"].split("-")
-            prefix_status = "❌ [STOCK AGOTADO]" if "muerto" in item.get("url", "").lower() else "🟢"
+            tnd = meta_parts[0].upper()
+            cat = meta_parts[1].upper()
+            lbl = meta_parts[2].replace("_", " ")
+            tll = meta_parts[3] if len(meta_parts) > 3 else "Todas"
+            url_real = item["url"]
             
+            # --- REDISEÑO COMPLETO AQUÍ: MUESTRA DATOS REALES DE BASE DE DATOS SIN CARTELES FALSOS DE STOCK ---
             col_info, col_mod, col_btn = st.columns([7, 1.5, 1.5])
             
-            with col_info: st.markdown(f"**{index + 1}. {prefix_status} [{meta_parts[0]}]** {meta_parts[2].replace('_',' ')} | Tope: `S/. {item['precio_max']}`")
+            with col_info: 
+                st.markdown(f"**{index + 1}. 🌐 [{tnd}]** | #{cat} | Etiqueta: `{lbl}` | Filtro/Talla: `{tll}` | **Tope: S/. {item['precio_max']}**")
+                st.caption(f"🔗 `URL Guardada:` {url_real}")
             with col_mod:
                 if st.button(f"✏️ Modificar", key=f"mod_{index}", use_container_width=True):
-                    st.session_state.mod_url = item["url"]
-                    st.session_state.mod_nombre = meta_parts[2]
-                    st.session_state.mod_talla = meta_parts[3] if len(meta_parts)>3 else ""
+                    st.session_state.mod_url = url_real
+                    st.session_state.mod_nombre = lbl
+                    st.session_state.mod_talla = tll
                     st.session_state.mod_precio = item["precio_max"]
                     st.rerun()
             with col_btn:
                 if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
                     supabase.table("radares").delete().eq("id", item["id"]).execute()
                     st.rerun()
-    else: st.info("No hay radares activos en la nube.")
+    else: st.info("No hay registros en la base de datos de la nube.")
 
 elif menu == "💥 Forzar Escaneo":
     st.title("💥 Forzar Escaneo Automático COBY & GEMINI")
