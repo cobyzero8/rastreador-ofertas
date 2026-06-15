@@ -46,24 +46,46 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
 
         for tarjeta in tarjetas:
             tit = tarjeta.find(['p', 'b', 'h3', 'div', 'a'], class_=re.compile(r'(title|name|heading|pod-title)', re.I)) or tarjeta.find('p')
-            prc = tarjeta.find(class_=re.compile(r'(price|sale|oferta|current)', re.I)) or tarjeta.find(lambda tag: tag.name in ['span', 'div'] and 'S/.' in tag.text)
             
+            # Buscamos elementos de precio evitando confundirlos con etiquetas de porcentaje
+            precios_tags = tarjeta.find_all(class_=re.compile(r'(price|sale|oferta|current)', re.I)) or tarjeta.find_all(lambda tag: tag.name in ['span', 'div'] and 'S/.' in tag.text)
+            
+            # Buscar explícitamente si hay un porcentaje de descuento visual en la tarjeta
+            pct_tag = tarjeta.find(text=re.compile(r'%\s*(OFF|descuento)?', re.I)) or tarjeta.find(class_=re.compile(r'(discount|porcentaje|pct)', re.I))
+            porcentaje_txt = "N/A"
+            if pct_tag:
+                match_pct = re.search(r'(\d+)\s*%', pct_tag.text if hasattr(pct_tag, 'text') else str(pct_tag))
+                if match_pct:
+                    porcentaje_txt = f"{match_pct.group(1)}%"
+
             link_tag = tarjeta.find('a', href=True) or (tarjeta if tarjeta.name == 'a' and tarjeta.has_attr('href') else None)
             link_articulo = url_base
             if link_tag and link_tag['href']:
                 link_articulo = urljoin(url_base, link_tag['href'])
 
-            if tit and prc:
+            if tit and precios_tags:
                 nombre_prod = tit.text.strip().replace("\n", "").replace(",", "")
-                text_precio = prc.text.strip()
                 
-                nums = ''.join(filter(str.isdigit, text_precio))
-                if not nums:
+                valores_precios = []
+                for p_tag in precios_tags:
+                    texto_p = p_tag.text.strip()
+                    # Si contiene el símbolo de porcentaje, lo ignoramos para que no contamine los números de precio
+                    if "%" in texto_p:
+                        continue
+                    nums = ''.join(filter(str.isdigit, texto_p))
+                    if nums:
+                        p_num = int(nums) / 100 if len(nums) > 4 and ("adidas" in t_low or "marathon" in t_low) else int(nums[:4]) if len(nums) > 5 else int(nums)
+                        valores_precios.append(int(p_num))
+                
+                if not valores_precios:
                     continue
-                    
-                p_num = int(nums) / 100 if len(nums) > 4 and ("adidas" in t_low or "marathon" in t_low) else int(nums[:4]) if len(nums) > 5 else int(nums)
                 
-                if p_num <= limite_precio:
+                # Ordenamos los precios detectados: el menor será el precio de oferta y el mayor el original
+                valores_precios = sorted(list(set(valores_precios)))
+                precio_descuento = valores_precios[0]
+                precio_actual_lista = valores_precios[-1] if len(valores_precios) > 1 else precio_descuento
+
+                if precio_descuento <= limite_precio:
                     talla_check = str(talla_buscada).upper().strip()
                     if talla_check and talla_check not in ["TODAS", "N/A", ""]:
                         patron = r'\b' + re.escape(talla_check) + r'\b'
@@ -72,7 +94,9 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                     
                     productos_encontrados.append({
                         "nombre": nombre_prod, 
-                        "precio": int(p_num),
+                        "precio_original": precio_actual_lista,
+                        "precio_descuento": precio_descuento,
+                        "porcentaje": porcentaje_txt,
                         "link": link_articulo
                     })
         return productos_encontrados
@@ -108,12 +132,10 @@ def revisar_ofertas():
             continue
             
         url_base = partes[0].strip()
-        
-        # --- EL ESCUDO DE SEGURIDAD CONTRA EL ERROR 'BRAND' ---
         try:
             presupuesto_max = int(partes[1].strip())
         except ValueError:
-            presupuesto_max = 100  # Si encuentra texto roto o 'brand', le asigna 100 por defecto para no colapsar
+            presupuesto_max = 100
             
         identificador = partes[2].strip()
         
@@ -128,7 +150,7 @@ def revisar_ofertas():
         for p in productos:
             nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:30]
             id_producto = f"{tienda}_{categoria}_{talla}_{nombre_key}"
-            precio_actual = p['precio']
+            precio_actual = p['precio_descuento']
             
             if id_producto not in historial:
                 historial[id_producto] = {}
@@ -139,12 +161,15 @@ def revisar_ofertas():
             if len(precios_previos) == 1 or (len(precios_previos) > 1 and precio_actual < precios_previos[-2]):
                 encontrado_oferta = True
                 
+                # REPORTE MEJORADO CON PRECIO ORIGINAL, PORCENTAJE Y PRECIO DE DESCUENTO
                 reporte = (
                     f"🚨 *¡OFERTÓN DETECTADO EN {tienda.upper()}!* 🚨\n\n"
                     f"📦 *Producto:* `{p['nombre']}`\n"
                     f"👟 *Talla:* {talla}\n"
-                    f"💰 *PRECIO ACTUAL:* S/. {precio_actual}\n"
-                    f"🎯 *Precio Máximo:* S/. {presupuesto_max}\n\n"
+                    f"💰 *Precio Regular:* S/. {p['precio_original']}\n"
+                    f"📉 *Descuento:* {p['porcentaje']}\n"
+                    f"🔥 *PRECIO CON DESCUENTO:* S/. {p['precio_descuento']}\n"
+                    f"🎯 *Tu Límite Asignado:* S/. {presupuesto_max}\n\n"
                     f"🔗 *LINK DIRECTO DE COMPRA:* {p['link']}"
                 )
                 enviar_telegram(reporte)
@@ -153,4 +178,4 @@ def revisar_ofertas():
         json.dump(historial, f, indent=4)
         
     if not encontrado_oferta:
-        enviar_telegram(f"✅ *Escaneo completado.*\nSe revisaron `{conteo_radares}` radares. No se encontraron ofertas nuevas por debajo del tope asignado. 🫡")
+        enviar_telegram(f"✅ *Escaneo completado.*\nSe revisaron `{conteo_radares}` radares. No se encontraron rebajas adicionales por debajo del límite. 🫡")
