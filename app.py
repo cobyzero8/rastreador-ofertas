@@ -1,40 +1,49 @@
 import streamlit as st
 import json
 import os
-import pandas as pd
 from supabase import create_client, Client
 
+# Configuración inicial
 st.set_page_config(page_title="COBY & GEMINI", layout="wide")
 
-# Conexión básica
-try:
-    supabase = create_client("https://uxornuepdxqlhzizjnhr.supabase.co", "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq")
-except:
-    supabase = None
+SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
+SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+HISTORIAL_FILE = "historial_precios.json"
 CUPONES_FILE = "cupones.json"
 
-# --- MENÚ ---
-menu = st.sidebar.radio("Navegación:", ["Dashboard", "Cuponera"])
+# --- BARRA LATERAL ---
+st.sidebar.title("🧠 COBY & GEMINI")
+menu = st.sidebar.radio("Selecciona:", ["📈 Dashboard", "📊 Inteligencia", "💰 Ahorro", "🛠️ Enlaces", "💥 Escaneo"])
 
 # --- DASHBOARD ---
-if menu == "Dashboard":
-    st.title("Bienvenido a COBY")
-    st.write("Sistema operativo.")
+if menu == "📈 Dashboard":
+    st.title("🕵️‍♂️ Dashboard")
+    st.info("Sistema cargado correctamente.")
 
-# --- CUPONERA ---
-elif menu == "Cuponera":
-    st.title("🎟️ Cupones")
-    if os.path.exists(CUPONES_FILE):
+# --- INTELIGENCIA COMERCIAL ---
+elif menu == "📊 Inteligencia":
+    st.title("📊 Inteligencia Comercial")
+    st.info("Análisis de mercado.")
+
+# --- MÈTRICAS DE AHORRO ---
+elif menu == "💰 Ahorro":
+    st.title("💰 Balance de Ahorro")
+    st.write("Métricas generales.")
+
+# --- GESTIONAR ENLACES PRO ---
+elif menu == "🛠️ Enlaces":
+    st.title("🛠️ Gestionar Enlaces")
+    st.write("Gestión de radares.")
+
+# --- FORZAR ESCANEO ---
+elif menu == "💥 Escaneo":
+    st.title("💥 Forzar Escaneo")
+    if st.button("Iniciar"):
         try:
-            with open(CUPONES_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            # --- AQUÍ ESTÁ EL BLINDAJE DE LA LÍNEA 128 ---
-            df = pd.DataFrame(data)
-            st.dataframe(
-                df,
-                use_container_width=True
-            )
+            from scraper import revisar_ofertas
+            revisar_ofertas()
+            st.success("Escaneo exitoso.")
         except Exception as e:
-            st.error(f"Error cargando archivo: {e}")
+            st.error(f"Error: {e}")
