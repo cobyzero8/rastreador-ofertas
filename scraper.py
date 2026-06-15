@@ -56,41 +56,4 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
         soup = BeautifulSoup(respuesta.text, 'html.parser')
         tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'item' in x or 'card' in x or 'grid' in x or 'tile' in x)) or [soup]
 
-        for tarjeta in tarjetas:
-            texto_tarjeta = tarjeta.text.upper()
-            
-            tit = tarjeta.find(['p', 'b', 'h1', 'h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|name|pod|product-name)', re.I)) or tarjeta.find('p')
-            if not tit: continue
-            nombre_prod = re.sub(r'\s+', ' ', tit.text.strip().replace(",", ""))
-            if len(nombre_prod) < 4: continue
-            
-            img_tag = tarjeta.find('img', src=True)
-            link_foto = urljoin(url_base, img_tag['src']) if img_tag else ""
-            
-            precios = re.findall(r'(?:S/\.?\s*|\$\s*)(\d+[\.,]\d{2}|\d+)', tarjeta.text)
-            valores = sorted(list(set([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])))
-            
-            precio_descuento = valores[0] if valores else 0.0
-            precio_original = valores[-1] if valores else 0.0
-
-            tiene_combo = any(palabra in texto_tarjeta for palabra in PALABRAS_COMBOS)
-            
-            if (precio_descuento > 0 and precio_descuento <= limite_precio) or tiene_combo:
-                # --- LÍNEA 84 TOTALMENTE CORREGIDA Y ASEGURADA AQUÍ ---
-                item_dict = {
-                    "nombre": nombre_prod,
-                    "precio_original": precio_original if precio_original > 0 else precio_descuento,
-                    "precio_descuento": precio_descuento,
-                    "link": url_base,
-                    "foto": link_foto,
-                    "es_combo": tiene_combo
-                }
-                productos_encontrados.append(item_dict)
-        return productos_encontrados
-    except: 
-        return []
-
-def simular_rastreo_cupones_global(tiendas_usuario):
-    banco = {
-        "ADIDAS": [{"codigo": "ADI2026", "descuento": "20% OFF", "detalle": "En calzado running"}],
-        "FALABELLA":
+        for
