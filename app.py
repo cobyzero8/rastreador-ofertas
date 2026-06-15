@@ -11,7 +11,7 @@ URLS_FILE = "urls.txt"
 st.sidebar.title("💥 Radar Familiar Pro")
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
 
-# --- OPCIÓN 1: DASHBOARD CON BOTONES DE FILTRO ---
+# --- OPCIÓN 1: DASHBOARD CON HISTORIAL GRÁFICO (PASO 2) ---
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Radar Familiar Pro")
     st.subheader("📊 Dashboard de Artículos")
@@ -57,23 +57,42 @@ if menu == "📈 Ver Dashboard":
                     if categoria_seleccionada != "Todos" and cat_txt.upper() != categoria_seleccionada.upper():
                         continue
 
+                    ultimo_precio = list(hist.values())[-1] if hist else "N/A"
+
                     lista.append({
+                        "ID": id_prod, # ID interno para buscar la gráfica
                         "Tienda": tienda_txt.upper(),
                         "Categoría": cat_txt.upper(),
                         "Producto": prod_txt.replace("_", " "),
                         "Talla": talla_txt,
-                        "Precio Final": f"S/. {list(hist.values())[-1]}" if hist else "N/A",
+                        "Precio Final": f"S/. {ultimo_precio}" if ultimo_precio != "N/A" else "N/A",
                         "Link de Compra": link_final
                     })
                 
                 df = pd.DataFrame(lista)
                 if not df.empty:
+                    # Mostrar tabla principal limpia
                     st.data_editor(
-                        df,
+                        df.drop(columns=["ID"]),
                         column_config={"Link de Compra": st.column_config.LinkColumn("Compra Directa")},
                         hide_index=True,
                         use_container_width=True
                     )
+                    
+                    # --- NUEVO: SISTEMA DE GRÁFICAS DEL PASO 2 ---
+                    st.write("### 📈 Evolución Temporal de Precios")
+                    producto_grafica = st.selectbox("📊 Selecciona un producto para ver su gráfica de precios:", df["Producto"].unique())
+                    
+                    id_seleccionado = df[df["Producto"] == producto_grafica]["ID"].values[0]
+                    historial_puntos = data.get(id_seleccionado, {})
+                    
+                    if historial_puntos:
+                        # Convertimos las fechas y precios en un formato que Streamlit pueda dibujar
+                        df_grafica = pd.DataFrame(list(historial_puntos.items()), columns=["Fecha/Hora", "Precio (S/.)"])
+                        df_grafica = df_grafica.set_index("Fecha/Hora")
+                        st.line_chart(df_grafica)
+                    else:
+                        st.info("No hay suficientes datos históricos para graficar este artículo aún.")
                 else:
                     st.info("No hay productos en esta categoría.")
         except Exception as e:
@@ -81,7 +100,7 @@ if menu == "📈 Ver Dashboard":
     else:
         st.info("No hay datos históricos disponibles.")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES PRO (DINÁMICO CON AGREGADO MANUAL) ---
+# --- OPCIÓN 2: GESTIONAR ENLACES CON GUARDIÁN INTELIGENTE (PASO 3) ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -95,25 +114,35 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
                 "Lbel", "Esika", "Cyzone"
             ])
-            
-            # Categorías rápidas sugeridas
             cat_sugerida = st.selectbox("Seleccionar Categoría Frecuente", [
                 "Zapatillas", "Polos", "Poleras", "Casacas", "Pantalon deportivo", 
                 "Perfumes", "Shampoo", "Desodorante", "Jabon", "Otros"
             ])
-            
-            # CASILLA MÁGICA: Escribe lo que quieras aquí y creará la categoría en vivo
-            cat_manual = st.text_input("✍️ O escribir Nueva Categoría (Ej: gorras, casacas...)", "").strip()
-            
-            # Si el usuario escribió algo en la casilla manual, se prioriza sobre el selectbox
+            cat_manual = st.text_input("✍️ O escribir Nueva Categoría", "").strip()
             categoria_final = cat_manual if cat_manual else cat_sugerida
 
         with c2:
-            nombre = st.text_input("Nombre del producto (Usa guiones abajo, ej: Buzo_Entrenamiento)")
+            nombre = st.text_input("Nombre del producto (ej: Buzo_Entrenamiento)")
             url = st.text_input("URL exacta del artículo")
         with c3:
-            talla = st.text_input("Talla/Volumen (Ej: 9.5US, M, 100ml)")
+            talla = st.text_input("Talla/Volumen (Ej: 9.5US, M)")
             precio_max = st.number_input("Precio máximo (Tope S/.)", value=100, min_value=1)
+            
+            # --- NUEVO: EL GUARDIÁN INTELIGENTE (PASO 3) ---
+            if nombre:
+                id_simulado = f"{tienda.upper()}-{categoria_final.upper()}-{nombre.replace(' ', '_').strip()}-{talla.strip() if talla.strip() else 'TODAS'}"
+                if os.path.exists(HISTORIAL_FILE):
+                    with open(HISTORIAL_FILE, "r", encoding="utf-8") as f_h:
+                        f_data = json.load(f_h)
+                        hist_existente = f_data.get(id_simulado, {})
+                        if hist_existente:
+                            precios_lista = list(hist_existente.values())
+                            promedio = sum(precios_lista) / len(precios_lista)
+                            st.caption(f"💡 **Asistente:** El precio promedio histórico es **S/. {promedio:.2f}**.")
+                            if precio_max < min(precios_lista):
+                                st.warning("⚠️ Tu tope es menor que el precio más bajo registrado. ¡Será una súper oferta si cae ahí!")
+                            elif precio_max >= promedio:
+                                st.info("ℹ️ Tu tope está por encima del promedio. Recibirás alertas muy seguido.")
             
         st.write("###")
         if st.button("💾 GUARDAR ARTÍCULO CLASIFICADO", type="primary", use_container_width=True):
@@ -134,7 +163,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 st.error("❌ Completa los campos requeridos (Nombre y URL).")
 
     st.write("---")
-    st.subheader("📋 Panel de Control de Radares (Modificar / Eliminar)")
+    st.subheader("📋 Panel de Control de Radares")
     
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
@@ -159,8 +188,8 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                         if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
                             lineas.pop(index)
                             with open(URLS_FILE, "w", encoding="utf-8") as f_web:
-                                    for l_restante in lineas:
-                                        f_web.write(l_restante + "\n")
+                                for l_restante in lineas:
+                                    f_web.write(l_restante + "\n")
                             st.toast("🗑️ Artículo eliminado con éxito.")
                             st.rerun()
                 st.write("")
@@ -172,7 +201,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
 # --- OPCIÓN 3: FORZAR ESCANEO ---
 elif menu == "💥 Forzar Escaneo":
     st.title("💥 Forzar Escaneo Automático")
-    st.write("Presiona el botón para escanear. Las ofertas llegarán organizadas con botones de acción directa en Telegram.")
+    st.write("Presiona el botón para escanear de forma manual si no quieres esperar las 4 horas automáticas.")
     
     contenedor_mensaje = st.empty()
     if st.button("💥 INICIAR ESCANEO INTENSIVO", type="primary", use_container_width=True):
