@@ -29,7 +29,7 @@ def obtener_tiendas_dinamicas():
 
 # --- BARRA LATERAL ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.0_")
+st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.1_")
 st.sidebar.caption("⚡ Sistema: **Protección Anti-Duplicados Activa**")
 st.sidebar.write("---")
 
@@ -62,10 +62,4 @@ if menu == "📈 Ver Dashboard":
                 tienda_txt = parts[0] if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
                 prod_txt = parts[2] if len(parts) > 2 else "N/A"
-                talla_txt = parts[3] if len(parts) > 3 else "N/A"
-                
-                clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
-                link_final = links_mapeados.get(clave_link, "#")
-                
-                precios_reales = [v for k, v in hist.items() if isinstance(v, (int, float))]
-                ultimo_precio = precios_reales[-1] if precios_reales else
+                talla_txt = parts[3] if len(parts)
