@@ -25,12 +25,10 @@ if menu == "📈 Ver Dashboard":
                 p = line.strip().split(",")
                 if len(p) >= 3:
                     links_mapeados[p[2]] = p[0]
-                    # Extraer categorías registradas para armar el filtro
                     meta = p[2].split("_")
                     if len(meta) > 1 and meta[1] not in categorias_disponibles:
                         categorias_disponibles.append(meta[1])
 
-    # BOTONES DE CATEGORÍA EN STREAMLIT (Selector rápido)
     categoria_seleccionada = st.selectbox("🔍 Filtrar visualización por Categoría:", categorias_disponibles)
 
     if os.path.exists(HISTORIAL_FILE):
@@ -41,25 +39,21 @@ if menu == "📈 Ver Dashboard":
                 for id_prod, hist in data.items():
                     parts = id_prod.split("_")
                     
-                    # Estructura: Tienda_Categoria_Nombre_Talla
                     tienda_txt = parts[0] if len(parts) > 0 else "N/A"
                     cat_txt = parts[1] if len(parts) > 1 else "Otros"
                     prod_txt = parts[2].replace("-", " ") if len(parts) > 2 else "N/A"
                     talla_txt = parts[3] if len(parts) > 3 else "N/A"
                     
-                    # Reconstruir clave de búsqueda de link
                     clave_link = f"{tienda_txt}_{cat_txt}_{parts[2]}_{talla_txt}"
                     link_final = links_mapeados.get(clave_link, "#")
-                    if link_final == "#":
-                        # Intento de compatibilidad inversa
-                        link_final = list(links_mapeados.values())[0] if links_mapeados else "#"
+                    if link_final == "#" and links_mapeados:
+                        link_final = list(links_mapeados.values())[0]
 
-                    # Aplicamos el filtro seleccionado por el usuario
                     if categoria_seleccionada != "Todos" and cat_txt != categoria_seleccionada:
                         continue
 
                     lista.append({
-                        "Tienda": tienda_txt,
+                        "Tienda": tienda_txt.upper(),
                         "Categoría": cat_txt.upper(),
                         "Producto": prod_txt,
                         "Talla": talla_txt,
@@ -82,7 +76,7 @@ if menu == "📈 Ver Dashboard":
     else:
         st.info("No hay datos históricos disponibles.")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES CON CATEGORÍA ---
+# --- OPCIÓN 2: GESTIONAR ENLACES CON TODAS LAS TIENDAS NUEVAS ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -91,8 +85,11 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
         
         c1, c2, c3 = st.columns(3)
         with c1:
-            tienda = st.selectbox("Tienda", ["Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike"])
-            # NUEVO CAMPO DESPLEGABLE DE CATEGORÍAS
+            # LISTA ACTUALIZADA DE TIENDAS SOLICITADAS
+            tienda = st.selectbox("Tienda", [
+                "Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike", 
+                "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung"
+            ])
             categoria = st.selectbox("Categoría del Objeto", ["Zapatillas", "Polos", "Poleras", "Casacas", "Perfumes", "Shampoo", "Otros"])
         with c2:
             nombre = st.text_input("Nombre del producto (Usa guiones)")
@@ -106,13 +103,14 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             if nombre and url:
                 nombre_limpio = nombre.replace(" ", "-").strip()
                 cat_limpia = categoria.lower().strip()
-                # Guardamos incluyendo la categoría: Tienda_Categoria_Nombre_Talla
-                nueva_linea = f"{url},{precio_max},{tienda}_{cat_limpia}_{nombre_limpio}_{talla}\n"
+                tienda_limpia = tienda.replace(" ", "-").strip()
+                
+                nueva_linea = f"{url},{precio_max},{tienda_limpia}_{cat_limpia}_{nombre_limpio}_{talla}\n"
                 
                 with open(URLS_FILE, "a", encoding="utf-8") as f:
                     f.write(nueva_linea)
                     
-                st.toast(f"✅ ¡{categoria} guardado correctamente!")
+                st.toast(f"✅ ¡{tienda} - {categoria} guardado correctamente!")
                 st.rerun()
             else:
                 st.error("❌ Completa los campos requeridos (Nombre y URL).")
