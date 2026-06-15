@@ -53,7 +53,7 @@ if menu == "📈 Ver Dashboard":
                         continue
 
                     lista.append({
-                        "Tienda": tienda_txt.upper(),
+                        "Tienda": tienda_txt.upper().replace("-", " "),
                         "Categoría": cat_txt.upper(),
                         "Producto": prod_txt,
                         "Talla": talla_txt,
@@ -76,7 +76,7 @@ if menu == "📈 Ver Dashboard":
     else:
         st.info("No hay datos históricos disponibles.")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES CON TODAS LAS TIENDAS NUEVAS ---
+# --- OPCIÓN 2: GESTIONAR ENLACES PRO ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -85,14 +85,15 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
         
         c1, c2, c3 = st.columns(3)
         with c1:
-            # LISTA ACTUALIZADA DE TIENDAS SOLICITADAS
+            # LISTA ACTUALIZADA CON LBEL, ESIKA Y CYZONE
             tienda = st.selectbox("Tienda", [
                 "Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike", 
-                "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung"
+                "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
+                "Lbel", "Esika", "Cyzone"
             ])
             categoria = st.selectbox("Categoría del Objeto", ["Zapatillas", "Polos", "Poleras", "Casacas", "Perfumes", "Shampoo", "Otros"])
         with c2:
-            nombre = st.text_input("Nombre del producto (Usa guiones)")
+            nombre = st.text_input("Nombre del producto (Usa guiones, ej: Perfume-Bleu-Intense)")
             url = st.text_input("URL exacta del artículo")
         with c3:
             talla = st.text_input("Talla/Volumen (Ej: 9.5US, M, 100ml)")
