@@ -19,12 +19,29 @@ USER_AGENTS_POOL = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1"
 ]
 
+# --- NUEVA FUNCIÓN: GENERA UNA BARRA DE PROGRESO VISUAL PARA EL DESCUENTO ---
+def generar_barra_descuento(precio_orig, precio_desc):
+    try:
+        if precio_orig <= 0: return ""
+        porcentaje = ((precio_orig - precio_desc) / precio_orig) * 100
+        if porcentaje <= 0: return ""
+        
+        # Total de bloques de la barra = 10
+        bloques_llenos = int(round(porcentaje / 10))
+        bloques_llenos = max(1, min(bloques_llenos, 10)) # Asegurar rango entre 1 y 10
+        bloques_vacios = 10 - bloques_llenos
+        
+        barra = "█" * bloques_llenos + "░" * bloques_vacios
+        return f"`[{barra}]` *¡Ahorro del {porcentaje:.0f}%!*"
+    except:
+        return ""
+
 def enviar_telegram_con_foto_y_botones(mensaje, url_compra, categoria, url_foto, id_radar):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
     reply_markup = {
         "inline_keyboard": [
             [
-                {"text": "🛒 Ir a Comprar / Ver", "url": url_compra},
+                {"text": "🛒 Ir a Comprar / Ver Oferta", "url": url_compra},
                 {"text": f"📂 Ver #{categoria.upper()}", "callback_data": f"filter_{categoria}"}
             ],
             [
@@ -58,7 +75,6 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
         t_low = tienda.lower()
         tarjetas = []
         
-        # --- PASO A Y B: CAPTURA EN SUPERMERCADOS Y VUELOS ---
         if "vea" in t_low or "tottus" in t_low or "metro" in t_low:
             tarjetas = soup.find_all('div', class_=lambda x: x and ('product' in x or 'Item' in x or 'card' in x)) or soup.find_all('a', class_=lambda x: x and 'product' in x)
         elif "latam" in t_low or "sky" in t_low:
@@ -94,7 +110,6 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
                 if match_pct: porcentaje_txt = match_pct.group(1)
 
             texto_tarjeta = tarjeta.text
-            # Filtro numérico regex refinado para capturar precios en formato soles
             precios_encontrados = re.findall(r'(?:S/\.?\s*|\$\s*)(\d+[\.,]\d{2}|\d+)', texto_tarjeta)
             
             valores_limpios = []
@@ -107,4 +122,101 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada):
 
             if not valores_limpios: continue
             valores_limpios = sorted(valores_limpios)
-            precio_descuento
+            precio_descuento = valores_limpios[0]
+            precio_original = valores_limpios[-1] if len(valores_limpios) > 1 else precio_descuento
+
+            link_tag = tarjeta.find('a', href=True) or (tarjeta if tarjeta.name == 'a' and tarjeta.has_attr('href') else None)
+            link_articulo = url_base
+            if link_tag and link_tag['href']: link_articulo = urljoin(url_base, link_tag['href'])
+
+            talla_check = str(talla_buscada).upper().strip()
+            if talla_check and talla_check not in ["TODAS", "N/A", ""]:
+                patron = r'\b' + re.escape(talla_check) + r'\b'
+                if not re.search(patron, tarjeta.text.upper()): continue
+
+            if precio_descuento <= limite_precio:
+                productos_encontrados.append({
+                    "nombre": nombre_prod, "precio_original": precio_original,
+                    "precio_descuento": precio_descuento, "porcentaje": porcentaje_txt,
+                    "link": link_articulo, "foto": link_foto
+                })
+        return productos_encontrados
+    except: return []
+
+def revisar_ofertas():
+    if not os.path.exists(URLS_FILE): return
+    historial = {}
+    if os.path.exists(HISTORIAL_FILE):
+        try: with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
+        except: historial = {}
+            
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    with open(URLS_FILE, "r", encoding="utf-8") as f:
+        lineas = [l.strip() for l in f.readlines() if l.strip() and "," in l]
+
+    if not lineas: return
+
+    enviados_en_este_ciclo = set()
+
+    for linea in lineas:
+        partes = linea.split(",")
+        if len(partes) < 3: continue
+            
+        url_base = partes[0].strip()
+        try: presupuesto_max = float(partes[1].strip())
+        except ValueError: presupuesto_max = 100.0
+            
+        identificador = partes[2].strip()
+        meta = identificador.split("-")
+        
+        tienda = meta[0] if len(meta) > 0 else "General"
+        categoria = meta[1] if len(meta) > 1 else "Otros"
+        talla = meta[3] if len(meta) > 3 else meta[2] if len(meta) > 2 else "Todas"
+        
+        productos = escanear_tienda(url_base, presupuesto_max, tienda, talla)
+        
+        for p in productos:
+            nombre_key = "".join(c for c in p['nombre'] if c.isalnum() or c=='_')[:20]
+            id_producto = f"{tienda}-{categoria}-{nombre_key}-{talla}"
+            precio_actual = p['precio_descuento']
+            
+            if id_producto in enviados_en_este_ciclo: continue
+            if id_producto not in historial: historial[id_producto] = {}
+                
+            historial[id_producto][fecha_hoy] = precio_actual
+            precios_previos = list(historial[id_producto].values())
+            
+            if len(precios_previos) == 1 or (len(precios_previos) > 1 and precio_actual < precios_previos[-2]):
+                enviados_en_este_ciclo.add(id_producto)
+                
+                # Dinamismo para textos de vuelos o canasta básica
+                detalle_medida = "📏 *Talla/Volumen:*" if categoria not in ["VUELOS", "PASAJES"] else "📍 *Ruta/Fecha:*"
+                
+                # Calcular ahorro en soles reales
+                ahorro_soles = p['precio_original'] - p['precio_descuento']
+                texto_ahorro = f"💰 *Ahorraste:* S/. {ahorro_soles:.2f}" if ahorro_soles > 0 else ""
+                
+                # Generar barra gráfica visual
+                barra_grafica = generar_barra_descuento(p['precio_original'], p['precio_descuento'])
+                
+                # --- NUEVO DISEÑO PREMIUM TUNING ---
+                reporte = (
+                    f"🛍️ *¡OFERTÓN DETECTADO POR EL RADAR!* 🛍️\n"
+                    f"———————————————————\n\n"
+                    f"🏢 *Tienda:* `{tienda.upper().replace('_', ' ')}`\n"
+                    f"📂 *Categoría:* #{categoria.upper()}\n\n"
+                    f"📦 *Elemento:* `{p['nombre']}`\n"
+                    f"{detalle_medida} {talla}\n\n"
+                    f"———————————————————\n"
+                    f"💵 *Precio Normal:* S/. {p['precio_original']:.2f}\n"
+                    f"🔥 *PRECIO ACTUAL:* S/. {p['precio_descuento']:.2f}\n"
+                    f"🎯 *Tu Tope Fijado:* S/. {presupuesto_max:.2f}\n\n"
+                    f"{texto_ahorro}\n"
+                    f"📉 {barra_grafica}\n"
+                    f"———————————————————\n"
+                    f"🤖 _Filtros activos. Compra recomendada._"
+                )
+                enviar_telegram_con_foto_y_botones(reporte, p['link'], categoria, p['foto'], identificador)
+                
+    with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
+        json.dump(historial, f, indent=4)
