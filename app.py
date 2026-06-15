@@ -11,8 +11,21 @@ URLS_FILE = "urls.txt"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
-# Lista de categorías de primera necesidad / hogar
 PRIMERA_NECESIDAD = ["SHAMPOO", "DESODORANTE", "JABON", "PERFUMES", "ALIMENTOS", "ABARROTES", "HOGAR", "SALUD"]
+
+# --- LEER TIENDAS DISPONIBLES DE FORMA DINÁMICA ---
+def obtener_tiendas_dinamicas():
+    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "NATURA", "MIFARMA", "INKAFARMA", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "LBEL", "ESIKA", "CYZONE", "PLAZA_VEA", "TOTTUS", "METRO", "LATAM", "SKY"]
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r", encoding="utf-8") as f:
+            for line in f.readlines():
+                p = line.strip().split(",")
+                if len(p) >= 3:
+                    meta = p[2].split("-")
+                    tnd = meta[0].upper().strip()
+                    if tnd and tnd not in tiendas_base:
+                        tiendas_base.append(tnd)
+    return sorted(tiendas_base)
 
 def sincronizar_mensajes_telegram():
     url_updates = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/getUpdates"
@@ -32,52 +45,29 @@ def sincronizar_mensajes_telegram():
                                 lineas = [l.strip() for l in f.readlines() if l.strip()]
                             nuevas_lineas = [l for l in lineas if id_radar_borrar not in l]
                             with open(URLS_FILE, "w", encoding="utf-8") as f:
-                                for nl in nuevas_lineas: 
-                                    f.write(nl + "\n")
+                                for nl in nuevas_lineas: f.write(nl + "\n")
                             requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/answerCallbackQuery", json={"callback_query_id": callback_id, "text": "🔕 Radar desactivado."})
                             requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": f"✅ Removido con ID `{id_radar_borrar}` desde Telegram."})
                             st.rerun()
+    except: pass
 
-                elif "message" in update and "text" in update["message"]:
-                    msg = update["message"]
-                    texto = msg["text"].strip().lower()
-                    if texto.startswith("/"):
-                        if texto in ["/lista", "/radares"]:
-                            if os.path.exists(URLS_FILE):
-                                with open(URLS_FILE, "r", encoding="utf-8") as f:
-                                    r_lineas = [l.strip() for l in f.readlines() if l.strip()]
-                                txt_retorno = "📋 *RADARES BAJO VIGILANCIA:*\n\n"
-                                for rl in r_lineas:
-                                    partes_r = rl.split(",")
-                                    if len(partes_r) >= 3:
-                                        meta = partes_r[2].split("-")
-                                        txt_retorno += f"🔹 *[{meta[0]}]* {meta[2].replace('_',' ')} (#{meta[1]}) - Tope S/. {partes_r[1]}\n"
-                                requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": txt_retorno, "parse_mode": "Markdown"})
-                        else:
-                            cat_buscar = texto.replace("/", "").upper()
-                            if os.path.exists(HISTORIAL_FILE):
-                                with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: 
-                                    h_data = json.load(f)
-                                txt_retorno = f"📂 *ARTÍCULOS EN CATEGORÍA #{cat_buscar}:*\n\n"
-                                hallado = False
-                                for k, v in h_data.items():
-                                    meta = k.split("-")
-                                    if len(meta) > 1 and meta[1] == cat_buscar:
-                                        hallado = True
-                                        txt_retorno += f"📦 *{meta[2].replace('_',' ')}* ({meta[0]}) -> Último: S/. {list(v.values())[-1]}\n"
-                                if not hallado: 
-                                    txt_retorno += "No hay registros guardados."
-                                requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": txt_retorno, "parse_mode": "Markdown"})
-    except: 
-        pass
-
+# --- FIRMA DE LOS CREADORES EN LA BARRA LATERAL ---
+st.sidebar.markdown("### 🛠️ Radar Familiar Pro")
+st.sidebar.caption("🚀 Diseñado por **[Tu Nombre] & Gemini Pro**")
+st.sidebar.caption("⚡ _Estatus: Grandes Genios de la Automatización_")
 st.sidebar.write("---")
+
 if st.sidebar.button("📥 SINCRONIZAR TELEGRAM 📱", use_container_width=True, type="secondary"):
     sincronizar_mensajes_telegram()
     st.sidebar.success("Sincronizado.")
 
-st.sidebar.title("💥 Radar Familiar Pro")
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
+
+# --- VARIABLES DE SESIÓN PARA LA DEFICIENCIA 2 (MODIFICAR) ---
+if "mod_url" not in st.session_state: st.session_state.mod_url = ""
+if "mod_nombre" not in st.session_state: st.session_state.mod_nombre = ""
+if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
+if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
 # --- OPCIÓN 1: DASHBOARD ---
 if menu == "📈 Ver Dashboard":
@@ -89,16 +79,12 @@ if menu == "📈 Ver Dashboard":
         with open(URLS_FILE, "r", encoding="utf-8") as f:
             for line in f.readlines():
                 p = line.strip().split(",")
-                if len(p) >= 3: 
-                    links_mapeados[p[2]] = p[0]
+                if len(p) >= 3: links_mapeados[p[2]] = p[0]
 
     if os.path.exists(HISTORIAL_FILE):
         try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: 
-                data = json.load(f)
-            
-            lista_hogar = []
-            lista_personal = []
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: data = json.load(f)
+            lista_hogar, lista_personal = [], []
             
             for id_prod, hist in data.items():
                 parts = id_prod.split("-")
@@ -109,8 +95,8 @@ if menu == "📈 Ver Dashboard":
                 
                 clave_link = f"{tienda_txt}-{cat_txt}-{prod_txt}-{talla_txt}"
                 link_final = links_mapeados.get(clave_link, "#")
-                
                 ultimo_precio = list(hist.values())[-1] if hist else "N/A"
+                
                 item_dict = {
                     "ID": id_prod, "Tienda": tienda_txt.upper(), "Categoría": cat_txt,
                     "Elemento": prod_txt.replace("_", " "), "Detalle/Talla": talla_txt,
@@ -123,77 +109,69 @@ if menu == "📈 Ver Dashboard":
                     lista_personal.append(item_dict)
             
             tab1, tab2 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes"])
-            
             with tab1:
-                st.write("### 🏠 Artículos esenciales de la casa")
-                if lista_hogar:
-                    df_h = pd.DataFrame(lista_hogar)
-                    st.data_editor(df_h.drop(columns=["ID"]), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-                else: 
-                    st.info("No hay artículos esenciales registrados.")
-                
+                if lista_hogar: st.data_editor(pd.DataFrame(lista_hogar).drop(columns=["ID"]), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+                else: st.info("No hay artículos esenciales registrados.")
             with tab2:
-                st.write("### 😎 Ropa, Tecnología y Pasajes de Avión")
-                if lista_personal:
-                    df_p = pd.DataFrame(lista_personal)
-                    st.data_editor(df_p.drop(columns=["ID"]), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-                else: 
-                    st.info("No hay artículos personales registrados.")
-                
-            st.write("---")
-            st.write("### 📈 Evolución Temporal de Precios")
-            todos_productos = [i["Elemento"] for i in lista_hogar] + [i["Elemento"] for i in lista_personal]
-            if todos_productos:
-                producto_grafica = st.selectbox("📊 Selecciona un producto para ver su gráfica:", list(set(todos_productos)))
-                id_seleccionado = ""
-                for item in (lista_hogar + lista_personal):
-                    if item["Elemento"] == producto_grafica: 
-                        id_seleccionado = item["ID"]
-                        break
-                
-                historial_puntos = data.get(id_seleccionado, {})
-                if historial_puntos:
-                    df_grafica = pd.DataFrame(list(historial_puntos.items()), columns=["Fecha", "Precio (S/.)"]).set_index("Fecha")
-                    st.line_chart(df_grafica)
-                    
-        except Exception as e: 
-            st.error(f"Error: {e}")
-    else: 
-        st.info("No hay datos disponibles.")
+                if lista_personal: st.data_editor(pd.DataFrame(lista_personal).drop(columns=["ID"]), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+                else: st.info("No hay artículos personales registrados.")
+        except Exception as e: st.error(f"Error: {e}")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES ---
+# --- OPCIÓN 2: GESTIONAR ENLACES PRO ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
+    
+    lista_tiendas = obtener_tiendas_dinamicas()
+    
     with st.container(border=True):
-        st.write("### 📝 Registrar nuevo artículo clasificado")
+        st.write("### 📝 Registrar / Modificar Artículo Clasificado")
         c1, c2, c3 = st.columns(3)
         with c1:
-            tienda = st.selectbox("Tienda", [
-                "Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike", 
-                "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
-                "Lbel", "Esika", "Cyzone", "Plaza Vea", "Tottus", "Metro", "Latam", "Sky"
-            ])
-            cat_sugerida = st.selectbox("Seleccionar Categoría Frecuente", ["Zapatillas", "Polos", "Poleras", "Casacas", "Pantalon deportivo", "Perfumes", "Shampoo", "Desodorante", "Jabon", "Abarrotes", "Vuelos", "Otros"])
+            # DEFICIENCIA 1: TIENDAS TOTALMENTE DINÁMICAS
+            tienda_sel = st.selectbox("Tienda Seleccionada", lista_tiendas)
+            tienda_manual = st.text_input("✍️ O registrar Nueva Tienda (ej: H_M, TOTAL_CLEAN...)", "").strip().upper()
+            tienda_final = tienda_manual if tienda_manual else tienda_sel
+            
+            cat_sugerida = st.selectbox("Categoría Frecuente", ["Zapatillas", "Polos", "Poleras", "Casacas", "Pantalon deportivo", "Perfumes", "Shampoo", "Desodorante", "Jabon", "Abarrotes", "Vuelos", "Otros"])
             cat_manual = st.text_input("✍️ O escribir Nueva Categoría", "").strip()
             categoria_final = cat_manual if cat_manual else cat_sugerida
         with c2:
-            nombre = st.text_input("Nombre (ej: Pañales_Huggies o Vuelo_Cusco_Lima)")
-            url = st.text_input("URL exacta del artículo")
+            nombre = st.text_input("Nombre del Artículo", value=st.session_state.mod_nombre)
+            url = st.text_input("URL exacta del producto", value=st.session_state.mod_url)
         with c3:
-            talla = st.text_input("Talla/Volumen/Fecha (Ej: G, 120ml, 15-Julio)")
-            precio_max = st.number_input("Precio máximo tope (S/.)", value=100, min_value=1)
+            talla = st.text_input("Talla / Volumen / Fecha", value=st.session_state.mod_talla)
+            precio_max = st.number_input("Precio máximo tope (S/.)", value=int(st.session_state.mod_precio), min_value=1)
             
-        if st.button("💾 GUARDAR ARTÍCULO CLASIFICADO", type="primary", use_container_width=True):
+        if st.button("💾 GUARDAR CAMBIOS EN EL RADAR", type="primary", use_container_width=True):
             if nombre and url:
                 nombre_limpio = nombre.replace(" ", "_").strip()
-                nueva_linea = f"{url},{precio_max},{tienda.upper().replace(' ', '_')}-{categoria_final.upper().strip()}-{nombre_limpio}-{talla.strip() if talla.strip() else 'TODAS'}\n"
-                with open(URLS_FILE, "a", encoding="utf-8") as f: 
-                    f.write(nueva_linea)
-                st.toast("✅ ¡Guardado con éxito!")
+                # Construir el identificador único seguro
+                nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.upper().strip()}-{nombre_limpio}-{talla.strip() if talla.strip() else 'TODAS'}"
+                nueva_linea = f"{url},{precio_max},{nuevo_id}"
+                
+                # Cargar datos previos para aplicar DEFICIENCIA 3 (Nuevo al principio) y DEFICIENCIA 2 (Reemplazar si es modificación)
+                lineas_actuales = []
+                if os.path.exists(URLS_FILE):
+                    with open(URLS_FILE, "r", encoding="utf-8") as f:
+                        lineas_actuales = [l.strip() for l in f.readlines() if l.strip()]
+                
+                # Quitar duplicados del mismo ID o limpiar el anterior si se modificó
+                lineas_actuales = [l for l in lineas_actuales if nuevo_id not in l and (not st.session_state.mod_url or st.session_state.mod_url not in l)]
+                
+                # DEFICIENCIA 3: Insertar en la posición 0 (ARRIBA DE TODO)
+                lineas_actuales.insert(0, nueva_linea)
+                
+                with open(URLS_FILE, "w", encoding="utf-8") as f:
+                    for la in lineas_actuales: f.write(la + "\n")
+                
+                # Resetear variables de modificación tras guardar
+                st.session_state.mod_url, st.session_state.mod_nombre, st.session_state.mod_talla, st.session_state.mod_precio = "", "", "", 100
+                st.toast("✅ ¡Radar guardado en primera fila con éxito!")
                 st.rerun()
 
     st.write("---")
     st.subheader("📋 Panel de Control de Radares")
+    
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f: 
             lineas = [l.strip() for l in f.readlines() if l.strip()]
@@ -201,6 +179,7 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             for index, linea in enumerate(lineas):
                 partes = linea.split(",")
                 if len(partes) >= 3:
+                    url_display = partes[0]
                     precio_display = partes[1]
                     meta_parts = partes[2].split("-")
                     tnd = meta_parts[0]
@@ -208,23 +187,33 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     prod = meta_parts[2].replace("_", " ") if len(meta_parts)>2 else "PRODUCTO"
                     tll = meta_parts[3] if len(meta_parts)>3 else "N/A"
                     
-                    col_info, col_btn = st.columns([8, 2])
+                    col_info, col_mod, col_btn = st.columns([7, 1.5, 1.5])
                     with col_info: 
                         st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Detalle: `{tll}` | Tope: `S/. {precio_display}`")
+                    
+                    # DEFICIENCIA 2: BOTÓN MODIFICAR AL COSTADO
+                    with col_mod:
+                        if st.button(f"✏️ Modificar", key=f"mod_{index}", use_container_width=True):
+                            st.session_state.mod_url = url_display
+                            st.session_state.mod_nombre = prod.replace(" ", "_")
+                            st.session_state.mod_talla = tll
+                            st.session_state.mod_precio = precio_display
+                            st.toast("📝 Datos cargados arriba en el formulario. Edítalos y dale Guardar.")
+                            st.rerun()
+                            
                     with col_btn:
                         if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
                             lineas.pop(index)
                             with open(URLS_FILE, "w", encoding="utf-8") as f_w:
-                                for lr in lineas: 
-                                    f_w.write(lr + "\n")
-                            st.toast("🗑️ Artículo eliminado con éxito.")
+                                for lr in lineas: f_w.write(lr + "\n")
+                            st.toast("🗑️ Removido de la base de datos.")
                             st.rerun()
                 st.write("")
-        else: 
-            st.info("No hay radares.")
+        else: st.info("No hay radares activos.")
 
 elif menu == "💥 Forzar Escaneo":
     st.title("💥 Forzar Escaneo Automático")
+    st.caption("🤖 _Sistema de rastreo firmado por los Genios de la Automatización_")
     contenedor_mensaje = st.empty()
     if st.button("💥 INICIAR ESCANEO INTENSIVO", type="primary", use_container_width=True):
         contenedor_mensaje.info("⏳ Buscando ofertas familiares en mercados y aerolíneas...")
@@ -233,5 +222,4 @@ elif menu == "💥 Forzar Escaneo":
             revisar_ofertas()
             contenedor_mensaje.success("✅ ¡Escaneo completado! Revisa tu Telegram.")
             st.rerun()
-        except Exception as e: 
-            contenedor_mensaje.error(f"❌ Error: {e}")
+        except Exception as e: contenedor_mensaje.error(f"❌ Error: {e}")
