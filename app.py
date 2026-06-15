@@ -76,7 +76,7 @@ if menu == "📈 Ver Dashboard":
     else:
         st.info("No hay datos históricos disponibles.")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES PRO ---
+# --- OPCIÓN 2: GESTIONAR ENLACES PRO (AHORA CON FUNCIÓN DE BORRADO) ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     
@@ -85,7 +85,6 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
         
         c1, c2, c3 = st.columns(3)
         with c1:
-            # LISTA ACTUALIZADA CON LBEL, ESIKA Y CYZONE
             tienda = st.selectbox("Tienda", [
                 "Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike", 
                 "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
@@ -117,10 +116,44 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 st.error("❌ Completa los campos requeridos (Nombre y URL).")
 
     st.write("---")
-    st.subheader("📋 Lista de Radares Configurados")
+    st.subheader("📋 Panel de Control de Radares (Modificar / Eliminar)")
+    
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
-            st.code(f.read())
+            lineas = [l.strip() for l in f.readlines() if l.strip()]
+            
+        if lineas:
+            # Creamos una lista organizada para mostrar en la interfaz con botones individuales
+            for index, linea in enumerate(lineas):
+                partes = linea.split(",")
+                if len(partes) >= 3:
+                    url_display = partes[0]
+                    precio_display = partes[1]
+                    meta_parts = partes[2].split("_")
+                    
+                    tnd = meta_parts[0].upper().replace("-", " ")
+                    cat = meta_parts[1].upper()
+                    prod = meta_parts[2].replace("-", " ")
+                    tll = meta_parts[3] if len(meta_parts) > 3 else "N/A"
+                    
+                    # Dibujamos una fila limpia por cada producto con un botón de basura al lado
+                    col_info, col_btn = st.columns([0, 1])
+                    with col_info:
+                        st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Talla: `{tll}` | Tope: `S/. {precio_display}`")
+                    with col_btn:
+                        # Si presionas este botón, se elimina la línea exacta del archivo
+                        if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary"):
+                            lineas.pop(index)
+                            with open(URLS_FILE, "w", encoding="utf-8") as f_web:
+                                for l_restante in lineas:
+                                    f_web.write(l_restante + "\n")
+                            st.toast("🗑️ Artículo eliminado del radar con éxito.")
+                            st.rerun()
+                st.write("")
+        else:
+            st.info("No hay artículos en tu lista de monitoreo.")
+    else:
+        st.info("Aún no se ha creado el archivo de enlaces.")
 
 # --- OPCIÓN 3: FORZAR ESCANEO ---
 elif menu == "💥 Forzar Escaneo":
