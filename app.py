@@ -182,29 +182,37 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 st.toast("✅ ¡Guardado correctamente!")
                 st.rerun()
 
-    st.write("---")
+   st.write("---")
     st.subheader("📋 Panel de Control de Radares")
     if os.path.exists(URLS_FILE):
-        with open(URLS_FILE, "r", encoding="utf-8") as f: lineas = [l.strip() for l in f.readlines() if l.strip()]
+        with open(URLS_FILE, "r", encoding="utf-8") as f: 
+            lineas = [l.strip() for l in f.readlines() if l.strip()]
         if lineas:
             for index, linea in enumerate(lineas):
                 partes = linea.split(",")
                 if len(partes) >= 3:
                     precio_display = partes[1]
                     meta_parts = partes[2].split("-")
-                    tnd = meta_parts[0]; cat = meta_parts[1] if len(meta_parts)>1 else "OTROS"
-                    prod = meta_parts[2].replace("_", " ") if len(meta_parts)>2 else "PRODUCTO"
-                    tll = meta_parts[3] if len(meta_parts)>3 else "N/A"
+                    tnd = meta_parts[0]
+                    cat = meta_parts[1] if len(meta_parts) > 1 else "OTROS"
+                    prod = meta_parts[2].replace("_", " ") if len(meta_parts) > 2 else "PRODUCTO"
+                    tll = meta_parts[3] if len(meta_parts) > 3 else "N/A"
                     
                     col_info, col_btn = st.columns([8, 2])
-                    with col_info: st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Talla: `{tll}` | Tope: `S/. {precio_display}`")
+                    with col_info: 
+                        st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Talla: `{tll}` | Tope: `S/. {precio_display}`")
                     with col_btn:
+                        # CORRECCIÓN AQUÍ: Separamos el pop y el with en líneas distintas y limpias
                         if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
-                            lineas.pop(index); with open(URLS_FILE, "w", encoding="utf-8") as f_w:
-                                for lr in lineas: f_w.write(lr + "\n")
+                            lineas.pop(index)
+                            with open(URLS_FILE, "w", encoding="utf-8") as f_w:
+                                for lr in lineas: 
+                                    f_w.write(lr + "\n")
+                            st.toast("🗑️ Artículo eliminado con éxito.")
                             st.rerun()
-        else: st.info("No hay radares.")
-
+                st.write("")
+        else: 
+            st.info("No hay radares configurados.")
 elif menu == "💥 Forzar Escaneo":
     st.title("💥 Forzar Escaneo Automático")
     contenedor_mensaje = st.empty()
