@@ -119,6 +119,12 @@ elif menu == "💥 Forzar Escaneo":
             from scraper import revisar_ofertas
             revisar_ofertas()
             contenedor_mensaje.success("✅ ¡Escaneo completado con éxito!")
+            
+            # --- EL TRUCO PROFESIONAL ---
+            # Forzamos a Streamlit a reiniciarse internamente para que vuelva a leer 
+            # el archivo json recién actualizado por el bot antes de mostrar la pantalla.
+            st.rerun()
+            
         except Exception as e:
             contenedor_mensaje.error(f"❌ Error al ejecutar el rastreador externo: {e}")
             st.code(str(e))
