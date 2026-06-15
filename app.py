@@ -32,7 +32,8 @@ def sincronizar_mensajes_telegram():
                                 lineas = [l.strip() for l in f.readlines() if l.strip()]
                             nuevas_lineas = [l for l in lineas if id_radar_borrar not in l]
                             with open(URLS_FILE, "w", encoding="utf-8") as f:
-                                for nl in nuevas_lineas: f.write(nl + "\n")
+                                for nl in nuevas_lineas: 
+                                    f.write(nl + "\n")
                             requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/answerCallbackQuery", json={"callback_query_id": callback_id, "text": "🔕 Radar desactivado."})
                             requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": f"✅ Removido con ID `{id_radar_borrar}` desde Telegram."})
                             st.rerun()
@@ -55,7 +56,8 @@ def sincronizar_mensajes_telegram():
                         else:
                             cat_buscar = texto.replace("/", "").upper()
                             if os.path.exists(HISTORIAL_FILE):
-                                with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: h_data = json.load(f)
+                                with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: 
+                                    h_data = json.load(f)
                                 txt_retorno = f"📂 *ARTÍCULOS EN CATEGORÍA #{cat_buscar}:*\n\n"
                                 hallado = False
                                 for k, v in h_data.items():
@@ -63,9 +65,11 @@ def sincronizar_mensajes_telegram():
                                     if len(meta) > 1 and meta[1] == cat_buscar:
                                         hallado = True
                                         txt_retorno += f"📦 *{meta[2].replace('_',' ')}* ({meta[0]}) -> Último: S/. {list(v.values())[-1]}\n"
-                                if not hallado: txt_retorno += "No hay registros guardados."
+                                if not hallado: 
+                                    txt_retorno += "No hay registros guardados."
                                 requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": txt_retorno, "parse_mode": "Markdown"})
-    except: pass
+    except: 
+        pass
 
 st.sidebar.write("---")
 if st.sidebar.button("📥 SINCRONIZAR TELEGRAM 📱", use_container_width=True, type="secondary"):
@@ -75,7 +79,7 @@ if st.sidebar.button("📥 SINCRONIZAR TELEGRAM 📱", use_container_width=True,
 st.sidebar.title("💥 Radar Familiar Pro")
 menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
 
-# --- OPCIÓN 1: DASHBOARD CON PASO C (PESTAÑAS DE SEPARACIÓN HOGAR VS GUSTOS) ---
+# --- OPCIÓN 1: DASHBOARD ---
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Radar Familiar Pro")
     st.subheader("📊 Dashboard de Artículos")
@@ -85,11 +89,13 @@ if menu == "📈 Ver Dashboard":
         with open(URLS_FILE, "r", encoding="utf-8") as f:
             for line in f.readlines():
                 p = line.strip().split(",")
-                if len(p) >= 3: links_mapeados[p[2]] = p[0]
+                if len(p) >= 3: 
+                    links_mapeados[p[2]] = p[0]
 
     if os.path.exists(HISTORIAL_FILE):
         try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: data = json.load(f)
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: 
+                data = json.load(f)
             
             lista_hogar = []
             lista_personal = []
@@ -111,13 +117,11 @@ if menu == "📈 Ver Dashboard":
                     "Precio": f"S/. {ultimo_precio}" if ultimo_precio != "N/A" else "N/A", "Compra": link_final
                 }
                 
-                # --- PASO C: CLASIFICACIÓN INTERNA DE PESTAÑAS ---
                 if cat_txt in PRIMERA_NECESIDAD or cat_txt in ["ALIMENTOS", "ABARROTES", "SHAMPOO", "JABON", "DESODORANTE"]:
                     lista_hogar.append(item_dict)
                 else:
                     lista_personal.append(item_dict)
             
-            # Dibujamos las dos pestañas de visualización en Streamlit
             tab1, tab2 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes"])
             
             with tab1:
@@ -125,14 +129,16 @@ if menu == "📈 Ver Dashboard":
                 if lista_hogar:
                     df_h = pd.DataFrame(lista_hogar)
                     st.data_editor(df_h.drop(columns=["ID"]), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-                else: st.info("No hay artículos esenciales registrados.")
+                else: 
+                    st.info("No hay artículos esenciales registrados.")
                 
             with tab2:
                 st.write("### 😎 Ropa, Tecnología y Pasajes de Avión")
                 if lista_personal:
                     df_p = pd.DataFrame(lista_personal)
                     st.data_editor(df_p.drop(columns=["ID"]), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-                else: st.info("No hay artículos personales registrados.")
+                else: 
+                    st.info("No hay artículos personales registrados.")
                 
             st.write("---")
             st.write("### 📈 Evolución Temporal de Precios")
@@ -141,24 +147,27 @@ if menu == "📈 Ver Dashboard":
                 producto_grafica = st.selectbox("📊 Selecciona un producto para ver su gráfica:", list(set(todos_productos)))
                 id_seleccionado = ""
                 for item in (lista_hogar + lista_personal):
-                    if item["Elemento"] == producto_grafica: id_seleccionado = item["ID"]; break
+                    if item["Elemento"] == producto_grafica: 
+                        id_seleccionado = item["ID"]
+                        break
                 
                 historial_puntos = data.get(id_seleccionado, {})
                 if historial_puntos:
                     df_grafica = pd.DataFrame(list(historial_puntos.items()), columns=["Fecha", "Precio (S/.)"]).set_index("Fecha")
                     st.line_chart(df_grafica)
                     
-        except Exception as e: st.error(f"Error: {e}")
-    else: st.info("No hay datos disponibles.")
+        except Exception as e: 
+            st.error(f"Error: {e}")
+    else: 
+        st.info("No hay datos disponibles.")
 
-# --- OPCIÓN 2: GESTIONAR ENLACES CON TIENDAS DE ABARROTES Y VUELOS ---
+# --- OPCIÓN 2: GESTIONAR ENLACES ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     with st.container(border=True):
         st.write("### 📝 Registrar nuevo artículo clasificado")
         c1, c2, c3 = st.columns(3)
         with c1:
-            # TIENDAS TOTALMENTE AMPLIADAS (PASO A Y B)
             tienda = st.selectbox("Tienda", [
                 "Adidas", "Falabella", "Marathon", "Ripley", "Puma", "Nike", 
                 "Natura", "Mifarma", "Inkafarma", "Mercado Libre", "Triathlon", "JBL", "Samsung",
@@ -178,11 +187,12 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             if nombre and url:
                 nombre_limpio = nombre.replace(" ", "_").strip()
                 nueva_linea = f"{url},{precio_max},{tienda.upper().replace(' ', '_')}-{categoria_final.upper().strip()}-{nombre_limpio}-{talla.strip() if talla.strip() else 'TODAS'}\n"
-                with open(URLS_FILE, "a", encoding="utf-8") as f: f.write(nueva_linea)
+                with open(URLS_FILE, "a", encoding="utf-8") as f: 
+                    f.write(nueva_linea)
                 st.toast("✅ ¡Guardado con éxito!")
                 st.rerun()
 
-   st.write("---")
+    st.write("---")
     st.subheader("📋 Panel de Control de Radares")
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f: 
@@ -194,15 +204,14 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                     precio_display = partes[1]
                     meta_parts = partes[2].split("-")
                     tnd = meta_parts[0]
-                    cat = meta_parts[1] if len(meta_parts) > 1 else "OTROS"
-                    prod = meta_parts[2].replace("_", " ") if len(meta_parts) > 2 else "PRODUCTO"
-                    tll = meta_parts[3] if len(meta_parts) > 3 else "N/A"
+                    cat = meta_parts[1] if len(meta_parts)>1 else "OTROS"
+                    prod = meta_parts[2].replace("_", " ") if len(meta_parts)>2 else "PRODUCTO"
+                    tll = meta_parts[3] if len(meta_parts)>3 else "N/A"
                     
                     col_info, col_btn = st.columns([8, 2])
                     with col_info: 
                         st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Detalle: `{tll}` | Tope: `S/. {precio_display}`")
                     with col_btn:
-                        # CORRECCIÓN DEFINITIVA: Separamos el pop y el with en líneas limpias
                         if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
                             lineas.pop(index)
                             with open(URLS_FILE, "w", encoding="utf-8") as f_w:
@@ -224,4 +233,5 @@ elif menu == "💥 Forzar Escaneo":
             revisar_ofertas()
             contenedor_mensaje.success("✅ ¡Escaneo completado! Revisa tu Telegram.")
             st.rerun()
-        except Exception as e: contenedor_mensaje.error(f"❌ Error: {e}")
+        except Exception as e: 
+            contenedor_mensaje.error(f"❌ Error: {e}")
