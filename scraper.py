@@ -19,7 +19,7 @@ CHAT_ID_TELEGRAM = "8019752668"
 
 USER_AGENTS_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 ]
 
 PALABRAS_COMBOS = ["GRATIS", "2X1", "3X2", "REGALO", "LLEVATE", "COMBO", "PROMOCION", "INCLUYE"]
@@ -76,9 +76,21 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
             tiene_combo = any(palabra in texto_tarjeta for palabra in PALABRAS_COMBOS)
             
             if (precio_descuento > 0 and precio_descuento <= limite_precio) or tiene_combo:
-                # --- LÍNEA 80 TOTALMENTE PARCHADA Y DICCIONARIO CERRADO AQUÍ ---
-                productos_encontrados.append({
-                    "nombre": nombre_prod, 
-                    "precio_original": precio_original if precio_original > 0 else precio_descuento, 
-                    "precio_descuento": precio_descuento, 
-                    "
+                # --- LÍNEA 84 TOTALMENTE CORREGIDA Y ASEGURADA AQUÍ ---
+                item_dict = {
+                    "nombre": nombre_prod,
+                    "precio_original": precio_original if precio_original > 0 else precio_descuento,
+                    "precio_descuento": precio_descuento,
+                    "link": url_base,
+                    "foto": link_foto,
+                    "es_combo": tiene_combo
+                }
+                productos_encontrados.append(item_dict)
+        return productos_encontrados
+    except: 
+        return []
+
+def simular_rastreo_cupones_global(tiendas_usuario):
+    banco = {
+        "ADIDAS": [{"codigo": "ADI2026", "descuento": "20% OFF", "detalle": "En calzado running"}],
+        "FALABELLA":
