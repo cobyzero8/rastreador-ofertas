@@ -65,4 +65,18 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
             if len(nombre_prod) < 4: continue
             
             img_tag = tarjeta.find('img', src=True)
-            link_foto = urljoin(url_base
+            link_foto = urljoin(url_base, img_tag['src']) if img_tag else ""
+            
+            # --- LÍNEA 68 COMPLETAMENTE CORREGIDA Y PARENTESIS CERRADO ---
+            precios = re.findall(r'(?:S/\.?\s*|\$\s*)(\d+[\.,]\d{2}|\d+)', tarjeta.text)
+            valores = sorted(list(set([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])))
+            
+            precio_descuento = valores[0] if valores else 0.0
+            precio_original = valores[-1] if valores else 0.0
+
+            tiene_combo = any(palabra in texto_tarjeta for palabra in PALABRAS_COMBOS)
+            
+            if (precio_descuento > 0 and precio_descuento <= limite_precio) or tiene_combo:
+                productos_encontrados.append({
+                    "nombre": nombre_prod, 
+                    "precio_original": precio_original if precio
