@@ -121,4 +121,62 @@ def revisar_ofertas():
     revisar_comandos_telegram()
     try:
         res_s = supabase.table("radares").select("*").execute()
-        lineas = res_s.data if res_s.data else
+        lineas = res_s.data if res_s.data else []
+    except: return
+    if not lineas: return
+    historial = {}
+    if os.path.exists(HISTORIAL_FILE):
+        try:
+            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: historial = json.load(f)
+        except: historial = {}
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    hora_actual = str(datetime.now().hour)
+    log_horas = historial.get("LOG_HORARIOS_OFERTAS", {})
+    for item in lineas:
+        meta = item["identificador"].strip().split("-")
+        tienda, categoria, talla = meta[0], meta[1], meta[3] if len(meta)>3 else "Todas"
+        productos = escanear_tienda(url_base=item["url"], limite_precio=float(item["precio_max"]), tienda=tienda, talla_buscada=talla, item_id=item["id"])
+        for p in productos:
+            id_producto = f"{tienda}-{categoria}-{''.join(c for c in p['nombre'] if c.isalnum())[:15]}-{talla}"
+            if id_producto not in historial: historial[id_producto] = {}
+            precios_anteriores = [v for k, v in historial[id_producto].items() if isinstance(v, (int, float))]
+            if p.get("es_agresiva", False):
+                header_mensaje = "🚨 *[ALERTA RADICAL - CAÍDA FLOTANTE >30%]* 🚨"
+                alert_estafa = "🔥 *REMATÓN CRÍTICO:* _El producto cayó más del 30%. Ignoramos tu tope porque esto es un regalo._"
+                log_horas[hora_actual] = log_horas.get(hora_actual, 0) + 1
+            elif p.get("es_combo", False):
+                header_mensaje = "🎁 *¡ALERTA DE REGALO / COMBO DETECTADO!* 🎁"
+                alert_estafa = "🔥 *BENEFICIOS:* _Texto de regalo o promo duplicada (2x1, Gratis) detectado._"
+                log_horas[hora_actual] = log_horas.get(hora_actual, 0) + 1
+            else:
+                header_mensaje = "🛍️ *¡OFERTAS DE CATÁLOGO DETECTADAS!* 🛍️"
+                alert_estafa = "✅ *OFERTA EN LISTA RECOMENDADA*"
+                log_horas[hora_actual] = log_horas.get(hora_actual, 0) + 1
+            
+            # --- LÍNEA 124 CORREGIDA CON SALTOS DE LÍNEA EXACTOS ---
+            tendencia_txt = "🆕 *TENDENCIA:* Elemento detectado en el barrido de lista."
+            if len(precios_anteriores) >= 1 and p['precio_descuento'] > 0:
+                ultimo_p = precios_anteriores[-1]
+                if p['precio_descuento'] < ultimo_p:
+                    tendencia_txt = "📉 *TENDENCIA:* ¡Bajón de precio en catálogo! 🎯"
+                else:
+                    tendencia_txt = "📊 *TENDENCIA:* Precio estable."
+            
+            if p['precio_descuento'] > 0: historial[id_producto][fecha_hoy] = p['precio_descuento']
+            ahorro_soles = p['precio_original'] - p['precio_descuento']
+            barra_grafica = generar_barra_descuento(p['precio_original'], p['precio_descuento'])
+            
+            reporte = (
+                header_mensaje + "\n———————————————————\n\n" +
+                f"🏢 *Tienda:* `{tienda.upper()}` | 📂 #{categoria.upper()}\n" +
+                f"📦 *Elemento:* `{p['nombre']}` ({talla})\n\n" +
+                f"💵 *Precio en Lista:* S/. {p['precio_descuento']:.2f}\n" +
+                f"🎯 *Tu Tope Configurado:* S/. {item['precio_max']:.2f}\n\n" +
+                f"💰 *Diferencia inicial:* S/. {ahorro_soles:.2f}\n" +
+                barra_grafica + "\n" + tendencia_txt + "\n" + alert_estafa +
+                "\n———————————————————\n🦾 _Central de Inteligencia v9.4_ 🧠"
+            )
+            enviar_telegram_con_foto_y_botones(reporte, p['link'], p['foto'])
+            
+    historial["LOG_HORARIOS_OFERTAS"] = log_horas
+    with open(HISTORIAL_FILE, "w", encoding="utf-8") as f: json.dump(historial, f, indent=4)
