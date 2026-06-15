@@ -45,7 +45,6 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
     try:
         respuesta = requests.get(url_base, headers=headers, timeout=12)
         
-        # --- BLOQUE LÍNEA 61 COMPLETAMENTE PARCHADO Y CERRADO ---
         if respuesta.status_code != 200:
             try: 
                 supabase.table("radares").update({"url": "https://muerto_o_sin_stock"}).eq("id", item_id).execute()
@@ -131,6 +130,7 @@ def revisar_ofertas():
             else:
                 alert_estafa = "✅ *OFERTA REAL RECOMENDADA*"
 
+            # MEJORA: Analizador Estadístico de Tendencia
             tendencia_txt = "🆕 *TENDENCIA:* Primer registro capturado del artículo."
             if len(precios_anteriores) >= 1:
                 ultimo_p = precios_anteriores[-1]
