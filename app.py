@@ -3,7 +3,7 @@ import json
 import os
 import pandas as pd
 import requests
-from supabase import create_client, Client # NUEVA LIBRERÍA DE PERSISTENCIA
+from supabase import create_client, Client
 
 st.set_page_config(page_title="COBY & GEMINI - Panel Central", layout="wide")
 
@@ -48,8 +48,9 @@ def sincronizar_mensajes_telegram():
                     
                     if data_btn.startswith("pausar_"):
                         id_radar_borrar = data_btn.replace("pausar_", "").strip()
-                        # Borrado directo en la nube desde Telegram
-                        supabase.table("radares").delete().eq("identificador", id_radar_borrar).execute()
+                        try:
+                            supabase.table("radares").delete().eq("identificador", id_radar_borrar).execute()
+                        except: pass
                         requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/answerCallbackQuery", json={"callback_query_id": callback_id, "text": "🔕 Radar desactivado."})
                         requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": f"✅ Removido con ID `{id_radar_borrar}` desde la Nube Supabase."})
                         st.rerun()
@@ -134,7 +135,7 @@ if menu == "📈 Ver Dashboard":
         except Exception as e: st.error(f"Error: {e}")
     else: st.info("No hay datos históricos aún.")
 
-# --- GESTIONAR ENLACES PRO (CREAR / MODIFICAR DESDE LA NUBE) ---
+# --- GESTIONAR ENLACES PRO ---
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     lista_tiendas = obtener_tiendas_dinamicas()
@@ -161,8 +162,73 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
                 nombre_limpio = nombre.replace(" ", "_").strip()
                 nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.upper().strip()}-{nombre_limpio}-{talla.strip() if talla.strip() else 'TODAS'}"
                 
-                # REEMPLAZAR SI YA EXISTÍA (Para el botón Modificar o Duplicados)
-                try: supabase.table("radares").delete().eq("identificador", nuevo_id).execute()
-                except: pass
+                # CORRECCIÓN AQUÍ: Try/Except completos con sangría reglamentaria
+                try: 
+                    supabase.table("radares").delete().eq("identificador", nuevo_id).execute()
+                except: 
+                    pass
+                    
                 if st.session_state.mod_url:
-                    try: supabase.table
+                    try: 
+                        supabase.table("radares").delete().eq("url", st.session_state.mod_url).execute()
+                    except: 
+                        pass
+                
+                # INSERTAR EN LA BASE DE DATOS EN LA NUBE
+                try:
+                    supabase.table("radares").insert({"url": url, "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
+                
+                st.session_state.mod_url, st.session_state.mod_nombre, st.session_state.mod_talla, st.session_state.mod_precio = "", "", "", 100
+                st.toast("✅ ¡Guardado de forma indestructible en la Nube Supabase!")
+                st.rerun()
+
+    st.write("---")
+    st.subheader("📋 Panel de Control de Radares (Líneas Activas)")
+    
+    try:
+        res_d = supabase.table("radares").select("*").order("id", desc=True).execute()
+        lineas = res_d.data if res_d.data else []
+    except: lineas = []
+    
+    if lineas:
+        for index, item in enumerate(lineas):
+            url_display = item["url"]
+            precio_display = item["precio_max"]
+            meta_parts = item["identificador"].split("-")
+            tnd = meta_parts[0]
+            cat = meta_parts[1] if len(meta_parts)>1 else "OTROS"
+            prod = meta_parts[2].replace("_", " ") if len(meta_parts)>2 else "PRODUCTO"
+            tll = meta_parts[3] if len(meta_parts)>3 else "N/A"
+            
+            col_info, col_mod, col_btn = st.columns([7, 1.5, 1.5])
+            with col_info: st.markdown(f"**{index + 1}. [{tnd}]** {prod} | Categoría: `{cat}` | Detalle: `{tll}` | Tope: `S/. {precio_display}`")
+            with col_mod:
+                if st.button(f"✏️ Modificar", key=f"mod_{index}", use_container_width=True):
+                    st.session_state.mod_url = url_display
+                    st.session_state.mod_nombre = prod.replace(" ", "_")
+                    st.session_state.mod_talla = tll
+                    st.session_state.mod_precio = precio_display
+                    st.rerun()
+            with col_btn:
+                if st.button(f"🗑️ Eliminar", key=f"del_{index}", type="secondary", use_container_width=True):
+                    try:
+                        supabase.table("radares").delete().eq("id", item["id"]).execute()
+                    except: pass
+                    st.rerun()
+            st.write("")
+    else: st.info("No hay radares activos en la nube.")
+
+elif menu == "💥 Forzar Escaneo":
+    st.title("💥 Forzar Escaneo Automático")
+    st.caption("🤖 _Sistema operativo de la firma de software COBY & GEMINI_")
+    contenedor_mensaje = st.empty()
+    if st.button("💥 INICIAR ESCANEO INTENSIVO", type="primary", use_container_width=True):
+        contenedor_mensaje.info("⏳ Buscando ofertas y barriendo cuponeras globales...")
+        try:
+            from scraper import revisar_ofertas
+            revisar_ofertas()
+            contenedor_mensaje.success("✅ ¡Escaneo completado! Revisa tu Telegram.")
+            st.rerun()
+        except Exception as e: contenedor_mensaje.error(f"❌ Error: {e}")
