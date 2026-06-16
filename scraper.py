@@ -66,20 +66,14 @@ def revisar_ofertas():
         identificador = item['identificador']
         limite = float(item['precio_max'])
         
-        # Rompemos el identificador para extraer la metadata real
-        parts = identificador.split("-")
-        tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
-        cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-        talla_txt = parts[3] if len(parts) > 3 else "Todas"
-        
-        # Escaneamos la tienda capturando los productos reales
+        # 1. Escaneamos la tienda capturando los productos reales con límite infinito
         prods = escanear_tienda(item['url'], 999999.0)
         
         if prods:
-            # Tomamos el primer producto encontrado para registrar en el historial
+            # Tomamos el primer precio encontrado para guardarlo en tu historial
             precio_actual = prods[0]['precio']
             
-            # 1. Registro obligatorio en el historial de Supabase
+            # Registro obligatorio en el historial de Supabase
             try:
                 supabase.table("historial_precios").insert({
                     "identificador": identificador,
@@ -89,14 +83,20 @@ def revisar_ofertas():
             except: 
                 pass
             
-            # 2. Filtro de Alerta Inteligente recorriendo cada coincidencia
+            # 2. Rompemos el identificador para la alerta de Telegram (¡AHORA SE QUEDA AQUÍ!)
+            parts = identificador.split("-")
+            tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
+            cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+            talla_txt = parts[3] if len(parts) > 3 else "Todas"
+            
+            # 3. Recorremos los productos para verificar si alguno bajó de tu precio límite
             for p in prods:
                 if p['precio'] <= limite:
-                    # Calculamos el ahorro y porcentaje frente al tope de compra
+                    # Calculamos el ahorro y el porcentaje
                     ahorro = limite - p['precio']
                     porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
                     
-                    # Armamos el diseño premium con bloques limpios para Telegram
+                    # Estructura limpia y premium para Telegram
                     msg = (
                         f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
                         f"━━━━━━━━━━━━━━━━━━━\n\n"
@@ -114,6 +114,6 @@ def revisar_ofertas():
                         
                     msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
                     
-                    # ✅ SINTAXIS CORREGIDA: Usamos "p" alineado con el bucle for
+                    # Envío seguro al bot
                     enviar_telegram(msg, p['link'], p['img'])
                     
