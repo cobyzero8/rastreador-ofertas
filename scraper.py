@@ -66,11 +66,17 @@ def revisar_ofertas():
         identificador = item['identificador']
         limite = float(item['precio_max'])
         
-        # 1. Escaneamos la tienda capturando los productos reales con límite infinito
+        # 1. Extraemos la metadata del identificador ANTES del bucle de mensajes
+        parts = identificador.split("-")
+        tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
+        cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+        talla_txt = parts[3] if len(parts) > 3 else "Todas"
+        
+        # 2. Escaneamos la tienda capturando los productos reales con límite infinito
         prods = escanear_tienda(item['url'], 999999.0)
         
         if prods:
-            # Tomamos el primer precio encontrado para guardarlo en tu historial
+            # Tomamos el primer precio encontrado para guardarlo en tu historial básico
             precio_actual = prods[0]['precio']
             
             # Registro obligatorio en el historial de Supabase
@@ -83,16 +89,10 @@ def revisar_ofertas():
             except: 
                 pass
             
-            # 2. Rompemos el identificador para la alerta de Telegram (¡AHORA SE QUEDA AQUÍ!)
-            parts = identificador.split("-")
-            tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
-            cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-            talla_txt = parts[3] if len(parts) > 3 else "Todas"
-            
             # 3. Recorremos los productos para verificar si alguno bajó de tu precio límite
             for p in prods:
                 if p['precio'] <= limite:
-                    # Calculamos el ahorro y el porcentaje
+                    # Calculamos el ahorro y el porcentaje de descuento
                     ahorro = limite - p['precio']
                     porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
                     
@@ -114,6 +114,6 @@ def revisar_ofertas():
                         
                     msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
                     
-                    # Envío seguro al bot
+                    # Envío seguro al bot de Telegram
                     enviar_telegram(msg, p['link'], p['img'])
                     
