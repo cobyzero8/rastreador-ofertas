@@ -65,22 +65,43 @@ def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
         return productos
     except: return []
 
+def obtener_cupón_por_tienda(tienda):
+    """Busca en el archivo JSON si hay cupón para la tienda."""
+    try:
+        if os.path.exists(CUPONES_FILE):
+            with open(CUPONES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get(tienda.upper(), [])
+    except: return []
+    return []
+
 def revisar_ofertas():
     res_s = supabase.table("radares").select("*").execute()
     lineas = res_s.data if res_s.data else []
     
-    historial = {}
-    if os.path.exists(HISTORIAL_FILE):
-        with open(HISTORIAL_FILE, "r", encoding="utf-8") as f:
-            try: historial = json.load(f)
-            except: pass
-            
     for item in lineas:
         meta = item["identificador"].strip().split("-")
-        prods = escanear_tienda(item["url"], float(item["precio_max"]), meta[0], "", item["id"])
+        tienda = meta[0].upper()
+        prods = escanear_tienda(item["url"], float(item["precio_max"]), tienda, "", item["id"])
+        
+        # Obtenemos cupones para esta tienda
+        cupones = obtener_cupón_por_tienda(tienda)
+        texto_cupon = ""
+        if cupones:
+            c = cupones[0] # Tomamos el primero
+            texto_cupon = f"\n\n🎫 *Cupón activo:* `{c['codigo']}` - {c['descuento']} ({c['detalle']})"
+
         for p in prods:
             ahorro = p['p_orig'] - p['p_desc']
-            reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{meta[0]}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}\n💰 Ahorro: S/. {ahorro:.2f}"
+            reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{tienda}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}\n💰 Ahorro: S/. {ahorro:.2f}{texto_cupon}"
             enviar_telegram_con_foto_y_botones(reporte, p['link'], p['img'])
+            
+   # for item in lineas:
+        #meta = item["identificador"].strip().split("-")
+        #prods = escanear_tienda(item["url"], float(item["precio_max"]), meta[0], "", item["id"])
+       # for p in prods:
+          #  ahorro = p['p_orig'] - p['p_desc']
+           # reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{meta[0]}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}\n💰 Ahorro: S/. {ahorro:.2f}"
+            #enviar_telegram_con_foto_y_botones(reporte, p['link'], p['img'])
             # Agrega esta función a tu scraper.py
 
