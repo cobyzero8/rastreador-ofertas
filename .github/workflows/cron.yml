@@ -1,4 +1,4 @@
-name: Escaneo Automático de Ofertas
+name: Caza Ofertas Piloto Automatico
 
 on:
   schedule:
