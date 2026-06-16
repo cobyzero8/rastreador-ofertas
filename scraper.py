@@ -75,6 +75,22 @@ def obtener_cupón_por_tienda(tienda):
     except: return []
     return []
 
+def obtener_cupón_por_tienda(tienda):
+    if not os.path.exists(CUPONES_FILE):
+        print(f"DEBUG: El archivo {CUPONES_FILE} no existe en la ruta.")
+        return []
+    
+    with open(CUPONES_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        # Convertimos las llaves del JSON a mayúsculas para comparar
+        data_upper = {k.upper(): v for k, v in data.items()}
+        
+        cup = data_upper.get(tienda.upper())
+        if not cup:
+            print(f"DEBUG: No encontré cupón para la tienda: {tienda}")
+            return []
+        return cup
+
 def revisar_ofertas():
     res_s = supabase.table("radares").select("*").execute()
     lineas = res_s.data if res_s.data else []
@@ -82,18 +98,22 @@ def revisar_ofertas():
     for item in lineas:
         meta = item["identificador"].strip().split("-")
         tienda = meta[0].upper()
+        # ... (código de escanear)
+        
         prods = escanear_tienda(item["url"], float(item["precio_max"]), tienda, "", item["id"])
         
-        # Obtenemos cupones para esta tienda
-        cupones = obtener_cupón_por_tienda(tienda)
+        # DEBUG: ¿Llega aquí?
+        lista_cupones = obtener_cupón_por_tienda(tienda)
+        print(f"DEBUG: Tienda procesada: {tienda}, Cupones hallados: {len(lista_cupones)}")
+        
         texto_cupon = ""
-        if cupones:
-            c = cupones[0] # Tomamos el primero
-            texto_cupon = f"\n\n🎫 *Cupón activo:* `{c['codigo']}` - {c['descuento']} ({c['detalle']})"
+        if lista_cupones:
+            c = lista_cupones[0]
+            texto_cupon = f"\n\n🎫 *Cupón activo:* `{c['codigo']}` - {c['descuento']}"
 
         for p in prods:
-            ahorro = p['p_orig'] - p['p_desc']
-            reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{tienda}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}\n💰 Ahorro: S/. {ahorro:.2f}{texto_cupon}"
+            # Aquí va el envío a Telegram
+            reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{tienda}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}{texto_cupon}"
             enviar_telegram_con_foto_y_botones(reporte, p['link'], p['img'])
             
    # for item in lineas:
