@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import re
 import random
 import time
+from datetime import datetime
 from urllib.parse import urljoin
 from supabase import create_client, Client
 
@@ -14,7 +15,6 @@ SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
-HISTORIAL_FILE = "historial_precios.json"
 
 def enviar_telegram(mensaje, url_compra, url_foto):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
@@ -44,7 +44,7 @@ def escanear_tienda(url, limite):
             img_url = img['src'] if img else ""
             precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
             valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-            if valores and valores[0] <= limite:
+            if valores:
                 productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
         return productos
     except: return []
@@ -53,8 +53,29 @@ def revisar_ofertas():
     res = supabase.table("radares").select("*").execute()
     if not res.data:
         return
+    
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    
     for item in res.data:
-        prods = escanear_tienda(item['url'], float(item['precio_max']))
-        for p in prods:
-            msg = f"🛍️ *OFERTA ENCONTRADA*\n📦 {p['nombre']}\n💵 S/. {p['precio']:.2f}"
-            enviar_telegram(msg, p['link'], p['img'])
+        identificador = item['identificador']
+        limite = float(item['precio_max'])
+        prods = escanear_tienda(item['url'], limite)
+        
+        if prods:
+            # Tomamos el precio más bajo encontrado en la página para el historial
+            precio_actual = prods[0]['precio']
+            
+            # 📈 REGISTRO AUTOMÁTICO EN LA NUEVA TABLA DE SUPABASE
+            try:
+                supabase.table("historial_precios").insert({
+                    "identificador": identificador,
+                    "precio": precio_actual,
+                    "fecha": fecha_hoy
+                }).execute()
+            except: pass
+            
+            # Si el precio destruye tu tope, dispara la alerta a Telegram
+            for p in prods:
+                if p['precio'] <= limite:
+                    msg = f"🛍️ *OFERTA ENCONTRADA*\n📦 {p['nombre']}\n💵 S/. {p['precio']:.2f}"
+                    enviar_telegram(msg, p['link'], p['img'])
