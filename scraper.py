@@ -9,9 +9,11 @@ from datetime import datetime
 from urllib.parse import urljoin
 from supabase import create_client, Client
 
-# CONFIGURACIÓN
+# --- CONFIGURACIÓN DE ÉLITE ---
+# RECUERDA: Cambiar esta clave por tu "service_role" secreta en GitHub para saltar el bloqueo RLS de Supabase
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
-SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
+SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq" 
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
@@ -25,8 +27,10 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         "parse_mode": "Markdown",
         "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🛒 Comprar Aquí", "url": url_compra}]]})
     }
-    try: requests.post(url, json=payload, timeout=10)
-    except: pass
+    try: 
+        requests.post(url, json=payload, timeout=10)
+    except: 
+        pass
 
 def escanear_tienda(url, limite):
     try:
@@ -47,9 +51,10 @@ def escanear_tienda(url, limite):
             if valores:
                 productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
         return productos
-    except: return []
+    except: 
+        return []
 
-# --- REEMPLAZA DESDE AQUÍ HASTA EL FINAL DE TU ARCHIVO ---
+# --- MOTOR DE REVISIÓN Y ENVIOS OPTIMIZADO ---
 
 def revisar_ofertas():
     res = supabase.table("radares").select("*").execute()
@@ -66,41 +71,40 @@ def revisar_ofertas():
         parts = identificador.split("-")
         tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
         cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-        # Si el scraper no saca el nombre detallado, usamos el del radar mapeado
-        nombre_radar = parts[2].replace("_", " ").title() if len(parts) > 2 else "Producto"
         talla_txt = parts[3] if len(parts) > 3 else "Todas"
         
-        # Truco del límite infinito para capturar precio real
+        # Truco del límite infinito para capturar precio real siempre para tus gráficas
         prods = escanear_tienda(item['url'], 999999.0)
         
         if prods:
             precio_actual = prods[0]['precio']
             nombre_web = prods[0]['nombre']
             
-            # 1. Registro obligatorio en el historial de Supabase
+            # 1. Registro obligatorio en el historial de Supabase (Pase lo que pase)
             try:
                 supabase.table("historial_precios").insert({
                     "identificador": identificador,
                     "precio": precio_actual,
                     "fecha": fecha_hoy
                 }).execute()
-            except: pass
+            except: 
+                pass
             
-            # 2. Filtro de Alerta Inteligente (Solo si bajó de tu tope)
+            # 2. Filtro de Alerta Inteligente (Solo si bajó o igualó tu tope)
             if precio_actual <= limite:
                 # Calculamos el ahorro y porcentaje frente al tope de compra
                 ahorro = limite - precio_actual
                 porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
                 
-                # Armamos un diseño premium con bloques limpios para Telegram
+                # Armamos el diseño premium con bloques limpios para Telegram
                 msg = (
-                    f"🔥 COBY *¡OFERTA DETECTADA!* 🔥\n"
+                    f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
                     f"━━━━━━━━━━━━━━━━━━━\n\n"
                     f"📦 *Producto:* {nombre_web}\n"
                     f"🏪 *Tienda:* `{tienda_txt}`\n"
                     f"🏷️ *Talla/Filtro:* `{talla_txt}`\n\n"
                     f"💵 *Precio Actual:* `S/. {precio_actual:.2f}`\n"
-                    f"🎯 *Tu Precio Limite:* `S/. {limite:.2f}`\n"
+                    f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
                 )
                 
                 # Si el precio es estrictamente menor al tope, le metemos la medalla de ahorro
@@ -111,4 +115,5 @@ def revisar_ofertas():
                     
                 msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
                 
+                # Despacho final al Bot con todos los juguetes activos
                 enviar_telegram(msg, prods[0]['link'], prods[0]['img'])
