@@ -1,15 +1,15 @@
-name: Caza Ofertas Piloto Automatico
+name: Escaneo Automático Radar Familiar
 
 on:
   schedule:
     - cron: '0 3,9,15,21 * * *'
-  workflow_dispatch: # Esto activa tu botón gris de prueba manual
+  workflow_dispatch: # Este activa tu botón gris manual
 
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
     steps:
-      - name: Clonar código del repositorio
+      - name: Clonar repositorio
         uses: actions/checkout@v3
 
       - name: Configurar Python
@@ -17,11 +17,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Instalar herramientas obligatorias
+      - name: Instalar herramientas y Ejecutar el rastro de ofertas
         run: |
           python -m pip install --upgrade pip
-          pip install streamlit requests beautifulsoup4 supabase pandas plotly
-
-      - name: Ejecutar el motor de caza
-        run: |
+          pip install requests beautifulsoup4 supabase pandas plotly streamlit
           python -c "from scraper import revisar_ofertas; revisar_ofertas()"
+
+      - name: Guardar cambios en el historial (urls.txt y json)
+        run: |
+          print("Guardando historial...")
