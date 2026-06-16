@@ -32,6 +32,20 @@ def obtener_tiendas_dinamicas():
     except: pass
     return sorted(tiendas_base)
 
+# --- NUEVO: FUNCIÓN PARA OBTENER CATEGORÍAS DINÁMICAS DESDE SUPABASE ---
+def obtener_categorias_dinamicas():
+    categorias_base = ["ZAPATILLAS", "POLOS", "POLERAS", "PERFUMES", "SHAMPOO", "JABON", "ABARROTES", "VUELOS", "OTROS"]
+    try:
+        res = supabase.table("radares").select("identificador").execute()
+        if res.data:
+            for item in res.data:
+                meta = item["identificador"].split("-")
+                if len(meta) > 1:
+                    cat = meta[1].upper().strip()
+                    if cat and cat not in categorias_base: categorias_base.append(cat)
+    except: pass
+    return sorted(categorias_base)
+
 # --- MEJORA 1: PROCESAR COMANDOS DESDE TELEGRAM (PASARELA WEB) ---
 def procesar_comandos_telegram_pendientes():
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/getUpdates"
@@ -42,7 +56,6 @@ def procesar_comandos_telegram_pendientes():
                 msg = update.get("message", {})
                 txt = msg.get("text", "")
                 if txt.startswith("/guardar "):
-                    # Formato esperado: /guardar URL Tienda Categoria Nombre Tope
                     parts = txt.replace("/guardar ", "").split(" ")
                     if len(parts) >= 5:
                         r_url = parts[0]
@@ -151,7 +164,7 @@ elif menu == "💰 Métricas de Ahorro":
         df_ahorro_simulado = pd.DataFrame({"Mes": ["Abril", "Mayo", "Junio"], "Soles Ahorrados": [45.0, 89.2, total_ahorrado]}).set_index("Mes")
         st.bar_chart(df_ahorro_simulado)
 
-# --- MEJORA 4: INTELIGENCIA HORARIA (GRÁFICA DE MEJORES HORAS) ---
+# --- INTELIGENCIA HORARIA ---
 elif menu == "📊 Inteligencia Horaria":
     st.title("📊 Análisis de Inteligencia Horaria de Descuentos")
     st.subheader("⏱️ Gráfica estadística de bajones repentinos detectados en Perú")
@@ -175,6 +188,7 @@ elif menu == "📊 Inteligencia Horaria":
 elif menu == "🛠️ Gestionar Enlaces Pro":
     st.title("🛠️ Gestionar Enlaces Pro")
     lista_tiendas = obtener_tiendas_dinamicas()
+    lista_categorias = obtener_categorias_dinamicas() # NUEVO: Trae las categorías existentes
     
     try:
         res_back = supabase.table("radares").select("url", "precio_max", "identificador").execute()
@@ -194,7 +208,12 @@ elif menu == "🛠️ Gestionar Enlaces Pro":
             tienda_sel = st.selectbox("Tienda Seleccionada", lista_tiendas)
             tienda_manual = st.text_input("✍️ O registrar Nueva Tienda", "").strip().upper()
             tienda_final = tienda_manual if tienda_manual else tienda_sel
-            categoria_final = st.selectbox("Categoría", ["Zapatillas", "Polos", "Poleras", "Perfumes", "Shampoo", "Jabon", "Abarrotes", "Vuegos", "Otros"]).upper()
+            
+            # NUEVO: CAJÓN DE CATEGORÍA SELECCIONABLE Y MANUAL
+            categoria_sel = st.selectbox("Categoría Seleccionada", lista_categorias)
+            categoria_manual = st.text_input("✍️ O registrar Nueva Categoría", "").strip().upper()
+            categoria_final = categoria_manual if categoria_manual else categoria_sel
+            
         with c2:
             nombre = st.text_input("Nombre / Etiqueta del Radar", value=st.session_state.mod_nombre)
             url = st.text_input("URL exacta del producto o catálogo", value=st.session_state.mod_url)
@@ -271,5 +290,3 @@ elif menu == "💥 Forzar Escaneo":
             contenedor_mensaje.success("✅ ¡Escaneo completado exitosamente! Revisa tu Telegram.")
             st.rerun()
         except Exception as e: contenedor_mensaje.error(f"❌ Error: {e}")
-
-
