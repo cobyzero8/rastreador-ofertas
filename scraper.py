@@ -76,44 +76,30 @@ def revisar_ofertas():
         # Truco del límite infinito para capturar precio real siempre para tus gráficas
         prods = escanear_tienda(item['url'], 999999.0)
         
-        if prods:
-            precio_actual = prods[0]['precio']
-            nombre_web = prods[0]['nombre']
-            
-            # 1. Registro obligatorio en el historial de Supabase (Pase lo que pase)
-            try:
-                supabase.table("historial_precios").insert({
-                    "identificador": identificador,
-                    "precio": precio_actual,
-                    "fecha": fecha_hoy
-                }).execute()
-            except: 
-                pass
-            
-            # 2. Filtro de Alerta Inteligente (Solo si bajó o igualó tu tope)
-            if precio_actual <= limite:
-                # Calculamos el ahorro y porcentaje frente al tope de compra
-                ahorro = limite - precio_actual
-                porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
-                
-                # Armamos el diseño premium con bloques limpios para Telegram
-                msg = (
-                    f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"📦 *Producto:* {nombre_web}\n"
-                    f"🏪 *Tienda:* `{tienda_txt}`\n"
-                    f"🏷️ *Talla/Filtro:* `{talla_txt}`\n\n"
-                    f"💵 *Precio Actual:* `S/. {precio_actual:.2f}`\n"
-                    f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
-                )
-                
-                # Si el precio es estrictamente menor al tope, le metemos la medalla de ahorro
-                if precio_actual < limite:
-                    msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
-                else:
-                    msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
+                    # 2. Filtro de Alerta Inteligente (Solo si bajó o igualó tu tope)
+            for p in prods: # 👈 Tu bucle usa la "p"
+                if p['precio'] <= limite:
+                    # Calculamos el ahorro y porcentaje frente al tope de compra
+                    ahorro = limite - p['precio']
+                    porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
                     
-                msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
-                
-                # Despacho final al Bot con todos los juguetes activos
-                enviar_telegram(msg, prods[0]['link'], prods[0]['img'])
+                    # Armamos el diseño premium con bloques limpios para Telegram
+                    msg = (
+                        f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
+                        f"━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📦 *Producto:* {p['nombre']}\n"
+                        f"🏪 *Tienda:* `{tienda_txt}`\n"
+                        f"🏷️ *Talla/Filtro:* `{talla_txt}`\n\n"
+                        f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
+                        f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
+                    )
+                    
+                    if p['precio'] < limite:
+                        msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
+                    else:
+                        msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
+                        
+                    msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
+                    
+                    # ✅ CORRECCIÓN AQUÍ: Usamos "p" en lugar de "prods[0]"
+                    enviar_telegram(msg, p['link'], p['img'])
