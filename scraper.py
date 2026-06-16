@@ -49,7 +49,6 @@ def escanear_tienda(url, limite):
         return productos
     except: return []
 
-# --- 🛠️ AQUÍ ESTÁ EL CAMBIO DEFINITIVO ---
 def revisar_ofertas():
     res = supabase.table("radares").select("*").execute()
     if not res.data:
@@ -61,14 +60,14 @@ def revisar_ofertas():
         identificador = item['identificador']
         limite = float(item['precio_max'])
         
-        # CAMBIO AQUÍ: Forzamos al extractor a traer el precio real ignorando tu tope temporalmente
+        # 🔥 TRUCO MÁGICO: Forzamos al extractor a traer el precio real ignorando tu tope temporalmente
         prods = escanear_tienda(item['url'], 999999.0)
         
         if prods:
-            # Tomamos el precio actual de la tienda para guardarlo pase lo que pase
+            # Tomamos el precio real actual de la tienda para el historial
             precio_actual = prods[0]['precio']
             
-            # 📈 REGISTRO OBLIGATORIO EN SUPABASE (Ya no se queda vacío si está caro)
+            # 📈 REGISTRO OBLIGATORIO: Guarda el precio real en Supabase pase lo que pase (esté caro o barato)
             try:
                 supabase.table("historial_precios").insert({
                     "identificador": identificador,
@@ -77,8 +76,7 @@ def revisar_ofertas():
                 }).execute()
             except: pass
             
-            # 🚨 ALERTA FILTRADA: Solo te avisa a Telegram si destruye tu límite real
-            for p in prods:
-                if p['precio'] <= limite:
-                    msg = f"🛍️ *¡OFERTA DETECTADA!*\n📦 {p['nombre']}\n💵 S/. {p['precio']:.2f} (Tope: S/. {limite:.2f})"
-                    enviar_telegram(msg, p['link'], p['img'])
+            # 🚨 ALERTA DE TELEGRAM FILTRADA: Solo te despierta el celular si destruye tu límite real configurado
+            if precio_actual <= limite:
+                msg = f"🛍️ *¡OFERTA DETECTADA!*\n📦 {prods[0]['nombre']}\n💵 S/. {precio_actual:.2f} (Tope: S/. {limite:.2f})"
+                enviar_telegram(msg, prods[0]['link'], prods[0]['img'])
