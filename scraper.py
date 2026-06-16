@@ -34,11 +34,12 @@ def generar_barra_descuento(precio_orig, precio_desc):
 def enviar_telegram_con_foto_y_botones(mensaje, url_compra, url_foto):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
     reply_markup = {"inline_keyboard": [[{"text": "🛒 Ir al Producto", "url": url_compra}]]}
-    try:
-        requests.post(url, json={"chat_id": CHAT_ID_TELEGRAM, "photo": url_foto, "caption": mensaje, "parse_mode": "Markdown", "reply_markup": json.dumps(reply_markup)}, timeout=10)
-# Dentro de la función enviar_telegram...
+    # Dentro de la función enviar_telegram...
 mensaje_con_cupos = mensaje + "\n\n🎫 *Cupón sugerido:* `ADI2026` (Úsalo en la web)"
 # Usa esta variable en lugar de 'mensaje' al enviar el post a Telegram.
+    try:
+        requests.post(url, json={"chat_id": CHAT_ID_TELEGRAM, "photo": url_foto, "caption": mensaje, "parse_mode": "Markdown", "reply_markup": json.dumps(reply_markup)}, timeout=10)
+
     except: pass
 
 def escanear_tienda(url_base, limite_precio, tienda, talla_buscada, item_id):
