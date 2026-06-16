@@ -272,13 +272,4 @@ elif menu == "💥 Forzar Escaneo":
             st.rerun()
         except Exception as e: contenedor_mensaje.error(f"❌ Error: {e}")
 
-# En app.py, dentro de tu bloque 'menu'
-elif menu == "🎫 Cupones":
-    st.title("🎫 Cupones de Descuento")
-    from scraper import obtener_cupones_disponibles
-    cupones = obtener_cupones_disponibles()
-    
-    st.json(cupones) # Esto muestra los cupones de forma elegante
-    
-    if st.button("🔄 Actualizar Cupones"):
-        st.rerun()
+
