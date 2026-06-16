@@ -34,9 +34,7 @@ def generar_barra_descuento(precio_orig, precio_desc):
 def enviar_telegram_con_foto_y_botones(mensaje, url_compra, url_foto):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
     reply_markup = {"inline_keyboard": [[{"text": "🛒 Ir al Producto", "url": url_compra}]]}
-    # Dentro de la función enviar_telegram...
-mensaje_con_cupos = mensaje + "\n\n🎫 *Cupón sugerido:* `ADI2026` (Úsalo en la web)"
-# Usa esta variable en lugar de 'mensaje' al enviar el post a Telegram.
+    
     try:
         requests.post(url, json={"chat_id": CHAT_ID_TELEGRAM, "photo": url_foto, "caption": mensaje, "parse_mode": "Markdown", "reply_markup": json.dumps(reply_markup)}, timeout=10)
 
@@ -85,10 +83,4 @@ def revisar_ofertas():
             reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{meta[0]}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}\n💰 Ahorro: S/. {ahorro:.2f}"
             enviar_telegram_con_foto_y_botones(reporte, p['link'], p['img'])
             # Agrega esta función a tu scraper.py
-def obtener_cupones_disponibles():
-    if os.path.exists(CUPONES_FILE):
-        with open(CUPONES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"Mensaje": "No hay cupones activos en este momento."}
-    with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
-        json.dump(historial, f, indent=4)
+
