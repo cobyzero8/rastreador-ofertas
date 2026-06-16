@@ -80,6 +80,11 @@ def revisar_ofertas():
             ahorro = p['p_orig'] - p['p_desc']
             reporte = f"🛍️ *¡OFERTA DETECTADA!*\n🏢 *{meta[0]}*\n📦 {p['nombre']}\n💵 S/. {p['p_desc']:.2f}\n💰 Ahorro: S/. {ahorro:.2f}"
             enviar_telegram_con_foto_y_botones(reporte, p['link'], p['img'])
-            
+            # Agrega esta función a tu scraper.py
+def obtener_cupones_disponibles():
+    if os.path.exists(CUPONES_FILE):
+        with open(CUPONES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"Mensaje": "No hay cupones activos en este momento."}
     with open(HISTORIAL_FILE, "w", encoding="utf-8") as f:
         json.dump(historial, f, indent=4)
