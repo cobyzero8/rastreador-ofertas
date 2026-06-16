@@ -55,7 +55,6 @@ def escanear_tienda(url, limite):
         return []
 
 # --- MOTOR DE REVISIÓN Y ENVIOS OPTIMIZADO ---
-
 def revisar_ofertas():
     res = supabase.table("radares").select("*").execute()
     if not res.data:
@@ -73,11 +72,25 @@ def revisar_ofertas():
         cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
         talla_txt = parts[3] if len(parts) > 3 else "Todas"
         
-        # Truco del límite infinito para capturar precio real siempre para tus gráficas
+        # Escaneamos la tienda capturando los productos reales
         prods = escanear_tienda(item['url'], 999999.0)
         
-                    # 2. Filtro de Alerta Inteligente (Solo si bajó o igualó tu tope)
-            for p in prods: # 👈 Tu bucle usa la "p"
+        if prods:
+            # Tomamos el primer producto encontrado para registrar en el historial
+            precio_actual = prods[0]['precio']
+            
+            # 1. Registro obligatorio en el historial de Supabase
+            try:
+                supabase.table("historial_precios").insert({
+                    "identificador": identificador,
+                    "precio": precio_actual,
+                    "fecha": fecha_hoy
+                }).execute()
+            except: 
+                pass
+            
+            # 2. Filtro de Alerta Inteligente recorriendo cada coincidencia
+            for p in prods:
                 if p['precio'] <= limite:
                     # Calculamos el ahorro y porcentaje frente al tope de compra
                     ahorro = limite - p['precio']
@@ -101,5 +114,6 @@ def revisar_ofertas():
                         
                     msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
                     
-                    # ✅ CORRECCIÓN AQUÍ: Usamos "p" en lugar de "prods[0]"
+                    # ✅ SINTAXIS CORREGIDA: Usamos "p" alineado con el bucle for
                     enviar_telegram(msg, p['link'], p['img'])
+                    
