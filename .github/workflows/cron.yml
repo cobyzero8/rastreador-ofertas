@@ -3,7 +3,7 @@ name: Escaneo Automático Radar Familiar
 on:
   schedule:
     - cron: '0 3,9,15,21 * * *'
-  workflow_dispatch: # Este activa tu botón gris manual
+  workflow_dispatch: # Activa tu botón gris de prueba manual
 
 jobs:
   run-scraper:
@@ -17,12 +17,8 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Instalar herramientas y Ejecutar el rastro de ofertas
+      - name: Instalar herramientas y Ejecutar rastro
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 supabase pandas plotly streamlit
           python -c "from scraper import revisar_ofertas; revisar_ofertas()"
-
-      - name: Guardar cambios en el historial (urls.txt y json)
-        run: |
-          print("Guardando historial...")
