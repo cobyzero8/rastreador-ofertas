@@ -80,50 +80,52 @@ def escanear_tienda(url, limite):
                         "img": img_url
                     })
 
-        # =========================================================
-        # 🕵️‍♂️ TIENDA NATURA PERÚ
+       # =========================================================
+        # 🕵️‍♂️ TIENDA NATURA PERÚ (API REST DIRECTA - ULTRA ESTABLE)
         # =========================================================
         elif "natura.com.pe" in url:
+            # Detectamos si busca masculinos o femeninos basado en tu link
             tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url else "perfumeria-femenina"
-            api_url = "https://www.natura.com.pe/_v/segment/graphql/v1"
             
-            query_json = {
-                "operationName": "productSearch",
-                "variables": {
-                    "query": tipo_perfume,
-                    "page": 1,
-                    "count": 20,
-                    "sort": "OrderByPriceASC"
-                },
-                "extensions": {
-                    "persistedQuery": {
-                        "version": 1,
-                        "sha256Hash": "b06828980b62e49c1ee91a27e7ca4a206a4b11f67f39420063f2563f8d380e2f"
-                    }
-                }
+            # API REST pública de Natura Perú (VTEX Catalog) - No requiere firmas ni hashes
+            api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search"
+            params = {
+                "ft": tipo_perfume,
+                "_from": 0,
+                "_to": 23,
+                "O": "OrderByPriceASC"  # Ordenado por precio menor
             }
             
-            resp = requests.post(api_url, headers=headers, json=query_json, timeout=15)
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("data", {}).get("productSearch", {}).get("products", [])
+                items = resp.json()
                 
                 for item in items:
                     nombre = item.get("productName", "Perfume Natura")
-                    link_rel = item.get("linkText", "")
-                    link_completo = f"https://www.natura.com.pe/{link_rel}/p"
-                    img_url = item.get("items", [{}])[0].get("images", [{}])[0].get("imageUrl", "")
+                    link_completo = item.get("link", url)
                     
-                    sellers = item.get("items", [{}])[0].get("sellers", [{}])
-                    precio = float(sellers[0].get("commertialOffer", {}).get("Price", 999)) if sellers else 999
+                    # Extraer imagen principal
+                    img_url = ""
+                    items_internos = item.get("items", [])
+                    if items_internos:
+                        images = items_internos[0].get("images", [])
+                        if images:
+                            img_url = images[0].get("imageUrl", "")
+                    
+                    # Extraer el precio comercial neto de oferta
+                    precio = 999.0
+                    if items_internos:
+                        sellers = items_internos[0].get("sellers", [])
+                        if sellers:
+                            comm_offer = sellers[0].get("commertialOffer", {})
+                            precio = float(comm_offer.get("Price", 999.0))
                     
                     productos.append({
-                        "nombre": f"NATURA - {nombre}",
+                        "nombre": f"NATURA - {nombre.upper()}",
                         "precio": precio,
                         "link": link_completo,
                         "img": img_url
                     })
-
         # =========================================================
         # 👟 COMODÍN: SAGA, MARATHON, ADIDAS, ETC.
         # =========================================================
