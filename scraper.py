@@ -10,7 +10,7 @@ from supabase import create_client, Client
 
 # --- CONFIGURACIÓN DE ÉLITE ---
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
-SUPABASE_KEY = os.environ.get("sb_secret_I-7TfmTIay7v4ozq6toy1Q_7eYPSc4_")
+SUPABASE_KEY = os.environ.get("sb_secret_WytpOYfTaYriHksQ8nzYGg_PLRGLqAO")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
