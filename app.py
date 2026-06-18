@@ -162,11 +162,19 @@ if menu == "📈 Ver Dashboard":
                     "Compra": link_final
                 }
                 
-                # Clasificación indestructible para las pestañas visuales
-                if cat_txt == "PERFUMES" or cat_txt in PRIMERA_NECESIDAD: 
-                    lista_hogar.append(item_dict)
-                else: 
-                    lista_personal.append(item_dict)
+                # --- REEMPLAZA ESTE BLOQUE EN TU app.py ---
+# Clasificación indestructible 
+es_hogar = False
+# Convertimos PRIMERA_NECESIDAD a mayúsculas para comparar bien
+lista_necesidad_upper = [x.upper() for x in PRIMERA_NECESIDAD]
+
+if cat_txt.upper() in lista_necesidad_upper or "PERFUME" in cat_txt.upper():
+    es_hogar = True
+
+if es_hogar:
+    lista_hogar.append(item_dict)
+else:
+    lista_personal.append(item_dict)
                     
     except Exception as e:
         st.warning(f"Nota: Sincronizando grilla... ({e})")
