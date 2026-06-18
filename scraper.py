@@ -8,11 +8,22 @@ from datetime import datetime
 from urllib.parse import urljoin
 from supabase import create_client, Client
 
-# --- CONFIGURACIÓN DE ÉLITE ---
+# --- CONFIGURACIÓN DE ÉLITE MULTI-ENTORNO ---
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
+
+# Detecta si está corriendo en GitHub (SUPABASE_SECRET_KEY) o en Streamlit (SUPABASE_KEY)
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
+if not SUPABASE_KEY:
+    try:
+        import streamlit as st
+        SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    except:
+        pass
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
