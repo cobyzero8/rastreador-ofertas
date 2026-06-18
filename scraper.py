@@ -45,147 +45,135 @@ def escanear_tienda(url, limite):
         "Accept-Language": "es-PE,es;q=0.9"
     }
     productos = []
-    url_lower = str(url).lower()
+    url_clean = str(url).strip().lower()
 
     # =========================================================
     # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA)
     # =========================================================
-    if "tiendabelcorp" in url_lower or "cyzone" in url_lower or "lbel" in url_lower or "esika" in url_lower:
-        marca = "cyzone" if "cyzone" in url_lower else "lbel" if "lbel" in url_lower else "esika"
+    if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
+        marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         api_url = f"https://api.tiendabelcorp.com.pe/v2/products/search/{marca}/PE"
         params = {
             "category": "perfumes",
             "page": 1,
-            "pageSize": 15,
+            "pageSize": 20,
             "sort": "price_asc"
         }
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            for p in data.get("products", []):
-                nombre = p.get("name", "Perfume Belcorp")
-                precio = float(p.get("price", {}).get("value", 999))
-                link_rel = p.get("urlKey", "")
-                link_completo = f"https://{marca}.tiendabelcorp.com.pe/{link_rel}/p"
-                img_url = p.get("images", [{}])[0].get("url", "")
-                productos.append({"nombre": f"{marca.upper()} - {nombre}", "precio": precio, "link": link_completo, "img": img_url})
+        try:
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                for p in data.get("products", []):
+                    nombre = p.get("name", "Perfume Belcorp")
+                    precio = float(p.get("price", {}).get("value", 999))
+                    link_rel = p.get("urlKey", "")
+                    link_completo = f"https://{marca}.tiendabelcorp.com.pe/{link_rel}/p"
+                    img_url = p.get("images", [{}])[0].get("url", "")
+                    productos.append({"nombre": f"{marca.upper()} - {nombre}", "precio": precio, "link": link_completo, "img": img_url})
+        except:
+            pass
 
     # =========================================================
     # 🕵️‍♂️ TIENDA NATURA PERÚ
     # =========================================================
-    elif "natura" in url_lower:
-        tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url_lower else "perfumeria-femenina"
+    elif "natura" in url_clean:
+        tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url_clean else "perfumeria-femenina"
         api_url = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
-        params = {"ft": tipo_perfume, "_from": 0, "_to": 15, "O": "OrderByPriceASC"}
-        
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15)
-        if resp.status_code == 200:
-            items = resp.json()
-            for item in items:
-                nombre = item.get("productName", "Perfume Natura")
-                link_completo = item.get("link", url)
-                
-                img_url = ""
-                items_internos = item.get("items", [])
-                if items_internos and items_internos[0].get("images"):
-                    img_url = items_internos[0]["images"][0].get("imageUrl", "")
-                
-                precio = 999.0
-                if items_internos and items_internos[0].get("sellers"):
-                    comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                    precio = float(comm_offer.get("Price", 999.0))
-                
-                productos.append({
-                    "nombre": f"NATURA - {nombre.upper()}",
-                    "precio": precio,
-                    "link": link_completo,
-                    "img": img_url
-                })
+        params = {"ft": tipo_perfume, "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
+        try:
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                items = resp.json()
+                for item in items:
+                    nombre = item.get("productName", "Perfume Natura")
+                    link_completo = item.get("link", url)
+                    
+                    img_url = ""
+                    items_internos = item.get("items", [])
+                    if items_internos and items_internos[0].get("images"):
+                        img_url = items_internos[0]["images"][0].get("imageUrl", "")
+                    
+                    precio = 999.0
+                    if items_internos and items_internos[0].get("sellers"):
+                        comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                        precio = float(comm_offer.get("Price", 999.0))
+                    
+                    productos.append({
+                        "nombre": f"NATURA - {nombre.upper()}",
+                        "precio": precio,
+                        "link": link_completo,
+                        "img": img_url
+                    })
+        except:
+            pass
 
     # =========================================================
     # 👟 COMODÍN: SAGA, MARATHON, ADIDAS, ETC.
     # =========================================================
     else:
-        resp = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
-            tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
-            if not tit: continue
-            nombre = tit.text.strip()
-            a = t.find('a', href=True)
-            link = urljoin(url, a['href']) if a else url
-            img = t.find('img', src=True)
-            img_url = img['src'] if img else ""
-            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-            valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-            if valores:
-                productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
+                tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
+                if not tit: continue
+                nombre = tit.text.strip()
+                a = t.find('a', href=True)
+                link = urljoin(url, a['href']) if a else url
+                img = t.find('img', src=True)
+                img_url = img['src'] if img else ""
+                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
+                if valores:
+                    productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
+        except:
+            pass
 
     return productos
 
 def revisar_ofertas():
-    res = supabase.table("radares").select("*").execute()
-    if not res or not res.data:
-        return
-    
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    
-    for item in res.data:
-        identificador = item['identificador']
-        limite = float(item['precio_max'])
-        url_radar = str(item['url']).lower()
+    try:
+        res = supabase.table("radares").select("*").execute()
+        if not res or not res.data:
+            return
         
-        parts = identificador.split("-")
-        tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
-        cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
         
-        prods = escanear_tienda(item['url'], limite)
-        
-        if prods:
-            # 🚀 SOLUCIÓN RADICAL: Para perfumes, tomamos el primer producto encontrado 
-            # y lo insertamos usando el identificador exacto de tu radar para evitar choques en la base de datos
-            if "natura" in url_radar or "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar:
-                p_top = prods[0] # El perfume más barato del catálogo actual
-                
-                # Forzamos la inserción usando tu identificador exacto de radar de la web
-                try:
-                    supabase.table("historial_precios").insert({
-                        "identificador": identificador, 
-                        "precio": p_top['precio'],
-                        "fecha": fecha_hoy
-                    }).execute()
-                except:
-                    pass
-                
-                # Enviamos la alerta a Telegram ignorando el filtro por esta vez para comprobar que conecta
-                ahorro = limite - p_top['precio']
-                porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
-                
-                msg = (
-                    f"🔥 *¡PERFUME DETECTADO EN VIVO!* 🔥\n"
-                    f"━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"📦 *Producto:* {p_top['nombre']}\n"
-                    f"🏪 *Tienda:* `{tienda_txt}`\n"
-                    f"💵 *Precio Actual:* `S/. {p_top['precio']:.2f}`\n"
-                    f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
-                )
-                msg += f"📉 *Ahorro calculado:* S/. {ahorro:.2f} ({porcentaje:.1f}%)\n"
-                enviar_telegram(msg, p_top['link'], p_top['img'])
-                time.sleep(0.5)
-                
-            else:
-                # Mantiene la lógica normal para tus zapatillas tradicionales que sí funcionan
+        for item in res.data:
+            identificador = str(item['identificador']).strip()
+            limite = float(item['precio_max'])
+            url_radar = str(item['url']).strip().lower()
+            
+            parts = identificador.split("-")
+            tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
+            cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+            talla_txt = parts[3] if len(parts) > 3 else "Todas"
+            
+            prods = escanear_tienda(item['url'], limite)
+            
+            if prods:
+                # ✅ REPARACIÓN TOTAL DEL BUCLE PARA PERFUMES
                 for p in prods:
                     if p['precio'] <= limite:
+                        
+                        # Si es un catálogo de perfumes, generamos un identificador único dinámico para evitar bloqueos
+                        if "natura" in url_radar or "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar:
+                            nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
+                            id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
+                        else:
+                            id_registro_dashboard = identificador
+                        
+                        # 1. Guardar en Supabase
                         try:
                             supabase.table("historial_precios").insert({
-                                "identificador": identificador,
+                                "identificador": id_registro_dashboard, 
                                 "precio": p['precio'],
                                 "fecha": fecha_hoy
                             }).execute()
                         except:
                             pass
                         
+                        # 2. Armar y enviar Alerta a Telegram
                         ahorro = limite - p['precio']
                         porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
                         
@@ -194,7 +182,19 @@ def revisar_ofertas():
                             f"━━━━━━━━━━━━━━━━━━━\n\n"
                             f"📦 *Producto:* {p['nombre']}\n"
                             f"🏪 *Tienda:* `{tienda_txt}`\n"
+                            f"🏷️ *Categoría:* `{cat_txt}`\n\n"
                             f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
+                            f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
                         )
+                        
+                        if p['precio'] < limite:
+                            msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
+                        else:
+                            msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
+                            
+                        msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
+                        
                         enviar_telegram(msg, p['link'], p['img'])
                         time.sleep(0.5)
+    except:
+        pass
