@@ -75,7 +75,7 @@ if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
 # ==========================================
-# 📈 DASHBOARD CONECTADO A SUPABASE
+# 📈 DASHBOARD RESISTENTE Y CONECTADO A SUPABASE
 # ==========================================
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Central COBY & GEMINI")
@@ -85,58 +85,72 @@ if menu == "📈 Ver Dashboard":
     try:
         res_l = supabase.table("radares").select("url", "identificador").execute()
         if res_l.data:
-            for item in res_l.data: links_mapeados[item["identificador"]] = item["url"]
-    except: pass
+            # Guardamos todo en mayúsculas para un cruce limpio sin importar cómo se escribió
+            for item in res_l.data: 
+                id_limpio = str(item["identificador"]).strip().upper()
+                links_mapeados[id_limpio] = item["url"]
+    except Exception as e: 
+        pass
 
     lista_hogar, lista_personal = [], []
 
     try:
-        # 🔄 CONSULTA CORREGIDA CON desc=True PARA SUPABASE
+        # Jalamos los datos directo de la tabla confirmada historial_precios
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         
-        if res_h.data:
-            # Agrupamos por identificador para quedarnos solo con el precio más reciente
+        if res_h and res_h.data:
             productos_procesados = set()
             
             for reg in res_h.data:
-                id_prod = reg["identificador"]
-                if id_prod in productos_procesados: continue
-                productos_procesados.add(id_prod)
+                id_prod = str(reg["identificador"]).strip()
+                id_prod_upper = id_prod.upper()
                 
+                # Evitamos duplicados en pantalla (solo mostramos el precio más reciente)
+                if id_prod_upper in productos_procesados: continue
+                productos_procesados.add(id_prod_upper)
+                
+                # Desarmamos el identificador con seguridad
                 parts = id_prod.split("-")
-                tienda_txt = parts[0] if len(parts) > 0 else "N/A"
+                tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
                 prod_txt = parts[2] if len(parts) > 2 else "N/A"
                 talla_txt = parts[3] if len(parts) > 3 else "N/A"
                 
-                link_final = links_mapeados.get(id_prod, "#")
+                # Buscamos el enlace correspondiente en los radares
+                link_final = links_mapeados.get(id_prod_upper, "#")
                 ultimo_precio = reg["precio"]
                 
                 item_dict = {
-                    "Tienda": tienda_txt.upper(), 
+                    "Tienda": tienda_txt, 
                     "Categoría": cat_txt,
                     "Elemento": prod_txt.replace("_", " ").title(), 
                     "Detalle/Talla": talla_txt,
-                    "Precio Actual": f"S/. {ultimo_precio:.2f}", 
+                    "Precio Actual": f"S/. {float(ultimo_precio):.2f}", 
                     "Compra": link_final
                 }
                 
+                # Clasificamos según tu lista de PRIMERA_NECESIDAD
                 if cat_txt in PRIMERA_NECESIDAD: 
                     lista_hogar.append(item_dict)
                 else: 
                     lista_personal.append(item_dict)
+                    
     except Exception as e:
-        st.error(f"Error al conectar con el historial de Supabase: {e}")
+        st.error(f"Aviso de Sincronización: {e}")
 
     # --- PESTAÑAS VISUALES ---
     tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
     
     with tab1:
-        if lista_hogar: st.data_editor(pd.DataFrame(lista_hogar), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-        else: st.info("No hay artículos esenciales registrados en Supabase aún.")
+        if lista_hogar: 
+            st.data_editor(pd.DataFrame(lista_hogar), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+        else: 
+            st.info("No hay artículos esenciales registrados en Supabase aún.")
     with tab2:
-        if lista_personal: st.data_editor(pd.DataFrame(lista_personal), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
-        else: st.info("No hay artículos personales registrados en Supabase aún.")
+        if lista_personal: 
+            st.data_editor(pd.DataFrame(lista_personal), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+        else: 
+            st.info("No hay artículos personales registrados en Supabase aún.")
     with tab3:
         if os.path.exists(CUPONES_FILE):
             try:
@@ -147,8 +161,10 @@ if menu == "📈 Ver Dashboard":
                         lista_cupones_tabla.append({"Tienda": tnda.upper(), "Código": f"✨ {item_c['codigo']} ✨", "Descuento": item_c['descuento'], "Detalle": item_c['detalle']})
                 if lista_cupones_tabla: st.dataframe(pd.DataFrame(lista_cupones_tabla), use_container_width=True, hide_index=True)
                 else: st.info("No hay cupones activos.")
-            except: st.info("Cuponera lista.")
-        else: st.info("Cuponera lista.")
+            except: 
+                st.info("Cuponera lista.")
+        else: 
+            st.info("Cuponera lista.")
 
 # --- MÉTRICAS DE AHORRO ---
 elif menu == "💰 Métricas de Ahorro":
