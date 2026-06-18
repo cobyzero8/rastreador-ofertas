@@ -12,7 +12,7 @@ from supabase import create_client, Client
 # --- CONFIGURACIÓN DE ÉLITE ---
 # RECUERDA: Cambiar esta clave por tu "service_role" secreta en GitHub para saltar el bloqueo RLS de Supabase
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
-SUPABASE_KEY = "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq" 
+SUPABASE_KEY = "sb_secret_UNSyaeXMv0nHZT4Ipih0-g__t6fxuJc" 
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
