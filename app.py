@@ -87,7 +87,8 @@ if menu == "📈 Ver Dashboard":
         if res_l and hasattr(res_l, 'data') and res_l.data:
             for item in res_l.data: 
                 if "identificador" in item and "url" in item:
-                    id_limpio = str(item["identificador"]).strip().upper()
+                    # Forzamos mayúsculas limpias quitando guiones medios para un match perfecto
+                    id_limpio = str(item["identificador"]).strip().upper().replace("-", "_")
                     links_mapeados[id_limpio] = item["url"]
     except: 
         pass
@@ -102,28 +103,35 @@ if menu == "📈 Ver Dashboard":
             
             for reg in res_h.data:
                 id_prod = str(reg["identificador"]).strip()
-                id_prod_upper = id_prod.upper()
+                id_prod_upper = id_prod.upper().replace("-", "_")
                 
                 if id_prod_upper in productos_procesados: continue
                 productos_procesados.add(id_prod_upper)
                 
-                parts = id_prod.split("-")
+                # Desarmamos la cadena usando el separador estandarizado
+                parts = id_prod.replace("-", "_").split("_")
                 tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+                
+                # Capturamos el nombre del producto limpiando los fragmentos sobrantes
                 prod_txt = parts[2] if len(parts) > 2 else "N/A"
-                talla_txt = parts[3] if len(parts) > 3 else "N/A"
+                talla_txt = parts[3] if len(parts) > 3 else "Todas"
                 
-                link_final = links_mapeados.get(id_prod_upper, "#")
+                # Buscamos el enlace en el mapa unificado
+                link_final = "#"
+                for k, v in links_mapeados.items():
+                    if tienda_txt in k and cat_txt in k:
+                        link_final = v
+                        break
+                
                 ultimo_precio = reg.get("precio", 0)
-                
-                # Formateamos el elemento de manera limpia
                 elemento_formateado = str(prod_txt).replace("_", " ").title()
                 
                 item_dict = {
                     "Tienda": tienda_txt, 
                     "Categoría": cat_txt,
                     "Elemento": elemento_formateado, 
-                    "Detalle/Talla": talla_txt.replace("_", " "),
+                    "Detalle/Talla": talla_txt.title(),
                     "Precio Actual": f"S/. {float(ultimo_precio):.2f}", 
                     "Compra": link_final
                 }
