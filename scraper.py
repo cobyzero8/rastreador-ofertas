@@ -42,112 +42,92 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         pass
 
 def escanear_tienda(url, limite):
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-PE,es;q=0.9"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+    productos = []
+
+    # =========================================================
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA)
+    # =========================================================
+    if "tiendabelcorp.com.pe" in url:
+        marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
+        api_url = f"https://api.tiendabelcorp.com.pe/v2/products/search/{marca}/PE"
+        params = {
+            "category": "perfumes",
+            "page": 1,
+            "pageSize": 24,
+            "sort": "price_asc"
         }
-        productos = []
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            for p in data.get("products", []):
+                nombre = p.get("name", "Perfume Belcorp")
+                precio = float(p.get("price", {}).get("value", 999))
+                link_rel = p.get("urlKey", "")
+                link_completo = f"https://{marca}.tiendabelcorp.com.pe/{link_rel}/p"
+                img_url = p.get("images", [{}])[0].get("url", "")
+                productos.append({"nombre": f"{marca.upper()} - {nombre}", "precio": precio, "link": link_completo, "img": img_url})
 
-        # =========================================================
-        # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA)
-        # =========================================================
-        if "tiendabelcorp.com.pe" in url:
-            marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
-            api_url = f"https://api.tiendabelcorp.com.pe/v2/products/search/{marca}/PE"
-            params = {
-                "category": "perfumes",
-                "page": 1,
-                "pageSize": 24,
-                "sort": "price_asc"
-            }
+    # =========================================================
+    # 🕵️‍♂️ TIENDA NATURA PERÚ (API REST SIN FILTRO DE ERRORES)
+    # =========================================================
+    elif "natura.com.pe" in url:
+        tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url else "perfumeria-femenina"
+        api_url = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
+        params = {"ft": tipo_perfume, "_from": 0, "_to": 15, "O": "OrderByPriceASC"}
+        
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15)
+        
+        # Si Natura nos da un código de error, saltará aquí directo a tu Streamlit
+        resp.raise_for_status()
+        items = resp.json()
+        
+        for item in items:
+            nombre = item.get("productName", "Perfume Natura")
+            link_completo = item.get("link", url)
             
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                for p in data.get("products", []):
-                    nombre = p.get("name", "Perfume Belcorp")
-                    precio = float(p.get("price", {}).get("value", 999))
-                    link_rel = p.get("urlKey", "")
-                    link_completo = f"https://{marca}.tiendabelcorp.com.pe/{link_rel}/p"
-                    img_url = p.get("images", [{}])[0].get("url", "")
-                    
-                    productos.append({
-                        "nombre": f"{marca.upper()} - {nombre}",
-                        "precio": precio,
-                        "link": link_completo,
-                        "img": img_url
-                    })
+            img_url = ""
+            items_internos = item.get("items", [])
+            if items_internos and items_internos[0].get("images"):
+                img_url = items_internos[0]["images"][0].get("imageUrl", "")
+            
+            precio = 999.0
+            if items_internos and items_internos[0].get("sellers"):
+                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                precio = float(comm_offer.get("Price", 999.0))
+            
+            productos.append({
+                "nombre": f"NATURA - {nombre.upper()}",
+                "precio": precio,
+                "link": link_completo,
+                "img": img_url
+            })
 
-       # =========================================================
-        # 🕵️‍♂️ TIENDA NATURA PERÚ (API REST DIRECTA - ULTRA ESTABLE)
-        # =========================================================
-        elif "natura.com.pe" in url:
-            # Detectamos si busca masculinos o femeninos basado en tu link
-            tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url else "perfumeria-femenina"
-            
-            # API REST pública de Natura Perú (VTEX Catalog) - No requiere firmas ni hashes
-            api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search"
-            params = {
-                "ft": tipo_perfume,
-                "_from": 0,
-                "_to": 23,
-                "O": "OrderByPriceASC"  # Ordenado por precio menor
-            }
-            
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15)
-            if resp.status_code == 200:
-                items = resp.json()
-                
-                for item in items:
-                    nombre = item.get("productName", "Perfume Natura")
-                    link_completo = item.get("link", url)
-                    
-                    # Extraer imagen principal
-                    img_url = ""
-                    items_internos = item.get("items", [])
-                    if items_internos:
-                        images = items_internos[0].get("images", [])
-                        if images:
-                            img_url = images[0].get("imageUrl", "")
-                    
-                    # Extraer el precio comercial neto de oferta
-                    precio = 999.0
-                    if items_internos:
-                        sellers = items_internos[0].get("sellers", [])
-                        if sellers:
-                            comm_offer = sellers[0].get("commertialOffer", {})
-                            precio = float(comm_offer.get("Price", 999.0))
-                    
-                    productos.append({
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": precio,
-                        "link": link_completo,
-                        "img": img_url
-                    })
-        # =========================================================
-        # 👟 COMODÍN: SAGA, MARATHON, ADIDAS, ETC.
-        # =========================================================
-        else:
-            resp = requests.get(url, headers=headers, timeout=15)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
-                tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
-                if not tit: continue
-                nombre = tit.text.strip()
-                a = t.find('a', href=True)
-                link = urljoin(url, a['href']) if a else url
-                img = t.find('img', src=True)
-                img_url = img['src'] if img else ""
-                
-                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-                if valores:
-                    productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
+    # =========================================================
+    # 👟 COMODÍN: SAGA, MARATHON, ADIDAS, ETC.
+    # =========================================================
+    else:
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
+            tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
+            if not tit: continue
+            nombre = tit.text.strip()
+            a = t.find('a', href=True)
+            link = urljoin(url, a['href']) if a else url
+            img = t.find('img', src=True)
+            img_url = img['src'] if img else ""
+            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+            valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
+            if valores:
+                productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
 
-        return productos
+    return productos
+    
     except:
         return []
 
