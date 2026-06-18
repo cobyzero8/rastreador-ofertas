@@ -8,7 +8,11 @@ SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = "sb_secret_jf..." # ⚠️ Reemplaza aquí con tu Service Role Key secreta para gestionar libremente
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.set_page_config(page_title="Radar Coby Pro", page_icon="🔥", layout="vertical")
+# ❌ LÍNEA CON ERROR:
+# st.set_page_config(page_title="Radar Coby Pro", page_icon="🔥", layout="vertical")
+
+# ✅ LÍNEA CORREGIDA (Cambia "vertical" por "wide"):
+st.set_page_config(page_title="Radar Coby Pro", page_icon="🔥", layout="wide")
 
 # ⚡ OPTIMIZACIÓN DE VELOCIDAD: Caché rápido para evitar lentitud entre opciones
 @st.cache_data(ttl=10)  # Recarga los selectores rápido de forma interna cada 10 segundos
