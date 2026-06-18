@@ -88,8 +88,8 @@ if menu == "📈 Ver Dashboard":
     lista_hogar, lista_personal = [], []
 
     try:
-        # 🔄 CAMBIO CLAVE: Jalamos el último precio registrado de cada producto desde Supabase
-        res_h = supabase.table("historial_precios").select("*").order("id", ascending=False).execute()
+        # 🔄 CONSULTA CORREGIDA CON desc=True PARA SUPABASE
+        res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         
         if res_h.data:
             # Agrupamos por identificador para quedarnos solo con el precio más reciente
