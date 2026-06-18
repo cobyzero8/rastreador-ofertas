@@ -140,8 +140,14 @@ if menu == "📈 Ver Dashboard":
                     "Compra": link_final
                 }
                 
-                # Clasificación inteligente a prueba de fallos
-                if cat_txt == "PERFUMES" or cat_txt in PRIMERA_NECESIDAD or "PERFUME" in cat_txt: 
+              # =========================================================
+                # 🛡️ CLASIFICACIÓN ULTRA-ROBUSTA INDESTRUCTIBLE A PRUEBA DE MAYÚSCULAS
+                # =========================================================
+                cat_txt_upper = str(cat_txt).strip().upper()
+                lista_necesidad_upper = [str(x).strip().upper() for x in PRIMERA_NECESIDAD]
+                
+                # Si el ID tiene la palabra PERFUME o está en la lista oficial, va a Canasta Hogar
+                if cat_txt_upper == "PERFUMES" or cat_txt_upper in lista_necesidad_upper or "PERFUME" in cat_txt_upper or "PERFUMES" in id_prod_upper: 
                     lista_hogar.append(item_dict)
                 else: 
                     lista_personal.append(item_dict)
