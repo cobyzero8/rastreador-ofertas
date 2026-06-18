@@ -87,8 +87,8 @@ if menu == "📈 Ver Dashboard":
         if res_l and hasattr(res_l, 'data') and res_l.data:
             for item in res_l.data: 
                 if "identificador" in item and "url" in item:
-                    # Forzamos mayúsculas limpias quitando guiones medios para un match perfecto
-                    id_limpio = str(item["identificador"]).strip().upper().replace("-", "_")
+                    # Guardamos las claves en mayúsculas limpias para el match directo
+                    id_limpio = str(item["identificador"]).strip().upper()
                     links_mapeados[id_limpio] = item["url"]
     except: 
         pass
@@ -103,41 +103,67 @@ if menu == "📈 Ver Dashboard":
             
             for reg in res_h.data:
                 id_prod = str(reg["identificador"]).strip()
-                id_prod_upper = id_prod.upper().replace("-", "_")
+                id_prod_upper = id_prod.upper()
                 
+                # Evitamos duplicados en pantalla (solo mostramos el precio más reciente)
                 if id_prod_upper in productos_procesados: continue
                 productos_procesados.add(id_prod_upper)
                 
-                # Desarmamos la cadena usando el separador estandarizado
-                parts = id_prod.replace("-", "_").split("_")
-                tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
-                cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-                
-                # Capturamos el nombre del producto limpiando los fragmentos sobrantes
-                prod_txt = parts[2] if len(parts) > 2 else "N/A"
-                talla_txt = parts[3] if len(parts) > 3 else "Todas"
-                
-                # Buscamos el enlace en el mapa unificado
-                link_final = "#"
-                for k, v in links_mapeados.items():
-                    if tienda_txt in k and cat_txt in k:
-                        link_final = v
+                # --- EXTRACCIÓN INTELIGENTE DE DATOS ---
+                # Detectamos la tienda buscando palabras clave directo en el identificador completo
+                tienda_txt = "TIENDA"
+                for t in ["NATURA", "CYZONE", "LBEL", "ESIKA", "ADIDAS", "PUMA", "NIKE", "MARATHON", "TRIATHLON", "RIPLEY", "FALABELLA"]:
+                    if t in id_prod_upper:
+                        tienda_txt = t
                         break
                 
+                # Detectamos la categoría por coincidencia directa
+                cat_txt = "OTROS"
+                if "PERFUME" in id_prod_upper:
+                    cat_txt = "PERFUMES"
+                elif "ZAPATILLA" in id_prod_upper or "ZATAPILLAS" in id_prod_upper:
+                    cat_txt = "ZAPATILLAS"
+                else:
+                    # Intento de respaldo clásico por si es otra cosa
+                    parts_fallback = id_prod.split("-")
+                    if len(parts_fallback) > 1:
+                        cat_txt = parts_fallback[1].upper()
+
+                # Limpiamos el nombre del elemento para que se vea estético en la tabla
+                prod_txt = id_prod
+                for borrar in [tienda_txt, cat_txt, "TODAS", "Todas"]:
+                    prod_txt = prod_txt.upper().replace(borrar, "")
+                nombre_elemento = prod_txt.replace("-", " ").replace("_", " ").strip().title()
+                if not nombre_elemento:
+                    nombre_elemento = "Perfume en General"
+                
+                # Buscamos el enlace de compra de forma flexible
+                link_final = "#"
+                if id_prod_upper in links_mapeados:
+                    link_final = links_mapeados[id_prod_upper]
+                else:
+                    # Si no hay match exacto, buscamos uno que comparta Tienda y Categoría
+                    for k, v in links_mapeados.items():
+                        if tienda_txt in k and cat_txt in k:
+                            link_final = v
+                            break
+                
                 ultimo_precio = reg.get("precio", 0)
-                elemento_formateado = str(prod_txt).replace("_", " ").title()
+                talla_txt = "Todas"
+                if "100" in id_prod_upper: talla_txt = "100 ml"
+                elif "50" in id_prod_upper: talla_txt = "50 ml"
                 
                 item_dict = {
                     "Tienda": tienda_txt, 
                     "Categoría": cat_txt,
-                    "Elemento": elemento_formateado, 
-                    "Detalle/Talla": talla_txt.title(),
+                    "Elemento": nombre_elemento, 
+                    "Detalle/Talla": talla_txt,
                     "Precio Actual": f"S/. {float(ultimo_precio):.2f}", 
                     "Compra": link_final
                 }
                 
-                # Clasificación infalible: si dice PERFUMES entra directo a Hogar
-                if cat_txt in PRIMERA_NECESIDAD or "PERFUME" in cat_txt: 
+                # Clasificación indestructible para las pestañas visuales
+                if cat_txt == "PERFUMES" or cat_txt in PRIMERA_NECESIDAD: 
                     lista_hogar.append(item_dict)
                 else: 
                     lista_personal.append(item_dict)
