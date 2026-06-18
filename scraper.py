@@ -143,14 +143,18 @@ def revisar_ofertas():
         prods = escanear_tienda(item['url'], limite)
         
         if prods:
-            for p in prods:
-                if p['precio'] <= limite:
-                    
-                    if "natura" in url_radar or "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar:
-                        nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
-                        id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
-                    else:
-                        id_registro_dashboard = identificador
+            # Tomamos el precio más bajo encontrado en la página para el historial
+            precio_actual = prods[0]['precio']
+            
+            # 📈 REGISTRO AUTOMÁTICO EN LA NUEVA TABLA DE SUPABASE
+            try:
+                supabase.table("historial_precios").insert({
+                    "identificador": identificador,  # 🛑 ¡AQUÍ ESTÁ EL ERROR!
+                    "precio": precio_actual,
+                    "fecha": fecha_hoy
+                }).execute()
+            except: pass
+                
                     
                     # Forzamos la inserción libre sin silenciador
                     supabase.table("historial_precios").insert({
