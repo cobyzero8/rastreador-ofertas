@@ -163,49 +163,57 @@ def revisar_ofertas():
     if not res.data:
         return
     
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     for item in res.data:
         identificador = item['identificador']
         limite = float(item['precio_max'])
+        url_radar = item['url']
         
-        # 1. Extraemos la metadata del identificador ANTES del bucle de mensajes
+        # Extraemos la metadata del identificador base creado en la web
         parts = identificador.split("-")
         tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
         cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
         talla_txt = parts[3] if len(parts) > 3 else "Todas"
         
-        # 2. Escaneamos la tienda capturando los productos reales con límite infinito
-        prods = escanear_tienda(item['url'], 999999.0)
+        # Escaneamos la tienda capturando los productos reales
+        prods = escanear_tienda(url_radar, limite)
         
         if prods:
-            # Tomamos el primer precio encontrado para guardarlo en tu historial básico
-            precio_actual = prods[0]['precio']
-            
-            # Registro obligatorio en el historial de Supabase
-            try:
-                supabase.table("historial_precios").insert({
-                    "identificador": identificador,
-                    "precio": precio_actual,
-                    "fecha": fecha_hoy
-                }).execute()
-            except: 
-                pass
-            
-            # 3. Recorremos los productos para verificar si alguno bajó de tu precio límite
+            # Recorremos todos los productos que devolvió el escaneo de esa URL
             for p in prods:
+                # Verificamos si el precio del producto cumple tu precio tope (Tope S/. 500)
                 if p['precio'] <= limite:
-                    # Calculamos el ahorro y el porcentaje de descuento
+                    
+                    # 🚀 MEJORA CLAVE: Si es catálogo (Natura/Belcorp) creamos un identificador 
+                    # dinámico único para que CADA perfume aparezca con su propio nombre real en el Dashboard
+                    if "natura" in url_radar or "tiendabelcorp" in url_radar:
+                        nombre_limpio = p['nombre'].upper().replace(" ", "_").replace("-", "_")
+                        id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
+                    else:
+                        # Para zapatillas tradicionales mantiene tu identificador exacto del radar
+                        id_registro_dashboard = identificador
+                    
+                    # 1. Inyectamos de forma segura el registro en la tabla historial_precios de Supabase
+                    try:
+                        supabase.table("historial_precios").insert({
+                            "identificador": id_registro_dashboard,
+                            "precio": p['precio'],
+                            "fecha": fecha_hoy
+                        }).execute()
+                    except:
+                        pass
+                    
+                    # 2. Calculamos métricas para el mensaje premium de Telegram
                     ahorro = limite - p['precio']
                     porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
                     
-                    # Estructura limpia y premium para Telegram
                     msg = (
                         f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
                         f"━━━━━━━━━━━━━━━━━━━\n\n"
                         f"📦 *Producto:* {p['nombre']}\n"
                         f"🏪 *Tienda:* `{tienda_txt}`\n"
-                        f"🏷️ *Talla/Filtro:* `{talla_txt}`\n\n"
+                        f"🏷️ *Categoría:* `{cat_txt}`\n\n"
                         f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
                         f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
                     )
@@ -217,6 +225,8 @@ def revisar_ofertas():
                         
                     msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
                     
-                    # Envío seguro al bot de Telegram
+                    # 3. Envío seguro al bot de Telegram
                     enviar_telegram(msg, p['link'], p['img'])
                     
+                    # Un pequeño respiro de medio segundo para no saturar la API de Telegram
+                    time.sleep(0.5)
