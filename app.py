@@ -75,15 +75,13 @@ if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
 # ==========================================
-# 📈 DASHBOARD RESISTENTE A ERRORES PGRST125
+# 📈 DASHBOARD RESISTENTE A ERRORES - INTEGRAL
 # ==========================================
 if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Central COBY & GEMINI")
     st.subheader("📊 Dashboard de Control e Inteligencia Flotante")
     
     links_mapeados = {}
-    
-    # --- BLOQUE 1: LEER RADARES (CON SU PROPIO TRY/EXCEPT SEPARADO) ---
     try:
         res_l = supabase.table("radares").select("url", "identificador").execute()
         if res_l and hasattr(res_l, 'data') and res_l.data:
@@ -91,13 +89,11 @@ if menu == "📈 Ver Dashboard":
                 if "identificador" in item and "url" in item:
                     id_limpio = str(item["identificador"]).strip().upper()
                     links_mapeados[id_limpio] = item["url"]
-    except Exception as e: 
-        # Si la tabla radares falla, se silencia aquí y no rompe el resto de la página
+    except: 
         pass
 
     lista_hogar, lista_personal = [], []
 
-    # --- BLOQUE 2: LEER HISTORIAL (CON SU PROPIO TRY/EXCEPT SEPARADO) ---
     try:
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         
@@ -108,39 +104,38 @@ if menu == "📈 Ver Dashboard":
                 id_prod = str(reg["identificador"]).strip()
                 id_prod_upper = id_prod.upper()
                 
-                # Evitamos duplicados en pantalla (solo mostramos el precio más reciente)
                 if id_prod_upper in productos_procesados: continue
                 productos_procesados.add(id_prod_upper)
                 
-                # Desarmamos el identificador con seguridad
                 parts = id_prod.split("-")
                 tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
                 prod_txt = parts[2] if len(parts) > 2 else "N/A"
                 talla_txt = parts[3] if len(parts) > 3 else "N/A"
                 
-                # Buscamos el enlace correspondiente en los radares guardados
                 link_final = links_mapeados.get(id_prod_upper, "#")
                 ultimo_precio = reg.get("precio", 0)
+                
+                # Formateamos el elemento de manera limpia
+                elemento_formateado = str(prod_txt).replace("_", " ").title()
                 
                 item_dict = {
                     "Tienda": tienda_txt, 
                     "Categoría": cat_txt,
-                    "Elemento": prod_txt.replace("_", " ").title(), 
-                    "Detalle/Talla": talla_txt,
+                    "Elemento": elemento_formateado, 
+                    "Detalle/Talla": talla_txt.replace("_", " "),
                     "Precio Actual": f"S/. {float(ultimo_precio):.2f}", 
                     "Compra": link_final
                 }
                 
-                # Clasificamos según tu lista de PRIMERA_NECESIDAD
-                if cat_txt in PRIMERA_NECESIDAD: 
+                # Clasificación infalible: si dice PERFUMES entra directo a Hogar
+                if cat_txt in PRIMERA_NECESIDAD or "PERFUME" in cat_txt: 
                     lista_hogar.append(item_dict)
                 else: 
                     lista_personal.append(item_dict)
                     
     except Exception as e:
-        # Solo si este bloque falla, te avisará en un recuadro limpio de Streamlit sin romper la app
-        st.warning(f"Nota: Sincronizando datos del historial... ({e})")
+        st.warning(f"Nota: Sincronizando grilla... ({e})")
 
     # --- PESTAÑAS VISUALES ---
     tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
