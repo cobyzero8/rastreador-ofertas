@@ -24,10 +24,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 supabase pandas plotly streamlit
 
-     - name: 🚀 Iniciar Patrullaje de Ofertas Nocturno
+- name: 🚀 Iniciar Patrullaje de Ofertas Nocturno
         env:
           SUPABASE_URL: "https://uxornuepdxqlhzizjnhr.supabase.co"
-          SUPABASE_KEY: "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
-          # ✅ ASÍ DEBE QUEDAR (Sin la clave real escrita aquí, solo la referencia al secreto):
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python scraper.py
