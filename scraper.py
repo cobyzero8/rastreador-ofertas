@@ -3,14 +3,12 @@ import json
 import requests
 from bs4 import BeautifulSoup
 import re
-import random
 import time
 from datetime import datetime
 from urllib.parse import urljoin
 from supabase import create_client, Client
 
 # --- CONFIGURACIÓN DE ÉLITE ---
-# RECUERDA: Cambiar esta clave por tu "service_role" secreta en GitHub para saltar el bloqueo RLS de Supabase
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = "sb_secret_UNSyaeXMv0nHZT4Ipih0-g__t6fxuJc" 
 
@@ -32,9 +30,6 @@ def enviar_telegram(mensaje, url_compra, url_foto):
     except: 
         pass
 
-import requests
-import re
-
 def escanear_tienda(url, limite):
     try:
         headers = {
@@ -45,13 +40,10 @@ def escanear_tienda(url, limite):
         productos = []
 
         # =========================================================
-        # 🕵️‍♂️ DETECCIÓN MAPA 1: TIENDAS BELCORP (CYZONE, LBEL, ESIKA)
+        # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA)
         # =========================================================
         if "tiendabelcorp.com.pe" in url:
-            # Extraemos la marca (cyzone, lbel o esika) directamente desde la URL
             marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
-            
-            # API Oculta de Belcorp para traer los productos directo en formato limpio JSON
             api_url = f"https://api.tiendabelcorp.com.pe/v2/products/search/{marca}/PE"
             params = {
                 "category": "perfumes",
@@ -63,10 +55,8 @@ def escanear_tienda(url, limite):
             resp = requests.get(api_url, headers=headers, params=params, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
-                # Recorremos la lista interna de productos de Belcorp
                 for p in data.get("products", []):
                     nombre = p.get("name", "Perfume Belcorp")
-                    # Buscamos el precio de oferta actual
                     precio = float(p.get("price", {}).get("value", 999))
                     link_rel = p.get("urlKey", "")
                     link_completo = f"https://{marca}.tiendabelcorp.com.pe/{link_rel}/p"
@@ -80,16 +70,12 @@ def escanear_tienda(url, limite):
                     })
 
         # =========================================================
-        # 🕵️‍♂️ DETECCIÓN MAPA 2: TIENDA NATURA PERÚ
+        # 🕵️‍♂️ TIENDA NATURA PERÚ
         # =========================================================
         elif "natura.com.pe" in url:
-            # Determinamos si busca masculinos o femeninos basado en tu link
             tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url else "perfumeria-femenina"
-            
-            # API Oculta de Natura (VTEX Intelligent Search)
             api_url = "https://www.natura.com.pe/_v/segment/graphql/v1"
             
-            # Consulta inteligente estructurada para simular el catálogo de Natura
             query_json = {
                 "operationName": "productSearch",
                 "variables": {
@@ -117,7 +103,6 @@ def escanear_tienda(url, limite):
                     link_completo = f"https://www.natura.com.pe/{link_rel}/p"
                     img_url = item.get("items", [{}])[0].get("images", [{}])[0].get("imageUrl", "")
                     
-                    # Extraer el precio neto del sistema de pagos
                     sellers = item.get("items", [{}])[0].get("sellers", [{}])
                     precio = float(sellers[0].get("commertialOffer", {}).get("Price", 999)) if sellers else 999
                     
@@ -129,12 +114,9 @@ def escanear_tienda(url, limite):
                     })
 
         # =========================================================
-        # 👟 COMODÍN: TU LÓGICA ORIGINAL PARA MARATHON, ADIDAS, ETC.
+        # 👟 COMODÍN: SAGA, MARATHON, ADIDAS, ETC.
         # =========================================================
         else:
-            from bs4 import BeautifulSoup
-            from urllib.parse import urljoin
-            
             resp = requests.get(url, headers=headers, timeout=15)
             soup = BeautifulSoup(resp.text, 'html.parser')
             
@@ -153,80 +135,74 @@ def escanear_tienda(url, limite):
                     productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
 
         return productos
-    except Exception as e:
-        # Retorna vacío de forma segura si el link falla
+    except:
         return []
 
-# --- MOTOR DE REVISIÓN Y ENVIOS OPTIMIZADO ---
+# --- MOTOR DE REVISIÓN Y ENVÍOS ---
 def revisar_ofertas():
-    res = supabase.table("radares").select("*").execute()
-    if not res.data:
-        return
-    
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M")
-    
-    for item in res.data:
-        identificador = item['identificador']
-        limite = float(item['precio_max'])
-        url_radar = item['url']
+    try:
+        res = supabase.table("radares").select("*").execute()
+        if not res or not res.data:
+            return
         
-        # Extraemos la metadata del identificador base creado en la web
-        parts = identificador.split("-")
-        tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
-        cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-        talla_txt = parts[3] if len(parts) > 3 else "Todas"
+        # Formato de fecha limpio estándar compatible con cualquier base de datos (Sin horas)
+        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
         
-        # Escaneamos la tienda capturando los productos reales
-        prods = escanear_tienda(url_radar, limite)
-        
-        if prods:
-            # Recorremos todos los productos que devolvió el escaneo de esa URL
-            for p in prods:
-                # Verificamos si el precio del producto cumple tu precio tope (Tope S/. 500)
-                if p['precio'] <= limite:
-                    
-                    # 🚀 MEJORA CLAVE: Si es catálogo (Natura/Belcorp) creamos un identificador 
-                    # dinámico único para que CADA perfume aparezca con su propio nombre real en el Dashboard
-                    if "natura" in url_radar or "tiendabelcorp" in url_radar:
-                        nombre_limpio = p['nombre'].upper().replace(" ", "_").replace("-", "_")
-                        id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
-                    else:
-                        # Para zapatillas tradicionales mantiene tu identificador exacto del radar
-                        id_registro_dashboard = identificador
-                    
-                    # 1. Inyectamos de forma segura el registro en la tabla historial_precios de Supabase
-                    try:
-                        supabase.table("historial_precios").insert({
-                            "identificador": id_registro_dashboard,
-                            "precio": p['precio'],
-                            "fecha": fecha_hoy
-                        }).execute()
-                    except:
-                        pass
-                    
-                    # 2. Calculamos métricas para el mensaje premium de Telegram
-                    ahorro = limite - p['precio']
-                    porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
-                    
-                    msg = (
-                        f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
-                        f"━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📦 *Producto:* {p['nombre']}\n"
-                        f"🏪 *Tienda:* `{tienda_txt}`\n"
-                        f"🏷️ *Categoría:* `{cat_txt}`\n\n"
-                        f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
-                        f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
-                    )
-                    
-                    if p['precio'] < limite:
-                        msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
-                    else:
-                        msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
+        for item in res.data:
+            identificador = item['identificador']
+            limite = float(item['precio_max'])
+            url_radar = item['url']
+            
+            parts = identificador.split("-")
+            tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
+            cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+            talla_txt = parts[3] if len(parts) > 3 else "Todas"
+            
+            prods = escanear_tienda(url_radar, limite)
+            
+            if prods:
+                for p in prods:
+                    if p['precio'] <= limite:
                         
-                    msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
-                    
-                    # 3. Envío seguro al bot de Telegram
-                    enviar_telegram(msg, p['link'], p['img'])
-                    
-                    # Un pequeño respiro de medio segundo para no saturar la API de Telegram
-                    time.sleep(0.5)
+                        # Armado correcto del ID para que el Dashboard lo renderice sin enredos
+                        if "natura" in url_radar or "tiendabelcorp" in url_radar:
+                            nombre_limpio = p['nombre'].upper().replace(" ", "_").replace("-", "_")
+                            id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
+                        else:
+                            id_registro_dashboard = identificador
+                        
+                        # 1. Guardar en Supabase
+                        try:
+                            supabase.table("historial_precios").insert({
+                                "identificador": id_registro_dashboard,
+                                "precio": p['precio'],
+                                "fecha": fecha_hoy
+                            }).execute()
+                        except:
+                            pass
+                        
+                        # 2. Enviar Alerta Premium a Telegram
+                        ahorro = limite - p['precio']
+                        porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
+                        
+                        msg = (
+                            f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n"
+                            f"━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📦 *Producto:* {p['nombre']}\n"
+                            f"🏪 *Tienda:* `{tienda_txt}`\n"
+                            f"🏷️ *Categoría:* `{cat_txt}`\n\n"
+                            f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
+                            f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
+                        )
+                        
+                        if p['precio'] < limite:
+                            msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
+                        else:
+                            msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
+                            
+                        msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
+                        
+                        enviar_telegram(msg, p['link'], p['img'])
+                        time.sleep(0.5)
+    except:
+        pass
