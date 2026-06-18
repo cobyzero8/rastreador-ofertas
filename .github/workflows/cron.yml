@@ -28,4 +28,6 @@ jobs:
         env:
           SUPABASE_URL: "https://uxornuepdxqlhzizjnhr.supabase.co"
           SUPABASE_KEY: "sb_publishable_LG-EavkoMBYDSCS0xsCccQ_1062w4zq"
+          # ✅ LÍNEA PREMIUM AGREGADA: Jala de forma segura la nueva clave service_role oculta de tus Secrets
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python scraper.py
