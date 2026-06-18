@@ -128,8 +128,7 @@ def escanear_tienda(url, limite):
 
     return productos
     
-    except:
-        return []
+    
 
 # --- MOTOR DE REVISIÓN Y ENVÍOS ---
 def revisar_ofertas():
