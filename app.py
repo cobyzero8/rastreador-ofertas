@@ -81,106 +81,76 @@ if menu == "📈 Ver Dashboard":
     st.title("🕵️‍♂️ Central COBY & GEMINI")
     st.subheader("📊 Dashboard de Control e Inteligencia Flotante")
     
-    links_mapeados = {}
-    try:
-        res_l = supabase.table("radares").select("url", "identificador").execute()
-        if res_l and hasattr(res_l, 'data') and res_l.data:
-            for item in res_l.data: 
-                if "identificador" in item and "url" in item:
-                    # Guardamos las claves en mayúsculas limpias para el match directo
-                    id_limpio = str(item["identificador"]).strip().upper()
-                    links_mapeados[id_limpio] = item["url"]
-    except: 
-        pass
-
     lista_hogar, lista_personal = [], []
-
+    
     try:
+        # 1. Traemos todos los radares para conocer las URLs de compra originales
+        res_r = supabase.table("radares").select("*").execute()
+        mapa_urls = {}
+        mapa_topes = {}
+        if res_r.data:
+            for r in res_r.data:
+                id_r_upper = str(r["identificador"]).upper().strip()
+                mapa_urls[id_r_upper] = r["url"]
+                mapa_topes[id_r_upper] = r["precio_max"]
+
+        # 2. Traemos todo el historial de precios ordenado por el más reciente
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         
-        if res_h and hasattr(res_h, 'data') and res_h.data:
+        if res_h.data:
             productos_procesados = set()
             
             for reg in res_h.data:
                 id_prod = str(reg["identificador"]).strip()
                 id_prod_upper = id_prod.upper()
                 
-                # Evitamos duplicados en pantalla (solo mostramos el precio más reciente)
-                if id_prod_upper in productos_procesados: continue
+                # Evitamos duplicados en pantalla para mostrar solo el último precio de cada elemento
+                if id_prod_upper in productos_procesados: 
+                    continue
                 productos_procesados.add(id_prod_upper)
                 
-                # --- EXTRACCIÓN INTELIGENTE DE DATOS ---
-                # Detectamos la tienda buscando palabras clave directo en el identificador completo
-                tienda_txt = "TIENDA"
-                for t in ["NATURA", "CYZONE", "LBEL", "ESIKA", "ADIDAS", "PUMA", "NIKE", "MARATHON", "TRIATHLON", "RIPLEY", "FALABELLA"]:
-                    if t in id_prod_upper:
-                        tienda_txt = t
+                # Desarmamos el ID dinámico
+                parts = id_prod.split("-")
+                tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
+                cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+                prod_txt = parts[2] if len(parts) > 2 else "N/A"
+                talla_txt = parts[3] if len(parts) > 3 else "Todas"
+                
+                # Buscamos el enlace y tope correspondiente de forma flexible
+                link_final = "#"
+                tope_final = "S/. 500"
+                
+                # Buscamos si coincide la combinación de Tienda y Categoría para heredar los datos del radar
+                for id_radar, url_radar in mapa_urls.items():
+                    if tienda_txt in id_radar and cat_txt in id_radar:
+                        link_final = url_radar
+                        tope_final = f"S/. {mapa_topes[id_radar]}"
                         break
                 
-                # Detectamos la categoría por coincidencia directa
-                cat_txt = "OTROS"
-                if "PERFUME" in id_prod_upper:
-                    cat_txt = "PERFUMES"
-                elif "ZAPATILLA" in id_prod_upper or "ZATAPILLAS" in id_prod_upper:
-                    cat_txt = "ZAPATILLAS"
-                else:
-                    # Intento de respaldo clásico por si es otra cosa
-                    parts_fallback = id_prod.split("-")
-                    if len(parts_fallback) > 1:
-                        cat_txt = parts_fallback[1].upper()
-
-                # Limpiamos el nombre del elemento para que se vea estético en la tabla
-                prod_txt = id_prod
-                for borrar in [tienda_txt, cat_txt, "TODAS", "Todas"]:
-                    prod_txt = prod_txt.upper().replace(borrar, "")
-                nombre_elemento = prod_txt.replace("-", " ").replace("_", " ").strip().title()
-                if not nombre_elemento:
-                    nombre_elemento = "Perfume en General"
-                
-                # Buscamos el enlace de compra de forma flexible
-                link_final = "#"
-                if id_prod_upper in links_mapeados:
-                    link_final = links_mapeados[id_prod_upper]
-                else:
-                    # Si no hay match exacto, buscamos uno que comparta Tienda y Categoría
-                    for k, v in links_mapeados.items():
-                        if tienda_txt in k and cat_txt in k:
-                            link_final = v
-                            break
-                
-                ultimo_precio = reg.get("precio", 0)
-                talla_txt = "Todas"
-                if "100" in id_prod_upper: talla_txt = "100 ml"
-                elif "50" in id_prod_upper: talla_txt = "50 ml"
+                ultimo_precio = f"S/. {float(reg.get('precio', 0)):.2f}"
+                nombre_elemento = prod_txt.replace("_", " ").strip().title()
                 
                 item_dict = {
                     "Tienda": tienda_txt, 
                     "Categoría": cat_txt,
                     "Elemento": nombre_elemento, 
-                    "Detalle/Talla": talla_txt,
-                    "Precio Actual": f"S/. {float(ultimo_precio):.2f}", 
+                    "Detalle/Talla": talla_txt.replace("_", " "),
+                    "Precio Actual": ultimo_precio, 
+                    "Tope Configurado": tope_final,
                     "Compra": link_final
                 }
                 
-                # --- REEMPLAZA ESTE BLOQUE EN TU app.py ---
-# Clasificación indestructible 
-es_hogar = False
-# Convertimos PRIMERA_NECESIDAD a mayúsculas para comparar bien
-lista_necesidad_upper = [x.upper() for x in PRIMERA_NECESIDAD]
-
-if cat_txt.upper() in lista_necesidad_upper or "PERFUME" in cat_txt.upper():
-    es_hogar = True
-
-if es_hogar:
-    lista_hogar.append(item_dict)
-else:
-    lista_personal.append(item_dict)
+                # Clasificación inteligente a prueba de fallos
+                if cat_txt == "PERFUMES" or cat_txt in PRIMERA_NECESIDAD or "PERFUME" in cat_txt: 
+                    lista_hogar.append(item_dict)
+                else: 
+                    lista_personal.append(item_dict)
                     
     except Exception as e:
         st.warning(f"Nota: Sincronizando grilla... ({e})")
 
     # --- PESTAÑAS VISUALES ---
-    tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👟 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
+    tab1, tab2, tab3 = st.tabs(["🛒 Canasta Hogar / Primera Necesidad", "👑 Gustos Personales y Viajes", "🎟️ Cuponera Filtrada Inteligente"])
     
     with tab1:
         if lista_hogar: 
