@@ -10,7 +10,7 @@ from supabase import create_client, Client
 st.set_page_config(page_title="COBY & GEMINI - Sistema Inteligente", layout="wide")
 
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
-SUPABASE_KEY = "sb_secret_UNSyaeXMv0nHZT4Ipih0-g__t6fxuJc"
+SUPABASE_KEY = st.secrets["sb_secret_I-7TfmTIay7v4ozq6toy1Q_7eYPSc4_"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HISTORIAL_FILE = "historial_precios.json"
