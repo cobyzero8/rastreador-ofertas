@@ -43,19 +43,21 @@ def enviar_telegram(mensaje, url_compra, url_foto):
 
 def escanear_tienda(url, limite):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
         "Accept-Language": "es-PE,es;q=0.9"
     }
     productos = []
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - OPERATIVO 100%
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - RUTA PÚBLICA INTEGRAL
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         
+        # Cambiamos a la API pública de sistema de catálogo (Evita el NameResolutionError por completo)
+        api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search" # Respaldo estructural de motor común
         if "cyzone" in marca:
             api_url = "https://cyzone.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         elif "lbel" in marca:
@@ -64,83 +66,88 @@ def escanear_tienda(url, limite):
             api_url = "https://esika.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
 
         params = {
-            "ft": "perfume",
+            "ft": "perfume", # Búsqueda de texto libre para traer todo el catálogo
             "_from": 0,
             "_to": 20,
             "O": "OrderByPriceASC"
         }
         
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        if resp.status_code == 200:
-            items = resp.json()
-            for item in items:
-                nombre = item.get("productName", "Perfume Belcorp")
-                link_completo = item.get("link", url)
-                
-                img_url = ""
-                items_internos = item.get("items", [])
-                if items_internos and items_internos[0].get("images"):
-                    img_url = items_internos[0]["images"][0].get("imageUrl", "")
-                
-                precio = 999.0
-                if items_internos and items_internos[0].get("sellers"):
-                    comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                    precio = float(comm_offer.get("Price", 999.0))
-                
-                productos.append({
-                    "nombre": f"{marca.upper()} - {nombre.upper()}",
-                    "precio": precio,
-                    "link": link_completo,
-                    "img": img_url
-                })
+        resp.raise_for_status()
+        
+        items = resp.json()
+        for item in items:
+            nombre = item.get("productName", "Perfume Belcorp")
+            link_completo = item.get("link", url)
+            
+            img_url = ""
+            items_internos = item.get("items", [])
+            if items_internos and items_internos[0].get("images"):
+                img_url = items_internos[0]["images"][0].get("imageUrl", "")
+            
+            precio = 999.0
+            if items_internos and items_internos[0].get("sellers"):
+                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                precio = float(comm_offer.get("Price", 999.0))
+            
+            productos.append({
+                "nombre": f"{marca.upper()} - {nombre.upper()}",
+                "precio": precio,
+                "link": link_completo,
+                "img": img_url
+            })
 
     # =========================================================
-    # 🕵️‍♂️ TIENDA NATURA PERÚ - ULTIMATUM HTML DE EMERGENCIA
+    # 🕵️‍♂️ TIENDA NATURA PERÚ
     # =========================================================
     elif "natura" in url_clean:
-        try:
-            # Apuntamos a la URL base limpia
-            resp = requests.get("https://www.natura.com.pe/perfumeria", headers=headers, timeout=15, verify=False)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                # Forzamos una búsqueda de cualquier etiqueta de texto que contenga precios S/.
-                for item_html in soup.find_all(text=re.compile(r'S/\.?\s*\d+')):
-                    padre = item_html.parent
-                    texto_completo = padre.get_text() if padre else ""
-                    precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', texto_completo)
-                    if precios:
-                        precio_f = float(precios[0].replace(',', '.'))
-                        if 10 < precio_f < 300: # Filtro de rango de precio para perfumes
-                            productos.append({
-                                "nombre": "NATURA - FRAGANCIA CATALOGO",
-                                "precio": precio_f,
-                                "link": url,
-                                "img": ""
-                            })
-        except:
-            pass
+        tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url_clean else "perfumeria-femenina"
+        api_url = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
+        params = {"ft": tipo_perfume, "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
+        
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        resp.raise_for_status()
+        
+        items = resp.json()
+        for item in items:
+            nombre = item.get("productName", "Perfume Natura")
+            link_completo = item.get("link", url)
+            
+            img_url = ""
+            items_internos = item.get("items", [])
+            if items_internos and items_internos[0].get("images"):
+                img_url = items_internos[0]["images"][0].get("imageUrl", "")
+            
+            precio = 999.0
+            if items_internos and items_internos[0].get("sellers"):
+                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                precio = float(comm_offer.get("Price", 999.0))
+            
+            productos.append({
+                "nombre": f"NATURA - {nombre.upper()}",
+                "precio": precio,
+                "link": link_completo,
+                "img": img_url
+            })
 
     # =========================================================
-    # 👟 COMODÍN GENERAL (ZAPATILLAS)
+    # 👟 COMODÍN GENERAL
     # =========================================================
     else:
-        try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
-                tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
-                if not tit: continue
-                nombre = tit.text.strip()
-                a = t.find('a', href=True)
-                link = urljoin(url, a['href']) if a else url
-                img = t.find('img', src=True)
-                img_url = img['src'] if img else ""
-                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-                if valores:
-                    productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
-        except:
-            pass
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
+            tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
+            if not tit: continue
+            nombre = tit.text.strip()
+            a = t.find('a', href=True)
+            link = urljoin(url, a['href']) if a else url
+            img = t.find('img', src=True)
+            img_url = img['src'] if img else ""
+            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+            valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
+            if valores:
+                productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
 
     return productos
 
@@ -171,14 +178,12 @@ def revisar_ofertas():
                 else:
                     id_registro_dashboard = identificador
                 
-                try:
-                    supabase.table("historial_precios").insert({
-                        "identificador": id_registro_dashboard, 
-                        "precio": p['precio'],
-                        "fecha": fecha_hoy
-                    }).execute()
-                except:
-                    pass
+                # Inserción directa en historial
+                supabase.table("historial_precios").insert({
+                    "identificador": id_registro_dashboard, 
+                    "precio": p['precio'],
+                    "fecha": fecha_hoy
+                }).execute()
                 
                 if p['precio'] <= limite:
                     ahorro = limite - p['precio']
