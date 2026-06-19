@@ -42,22 +42,20 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         pass
 
 def escanear_tienda(url, limite):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9"
-    }
     productos = []
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - RUTA PÚBLICA INTEGRAL
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA)
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
+        headers_belcorp = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-PE,es;q=0.9"
+        }
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         
-        # Cambiamos a la API pública de sistema de catálogo (Evita el NameResolutionError por completo)
-        api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search" # Respaldo estructural de motor común
         if "cyzone" in marca:
             api_url = "https://cyzone.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         elif "lbel" in marca:
@@ -66,13 +64,13 @@ def escanear_tienda(url, limite):
             api_url = "https://esika.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
 
         params = {
-            "ft": "perfume", # Búsqueda de texto libre para traer todo el catálogo
+            "ft": "perfume",
             "_from": 0,
             "_to": 20,
             "O": "OrderByPriceASC"
         }
         
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        resp = requests.get(api_url, headers=headers_belcorp, params=params, timeout=15, verify=False)
         resp.raise_for_status()
         
         items = resp.json()
@@ -97,16 +95,30 @@ def escanear_tienda(url, limite):
                 "img": img_url
             })
 
-  # =========================================================
-    # 🕵️‍♂️ TIENDA NATURA PERÚ - DIAGNÓSTICO DIRECTO SIN SILENCIADOR
+    # =========================================================
+    # 🕵️‍♂️ TIENDA NATURA PERÚ - 🛡️ CAMUFLAJE ANTI-403 FORBIDDEN
     # =========================================================
     elif "natura" in url_clean:
+        # Forzamos cabeceras estrictas emulando a un Chrome real navegando en la web de Perú
+        headers_natura = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.natura.com.pe/c/perfumeria",
+            "Origin": "https://www.natura.com.pe",
+            "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
+        }
+        
         api_url = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         
-        # Eliminamos el try/except para capturar el error real en la pantalla
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        resp.raise_for_status() # Nos avisará si hay un bloqueo 403 o similar
+        resp = requests.get(api_url, headers=headers_natura, params=params, timeout=15, verify=False)
+        resp.raise_for_status() # Nos gritará si el camuflaje necesita más ajustes
         
         items = resp.json()
         for item in items:
@@ -129,11 +141,15 @@ def escanear_tienda(url, limite):
                 "link": link_completo,
                 "img": img_url
             })
+
     # =========================================================
     # 👟 COMODÍN GENERAL
     # =========================================================
     else:
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        headers_gen = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36"
+        }
+        resp = requests.get(url, headers=headers_gen, timeout=15, verify=False)
         soup = BeautifulSoup(resp.text, 'html.parser')
         for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
             tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
@@ -177,7 +193,6 @@ def revisar_ofertas():
                 else:
                     id_registro_dashboard = identificador
                 
-                # Inserción directa en historial
                 supabase.table("historial_precios").insert({
                     "identificador": id_registro_dashboard, 
                     "precio": p['precio'],
