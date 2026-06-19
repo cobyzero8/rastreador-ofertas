@@ -50,7 +50,7 @@ def escanear_tienda(url, limite):
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - OPERATIVO 100%
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - CONTROL TOTAL
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
@@ -97,7 +97,7 @@ def escanear_tienda(url, limite):
             pass
 
     # =========================================================
-    # 👟 COMODÍN GENERAL (ZAPATILLAS, ROPA, ETC.)
+    # 👟 COMODÍN GENERAL
     # =========================================================
     else:
         try:
@@ -106,94 +106,3 @@ def escanear_tienda(url, limite):
             for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
                 tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
                 if not tit: continue
-                nombre = tit.text.strip()
-                a = t.find('a', href=True)
-                link = urljoin(url, a['href']) if a else url
-                img = t.find('img', src=True)
-                img_url = img['src'] if img else ""
-                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-                if valores:
-                    productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
-        except:
-            pass
-
-    return productos
-
-# --- CORRECCIÓN CLAVE: AHORA RECIBE LA ORDEN DE LA WEB ---
-def revisar_ofertas(categoria_filtro="TODOS"):
-    res = supabase.table("radares").select("*").execute()
-    if not res or not res.data:
-        return
-    
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    
-    for item in res.data:
-        identificador = str(item['identificador']).strip()
-        limite = float(item['precio_max'])
-        url_radar = str(item['url']).strip().lower()
-        
-        parts = identificador.split("-")
-        tienda_txt = parts[0].upper() if len(parts) > 0 else "TIENDA"
-        cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
-        talla_txt = parts[3] if len(parts) > 3 else "Todas"
-        
-        # --- CLASIFICACIÓN SEMÁNTICA PARA EL FILTRADO QUIRÚRGICO ---
-        grupo_sistema = "OTROS"
-        if "ZAPATILLA" in cat_txt or "SNEAKER" in cat_txt or "RUNNING" in cat_txt:
-            grupo_sistema = "ZAPATILLAS"
-        elif "PERFUME" in cat_txt or "FRAGANCIA" in cat_txt:
-            grupo_sistema = "PERFUMES"
-        elif cat_txt in ["SHAMPOO", "JABON", "DESODORANTE", "CUIDADO_PERSONAL", "SALUD"]:
-            grupo_sistema = "CUIDADO_PERSONAL"
-        elif cat_txt in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL"]:
-            grupo_sistema = "TECNOLOGIA"
-        elif cat_txt in ["CASACAS", "POLERAS", "POLOS", "BUZOS", "JEANS", "MEDIAS", "ROPA", "ABRIGO"]:
-            grupo_sistema = "ROPA"
-
-        # REGLA DE ORO: Si tocas un botón específico y este radar no es de esa categoría, lo ignora
-        if categoria_filtro != "TODOS" and categoria_filtro != grupo_sistema:
-            continue
-
-        prods = escanear_tienda(item['url'], limite)
-        
-        if prods:
-            for p in prods:
-                if "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "PERFUME" in cat_txt:
-                    nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
-                    id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
-                else:
-                    id_registro_dashboard = identificador
-                
-                try:
-                    supabase.table("historial_precios").insert({
-                        "identificador": id_registro_dashboard, 
-                        "precio": p['precio'],
-                        "fecha": fecha_hoy
-                    }).execute()
-                except:
-                    pass
-                
-                if p['precio'] <= limite:
-                    ahorro = limite - p['precio']
-                    porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
-                    
-                    msg = (
-                        f"🔥 *¡OFERTA DETECTADA POR COBY ({grupo_sistema})!* 🔥\n"
-                        f"━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📦 *Producto:* {p['nombre']}\n"
-                        f"🏪 *Tienda:* `{tienda_txt}`\n"
-                        f"🏷️ *Categoría:* `{cat_txt}`\n\n"
-                        f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
-                        f"🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n"
-                    )
-                    
-                    if p['precio'] < limite:
-                        msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
-                    else:
-                        msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
-                        
-                    msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
-                    
-                    enviar_telegram(msg, p['link'], p['img'])
-                    time.sleep(0.5)
