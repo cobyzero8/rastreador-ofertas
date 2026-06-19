@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import re
 import time
 from datetime import datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 from supabase import create_client, Client
 
 import urllib3
@@ -42,16 +42,20 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         pass
 
 def escanear_tienda(url, limite):
+    # Camuflaje avanzado de navegador para saltar bloqueos WAF
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9"
+        "Accept-Language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Cache-Control": "max-age=0"
     }
     productos = []
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - OPERATIVO 100%
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - CONTROL ANTI-BLOQUEO
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
@@ -66,45 +70,53 @@ def escanear_tienda(url, limite):
         params = {
             "ft": "perfume",
             "_from": 0,
-            "_to": 20,
+            "_to": 30,
             "O": "OrderByPriceASC"
         }
         
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        if resp.status_code == 200:
-            items = resp.json()
-            for item in items:
-                nombre = item.get("productName", "Perfume Belcorp")
-                link_completo = item.get("link", url)
-                
-                img_url = ""
-                items_internos = item.get("items", [])
-                if items_internos and items_internos[0].get("images"):
-                    img_url = items_internos[0]["images"][0].get("imageUrl", "")
-                
-                precio = 999.0
-                if items_internos and items_internos[0].get("sellers"):
-                    comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                    precio = float(comm_offer.get("Price", 999.0))
-                
-                productos.append({
-                    "nombre": f"{marca.upper()} - {nombre.upper()}",
-                    "precio": precio,
-                    "link": link_completo,
-                    "img": img_url
-                })
+        try:
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            if resp.status_code == 200:
+                items = resp.json()
+                for item in items:
+                    nombre = item.get("productName", "Perfume Belcorp")
+                    link_completo = item.get("link", url)
+                    
+                    img_url = ""
+                    items_internos = item.get("items", [])
+                    if items_internos and items_internos[0].get("images"):
+                        img_url = items_internos[0]["images"][0].get("imageUrl", "")
+                    
+                    precio = 999.0
+                    if items_internos and items_internos[0].get("sellers"):
+                        comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                        precio = float(comm_offer.get("Price", 999.0))
+                    
+                    productos.append({
+                        "nombre": f"{marca.upper()} - {nombre.upper()}",
+                        "precio": precio,
+                        "link": link_completo,
+                        "img": img_url
+                    })
+        except Exception as e:
+            print(f"Error en Belcorp: {e}")
 
     # =========================================================
-    # 🕵️‍♂️ NUEVO MOTOR: MIFARMA PERÚ - API DE CATÁLOGO DIRECTA
+    # 🕵️‍♂️ MIFARMA PERÚ - DETECCIÓN INTELIGENTE DE KEYWORD Y BUSQUEDA
     # =========================================================
     elif "mifarma" in url_clean:
-        # Extraemos el código o slug de la categoría desde la URL que registraste
-        # https://www.mifarma.com.pe/categoria/cuidado-personal-1 -> api de busqueda vtex
+        # Extrae automáticamente la palabra de búsqueda de la URL si existe (?keyword=...)
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        palabra_busqueda = "shampoo"
+        if 'keyword' in query_params:
+            palabra_busqueda = query_params['keyword'][0]
+        
         api_url = "https://www.mifarma.com.pe/api/catalog_system/pub/products/search"
         params = {
-            "ft": "shampoo",  # Ataca por palabra de búsqueda masiva en su inventario JSON
+            "ft": palabra_busqueda,
             "_from": 0,
-            "_to": 24,
+            "_to": 30,
             "O": "OrderByPriceASC"
         }
         try:
@@ -131,27 +143,32 @@ def escanear_tienda(url, limite):
                         "link": link_completo,
                         "img": img_url
                     })
-        except:
-            pass
+        except Exception as e:
+            print(f"Error en Mifarma: {e}")
 
     # =========================================================
     # 👟 COMODÍN GENERAL (ZAPATILLAS, SUPERMERCADOS, ETC.)
     # =========================================================
     else:
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
-            tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
-            if not tit: continue
-            nombre = tit.text.strip()
-            a = t.find('a', href=True)
-            link = urljoin(url, a['href']) if a else url
-            img = t.find('img', src=True)
-            img_url = img['src'] if img else ""
-            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-            valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-            if valores:
-                productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
+        try:
+            # Para el comodín general usamos headers de solicitud HTML clásica
+            headers_html = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36"}
+            resp = requests.get(url, headers=headers_html, timeout=15, verify=False)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x)):
+                tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name|nombre|producto)', re.I))
+                if not tit: continue
+                nombre = tit.text.strip()
+                a = t.find('a', href=True)
+                link = urljoin(url, a['href']) if a else url
+                img = t.find('img', src=True)
+                img_url = img['src'] if img else ""
+                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
+                if valores:
+                    productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
+        except Exception as e:
+            print(f"Error en Comodín General: {e}")
 
     return productos
 
@@ -176,8 +193,7 @@ def revisar_ofertas():
         
         if prods:
             for p in prods:
-                # El ID dinámico aplica para perfumería Belcorp y para los elementos dinámicos de Mifarma
-                if "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "mifarma" in url_radar or "PERFUME" in cat_txt or cat_txt in ["SHAMPOO", "JABON", "DESODORANTE"]:
+                if "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "mifarma" in url_radar or "PERFUME" in cat_txt or cat_txt in ["SHAMPOO", "JABON", "DESODORANTE", "MEDICINA"]:
                     nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
                     id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
                 else:
