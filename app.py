@@ -4,7 +4,6 @@ import os
 import pandas as pd
 import requests
 from datetime import datetime
-import plotly.express as px
 from supabase import create_client, Client
 
 st.set_page_config(page_title="COBY & GEMINI - Sistema Inteligente", layout="wide")
@@ -15,12 +14,9 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-HISTORIAL_FILE = "historial_precios.json"
 CUPONES_FILE = "cupones.json"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
-
-PRIMERA_NECESIDAD = ["SHAMPOO", "DESODORANTE", "JABON", "PERFUMES", "ALIMENTOS", "ABARROTES", "HOGAR", "SALUD"]
 
 def obtener_tiendas_dinamicas():
     tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MIFARMA", "INKAFARMA", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "LBEL", "ESIKA", "CYZONE", "PLAZA_VEA", "TOTTUS", "METRO", "LATAM", "SKY", "PLATANITOS"]
@@ -53,19 +49,18 @@ def procesar_comandos_telegram_pendientes():
                         r_top = int(parts[4])
                         r_id = f"{r_tnd}-{r_cat}-{r_nom}-TODAS"
                         supabase.table("radares").insert({"url": r_url, "precio_max": r_top, "identificador": r_id}).execute()
-                        requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": f"✅ ¡Base de datos actualizada desde el celular!\nRadar `{r_nom}` guardado con tope S/. {r_top}"})
+                        requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", json={"chat_id": CHAT_ID_TELEGRAM, "text": f"✅ ¡Radar `{r_nom}` guardado desde Telegram!"})
     except: pass
 
 try: procesar_comandos_telegram_pendientes()
 except: pass
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL SIMPLIFICADA ---
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
-st.sidebar.caption("🚀 _Central de Inteligencia Avanzada v10.0_")
-st.sidebar.caption("⚡ Estatus: **Módulos por Botones Activados**")
+st.sidebar.caption("🚀 _Central de Ofertas Automatizada_")
 st.sidebar.write("---")
 
-menu = st.sidebar.radio("Selecciona una opción:", ["📈 Ver Dashboard", "💰 Métricas de Ahorro", "📊 Inteligencia Horaria", "🛠️ Gestionar Enlaces Pro", "💥 Forzar Escaneo"])
+menu = st.sidebar.radio("Selecciona una sección:", ["📈 Ver Dashboard / Ofertas", "🛠️ Configurar Radares y URLs", "💥 Forzar Escaneo Intensivo"])
 
 if "mod_url" not in st.session_state: st.session_state.mod_url = ""
 if "mod_nombre" not in st.session_state: st.session_state.mod_nombre = ""
@@ -73,22 +68,21 @@ if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
 # ==========================================
-# 📈 DASHBOARD DE CONTROL POR BOTONES PREMIUM
+# 📈 DASHBOARD DE CONTROL POR BOTONES MULTI-OFERTAS
 # ==========================================
-if menu == "📈 Ver Dashboard":
-    st.title("🕵️‍♂️ Central COBY & GEMINI")
-    st.subheader("📊 Módulos de Control e Inteligencia Filtrada")
+if menu == "📈 Ver Dashboard / Ofertas":
+    st.title("🕵️‍♂️ Mi Central de Ofertas Activas")
     
     # Inicializar el estado de la categoría seleccionada si no existe
     if "categoria_activa" not in st.session_state:
         st.session_state.categoria_activa = "TODOS"
 
-    # --- BOTONES INTERACTIVOS DE CATEGORÍA ---
-    st.write("### 🗂️ Selecciona un Módulo para Inspeccionar:")
+    # --- FILA DE BOTONES INTEGRADOS ---
+    st.write("### 🗂️ Selecciona qué ofertas deseas inspeccionar:")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     
     with c1:
-        if st.button("🌐 Mostrar Todos", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "TODOS" else "primary"):
+        if st.button("🌐 Todo Junto", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "TODOS" else "primary"):
             st.session_state.categoria_activa = "TODOS"
     with c2:
         if st.button("👟 Zapatillas", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "ZAPATILLAS" else "primary"):
@@ -106,13 +100,13 @@ if menu == "📈 Ver Dashboard":
         if st.button("👕 Ropa", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "ROPA" else "primary"):
             st.session_state.categoria_activa = "ROPA"
 
-    st.write(f"📍 Mostrando inventario del Módulo: **{st.session_state.categoria_activa}**")
+    st.markdown(f"📍 Módulo visualizado actualmente: **{st.session_state.categoria_activa}**")
     st.write("---")
 
     lista_productos_dashboard = []
     
     try:
-        # 1. Traemos radares para emparejar enlaces originales
+        # 1. Mapear radares para recuperar URLs de compra y topes
         res_r = supabase.table("radares").select("*").execute()
         mapa_urls, mapa_topes = {}, {}
         if res_r.data:
@@ -121,7 +115,7 @@ if menu == "📈 Ver Dashboard":
                 mapa_urls[id_r_upper] = r["url"]
                 mapa_topes[id_r_upper] = r["precio_max"]
 
-        # 2. Traemos todo el historial de precios ordenado por id descendente
+        # 2. Obtener el historial de precios
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         
         if res_h.data:
@@ -135,7 +129,6 @@ if menu == "📈 Ver Dashboard":
                     continue
                 productos_procesados.add(id_prod_upper)
                 
-                # Desarmar identificador
                 parts = id_prod.split("-")
                 tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
@@ -157,93 +150,137 @@ if menu == "📈 Ver Dashboard":
                     "Tienda": tienda_txt, 
                     "Categoría": cat_txt,
                     "Elemento": nombre_elemento, 
-                    "Detalle/Talla": talla_txt.replace("_", " "),
+                    "Detalle / Talla": talla_txt.replace("_", " "),
                     "Precio Actual": ultimo_precio, 
-                    "Tope Configurado": tope_final,
-                    "Compra": link_final
+                    "Tu Tope Límite": tope_final,
+                    "Enlace Compra": link_final
                 }
 
-                # --- FILTRADO INTELIGENTE POR BOTONES ---
+                # --- AGROUPACIÓN INTELIGENTE PARA EL FILTRADO ---
                 grupo_sistema = "OTROS"
-                
-                # Agrupación por palabras clave
-                if "ZAPATILLA" in cat_txt or "SNEAKER" in cat_txt:
+                if "ZAPATILLA" in cat_txt or "SNEAKER" in cat_txt or "RUNNING" in cat_txt:
                     grupo_sistema = "ZAPATILLAS"
-                elif "PERFUME" in cat_txt:
+                elif "PERFUME" in cat_txt or "FRAGANCIA" in cat_txt:
                     grupo_sistema = "PERFUMES"
                 elif cat_txt in ["SHAMPOO", "JABON", "DESODORANTE", "CUIDADO_PERSONAL", "SALUD"]:
                     grupo_sistema = "CUIDADO_PERSONAL"
-                elif cat_txt in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL"]:
+                elif cat_txt in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL", "EQUIPOS"]:
                     grupo_sistema = "TECNOLOGIA"
                 elif cat_txt in ["CASACAS", "POLERAS", "POLOS", "BUZOS", "JEANS", "MEDIAS", "ROPA", "ABRIGO"]:
                     grupo_sistema = "ROPA"
 
-                # Si coincide con el botón activo o está en modo TODOS, pasa a la lista final
+                # Filtrar según el botón presionado
                 if st.session_state.categoria_activa == "TODOS" or st.session_state.categoria_activa == grupo_sistema:
                     lista_productos_dashboard.append(item_dict)
                     
     except Exception as e:
-        st.warning(f"Nota: Sincronizando grilla... ({e})")
+        st.warning(f"Sincronizando grilla de ofertas... ({e})")
 
-    # Renderizado de la tabla principal
     if lista_productos_dashboard:
-        st.data_editor(pd.DataFrame(lista_productos_dashboard), column_config={"Compra": st.column_config.LinkColumn("Ir al Enlace")}, hide_index=True, use_container_width=True)
+        st.data_editor(pd.DataFrame(lista_productos_dashboard), column_config={"Enlace Compra": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
     else:
-        st.info(f"No hay artículos registrados para el módulo {st.session_state.categoria_activa} todavía.")
+        st.info(f"Aún no hay ofertas registradas en el módulo {st.session_state.categoria_activa}.")
 
-    # --- SECCIÓN SECUNDARIA: CUPONERA ---
+    # --- SECCIÓN DE CUPONES ---
     st.write("---")
-    st.subheader("🎟️ Cuponera Filtrada Inteligente")
+    st.subheader("🎟️ Cupones de Descuento Activos")
     if os.path.exists(CUPONES_FILE):
         try:
-            with open(CUPONES_FILE, "r", encoding="utf-8") as f_cup: cupones_data = json.load(f_cup)
+            with open(CUPONES_FILE, "r", encoding="utf-8") as f_cup: 
+                cupones_data = json.load(f_cup)
             lista_cupones_tabla = []
             for tnda, lista_c in cupones_data.items():
                 for item_c in lista_c:
                     lista_cupones_tabla.append({"Tienda": tnda.upper(), "Código": f"✨ {item_c['codigo']} ✨", "Descuento": item_c['descuento'], "Detalle": item_c['detalle']})
-            if lista_cupones_tabla: st.dataframe(pd.DataFrame(lista_cupones_tabla), use_container_width=True, hide_index=True)
-            else: st.info("No hay cupones activos.")
-        except: st.info("Cuponera lista.")
-    else: st.info("Cuponera lista.")
+            if lista_cupones_tabla: 
+                st.dataframe(pd.DataFrame(lista_cupones_tabla), use_container_width=True, hide_index=True)
+        except: pass
 
-# --- MÉTRICAS DE AHORRO ---
-elif menu == "💰 Métricas de Ahorro":
-    st.title("💰 Balance de Ahorro Familiar COBY & GEMINI")
-    st.subheader("📊 Historial de dinero resguardado por el sistema")
+# ==========================================
+# 🛠️ SECCIÓN: CONFIGURAR RADARES Y URLS
+# ==========================================
+elif menu == "🛠️ Configurar Radares y URLs":
+    st.title("🛠️ Panel de Gestión de Enlaces y Base de Datos")
+    lista_tiendas = obtener_tiendas_dinamicas()
     
-    total_ahorrado = 0.0
-    if os.path.exists(HISTORIAL_FILE):
-        try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: h_data = json.load(f)
-            total_ahorrado = h_data.get("TOTAL_AHORRADO_SISTEMA", 124.50)
-        except: total_ahorrado = 124.50
-        
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric(label="💵 Total Ahorrado Acumulado (Efectivo Real)", value=f"S/. {total_ahorrado:.2f}", delta="¡Economía Protegida!")
-    with c2:
-        st.write("### 📈 Impacto Mensual de Eficiencia")
-        df_ahorro_simulado = pd.DataFrame({"Mes": ["Abril", "Mayo", "Junio"], "Soles Ahorrados": [45.0, 89.2, total_ahorrado]}).set_index("Mes")
-        st.bar_chart(df_ahorro_simulado)
+    with st.container(border=True):
+        st.write("### 📝 Registrar o Modificar Radar Activo")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
+            tienda_manual = st.text_input("✍️ O escribe una Nueva Tienda", "").strip().upper()
+            tienda_final = tienda_manual if tienda_manual else tienda_sel
+            
+            categoria_sel = st.selectbox("Categoría Sugerida", ["Zapatillas", "Perfumes", "Shampoo", "Jabon", "Desodorante", "Tv", "Casacas", "Polos", "Abarrotes", "Otros"])
+            categoria_manual = st.text_input("✍️ O escribe una Nueva Categoría (Libre)", "").strip().upper()
+            categoria_final = categoria_manual if categoria_manual else categoria_sel.upper()
+            
+        with c2:
+            nombre = st.text_input("Nombre descriptivo del artículo", value=st.session_state.mod_nombre)
+            url = st.text_input("URL completa del producto o catálogo", value=st.session_state.mod_url)
+        with c3:
+            talla = st.text_input("Filtro adicional / Talla / Volumen", value=st.session_state.mod_talla)
+            precio_max = st.number_input("Precio máximo de oferta límite (S/.)", value=int(st.session_state.mod_precio), min_value=1)
+            
+        if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
+            if nombre and url:
+                nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.strip()}-{nombre.replace(' ', '_').strip()}-{talla.strip() if talla.strip() else 'TODAS'}"
+                try:
+                    supabase.table("radares").delete().eq("identificador", nuevo_id).execute()
+                    if st.session_state.mod_url:
+                        supabase.table("radares").delete().eq("url", st.session_state.mod_url).execute()
+                except: pass
+                
+                supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                st.session_state.mod_url, st.session_state.mod_nombre, st.session_state.mod_talla, st.session_state.mod_precio = "", "", "", 100
+                st.toast("✅ ¡Base de datos de radares actualizada!")
+                st.rerun()
 
-# --- INTELIGENCIA HORARIA ---
-elif menu == "📊 Inteligencia Horaria":
-    st.title("📊 Análisis de Inteligencia Horaria de Descuentos")
-    st.subheader("⏱️ Gráfica estadística de bajones repentinos detectados en Perú")
+    st.write("---")
+    st.subheader("📋 Lista de Enlaces que estás Vigilando Actualmente")
+    try:
+        res_d = supabase.table("radares").select("*").order("id", desc=True).execute()
+        lineas = res_d.data if res_d.data else []
+    except: lineas = []
     
-    log_horas = []
-    if os.path.exists(HISTORIAL_FILE):
+    if lineas:
+        for index, item in enumerate(lineas):
+            meta_parts = item["identificador"].split("-")
+            tnd = meta_parts[0].upper()
+            cat = meta_parts[1].upper()
+            lbl = meta_parts[2].replace("_", " ")
+            tll = meta_parts[3] if len(meta_parts) > 3 else "Todas"
+            url_real = item["url"]
+            
+            col_info, col_mod, col_btn = st.columns([7, 1.5, 1.5])
+            with col_info: 
+                st.markdown(f"**{index + 1}. 🌐 [{tnd}]** | #{cat} | Producto: `{lbl}` | Detalle: `{tll}` | **Tope: S/. {item['precio_max']}**")
+                st.caption(f"🔗 `Dirección:` {url_real}")
+            with col_mod:
+                if st.button(f"✏️ Editar", key=f"mod_{index}", use_container_width=True):
+                    st.session_state.mod_url = url_real
+                    st.session_state.mod_nombre = lbl
+                    st.session_state.mod_talla = tll
+                    st.session_state.mod_precio = item["precio_max"]
+                    st.rerun()
+            with col_btn:
+                if st.button(f"🗑️ Eliminar", key=f"del_{index}", use_container_width=True):
+                    supabase.table("radares").delete().eq("id", item["id"]).execute()
+                    st.rerun()
+
+# ==========================================
+# 💥 SECCIÓN: FORZAR ESCANEO INTENSIVO
+# ==========================================
+elif menu == "💥 Forzar Escaneo Intensivo":
+    st.title("💥 Módulo de Patrullaje Forzado en Tiempo Real")
+    st.write("Presiona el botón de abajo para activar los raspadores inmediatamente y forzar el análisis de precios en tus enlaces activos.")
+    
+    contenedor_mensaje = st.empty()
+    if st.button("💥 ENVIAR ROBOT A BUSCAR OFERTAS YA", type="primary", use_container_width=True):
+        contenedor_mensaje.info("⏳ Camuflando conexión y escaneando la base de datos de enlaces activos...")
         try:
-            with open(HISTORIAL_FILE, "r", encoding="utf-8") as f: 
-                h_data = json.load(f)
-            log_horas = h_data.get("LOG_HORARIOS_DETECCION", [1, 2, 4, 4, 5, 12, 13, 13, 18, 23, 23, 23, 0, 0])
-        except: 
-            log_horas = [1, 2, 4, 4, 5, 12, 13, 13, 18, 23, 23, 23, 0, 0]
-        
-    if log_horas:
-        df_horas = pd.DataFrame({"Hora del Día": log_horas})
-        fig = px.histogram(df_horas, x="Hora del Día", nbins=24, title="Distribución de Ofertas Reales por Hora", labels={"count": "Ofertas Encontradas"}, color_discrete_sequence=['#00CC96'])
-        st.plotly_chart(fig, use_container_width=True)
-        st.info("💡 **Análisis de Élite:** Los picos más altos muestran los momentos exactos en que las tiendas aplican cambios de precio en sus servidores.")
-    else:
-        st.info("Recopilando datos de horas en los próximos escaneos nocturnos.")
+            from scraper import revisar_ofertas
+            revisar_ofertas()
+            contenedor_mensaje.success("✅ ¡Operación completada con honores! Los reportes válidos ya fueron enviados a Telegram.")
+        except Exception as e: 
+            contenedor_mensaje.error(f"❌ Ocurrió una traba en el raspador: {e}")
