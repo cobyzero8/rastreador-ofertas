@@ -51,17 +51,24 @@ def escanear_tienda(url, limite):
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - NUEVA API PÚBLICA DE CATÁLOGO
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - RUTA PÚBLICA INTEGRAL
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         
-        # Atacamos la API de catálogo directo del dominio de la tienda (Ultra estable, no requiere DNS externa)
-        api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
+        # Cambiamos a la API pública de sistema de catálogo (Evita el NameResolutionError por completo)
+        api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search" # Respaldo estructural de motor común
+        if "cyzone" in marca:
+            api_url = "https://cyzone.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
+        elif "lbel" in marca:
+            api_url = "https://lbel.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
+        else:
+            api_url = "https://esika.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
+
         params = {
-            "fq": "C:/1000001/",  # Mapeo universal de la categoría Perfumes en sus servidores VTEX
+            "ft": "perfume", # Búsqueda de texto libre para traer todo el catálogo
             "_from": 0,
-            "_to": 19,
+            "_to": 20,
             "O": "OrderByPriceASC"
         }
         
@@ -124,7 +131,7 @@ def escanear_tienda(url, limite):
             })
 
     # =========================================================
-    # 👟 COMODÍN GENERAL (ZAPATILLAS)
+    # 👟 COMODÍN GENERAL
     # =========================================================
     else:
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -171,7 +178,7 @@ def revisar_ofertas():
                 else:
                     id_registro_dashboard = identificador
                 
-                # Inserción limpia directo a Supabase
+                # Inserción directa en historial
                 supabase.table("historial_precios").insert({
                     "identificador": id_registro_dashboard, 
                     "precio": p['precio'],
