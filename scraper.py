@@ -51,13 +51,11 @@ def escanear_tienda(url, limite):
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - RUTA PÚBLICA INTEGRAL
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - OPERATIVO 100%
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         
-        # Cambiamos a la API pública de sistema de catálogo (Evita el NameResolutionError por completo)
-        api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search" # Respaldo estructural de motor común
         if "cyzone" in marca:
             api_url = "https://cyzone.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         elif "lbel" in marca:
@@ -66,7 +64,7 @@ def escanear_tienda(url, limite):
             api_url = "https://esika.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
 
         params = {
-            "ft": "perfume", # Búsqueda de texto libre para traer todo el catálogo
+            "ft": "perfume",
             "_from": 0,
             "_to": 20,
             "O": "OrderByPriceASC"
@@ -98,40 +96,7 @@ def escanear_tienda(url, limite):
             })
 
     # =========================================================
-    # 🕵️‍♂️ TIENDA NATURA PERÚ
-    # =========================================================
-    elif "natura" in url_clean:
-        tipo_perfume = "perfumeria-masculina" if "perfumeria-masculina" in url_clean else "perfumeria-femenina"
-        api_url = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
-        params = {"ft": tipo_perfume, "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
-        
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        resp.raise_for_status()
-        
-        items = resp.json()
-        for item in items:
-            nombre = item.get("productName", "Perfume Natura")
-            link_completo = item.get("link", url)
-            
-            img_url = ""
-            items_internos = item.get("items", [])
-            if items_internos and items_internos[0].get("images"):
-                img_url = items_internos[0]["images"][0].get("imageUrl", "")
-            
-            precio = 999.0
-            if items_internos and items_internos[0].get("sellers"):
-                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                precio = float(comm_offer.get("Price", 999.0))
-            
-            productos.append({
-                "nombre": f"NATURA - {nombre.upper()}",
-                "precio": precio,
-                "link": link_completo,
-                "img": img_url
-            })
-
-    # =========================================================
-    # 👟 COMODÍN GENERAL
+    # 👟 COMODÍN GENERAL (ZAPATILLAS, SUPERMERCADOS, ETC.)
     # =========================================================
     else:
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -172,7 +137,8 @@ def revisar_ofertas():
         
         if prods:
             for p in prods:
-                if "natura" in url_radar or "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "PERFUME" in cat_txt:
+                # El ID dinámico se genera solo para las tiendas de perfumes de Belcorp
+                if "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "PERFUME" in cat_txt:
                     nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
                     id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
                 else:
