@@ -8,7 +8,6 @@ from datetime import datetime
 from urllib.parse import urljoin
 from supabase import create_client, Client
 
-# Desactivar advertencias de certificados TLS si se usa verify=False
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -43,42 +42,53 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         pass
 
 def escanear_tienda(url, limite):
-    # Cabeceras optimizadas imitando al navegador al 100% para la API de Belcorp
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Origin": "https://cyzone.tiendabelcorp.com.pe",
-        "Referer": "https://cyzone.tiendabelcorp.com.pe/"
+        "Accept-Language": "es-PE,es;q=0.9"
     }
     productos = []
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - SIN MÁSCARAS
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - NUEVA API PÚBLICA DE CATÁLOGO
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
-        api_url = f"https://api.tiendabelcorp.com.pe/v2/products/search/{marca}/PE"
+        
+        # Atacamos la API de catálogo directo del dominio de la tienda (Ultra estable, no requiere DNS externa)
+        api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         params = {
-            "category": "perfumes",
-            "page": 1,
-            "pageSize": 20,
-            "sort": "price_asc"
+            "fq": "C:/1000001/",  # Mapeo universal de la categoría Perfumes en sus servidores VTEX
+            "_from": 0,
+            "_to": 19,
+            "O": "OrderByPriceASC"
         }
         
-        # Eliminamos el try/except para que si falla, el error salte en la pantalla de Streamlit
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        resp.raise_for_status() # Nos avisará si hay un bloqueo 403 o 401
+        resp.raise_for_status()
         
-        data = resp.json()
-        for p in data.get("products", []):
-            nombre = p.get("name", "Perfume Belcorp")
-            precio = float(p.get("price", {}).get("value", 999))
-            link_rel = p.get("urlKey", "")
-            link_completo = f"https://{marca}.tiendabelcorp.com.pe/{link_rel}/p"
-            img_url = p.get("images", [{}])[0].get("url", "")
-            productos.append({"nombre": f"{marca.upper()} - {nombre}", "precio": precio, "link": link_completo, "img": img_url})
+        items = resp.json()
+        for item in items:
+            nombre = item.get("productName", "Perfume Belcorp")
+            link_completo = item.get("link", url)
+            
+            img_url = ""
+            items_internos = item.get("items", [])
+            if items_internos and items_internos[0].get("images"):
+                img_url = items_internos[0]["images"][0].get("imageUrl", "")
+            
+            precio = 999.0
+            if items_internos and items_internos[0].get("sellers"):
+                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                precio = float(comm_offer.get("Price", 999.0))
+            
+            productos.append({
+                "nombre": f"{marca.upper()} - {nombre.upper()}",
+                "precio": precio,
+                "link": link_completo,
+                "img": img_url
+            })
 
     # =========================================================
     # 🕵️‍♂️ TIENDA NATURA PERÚ
@@ -114,7 +124,7 @@ def escanear_tienda(url, limite):
             })
 
     # =========================================================
-    # 👟 COMODÍN GENERAL
+    # 👟 COMODÍN GENERAL (ZAPATILLAS)
     # =========================================================
     else:
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -161,7 +171,7 @@ def revisar_ofertas():
                 else:
                     id_registro_dashboard = identificador
                 
-                # Inserción directa sin silenciador para ver si Supabase rechaza algo
+                # Inserción limpia directo a Supabase
                 supabase.table("historial_precios").insert({
                     "identificador": id_registro_dashboard, 
                     "precio": p['precio'],
