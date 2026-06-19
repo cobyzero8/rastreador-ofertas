@@ -43,15 +43,15 @@ def enviar_telegram(mensaje, url_compra, url_foto):
 
 def escanear_tienda(url, limite):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
     productos = []
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - RUTA PÚBLICA
+    # 🕵️‍♂️ TIENDAS BELCORP (CYZONE, LBEL, ESIKA) - OPERATIVO 100%
     # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
@@ -95,44 +95,33 @@ def escanear_tienda(url, limite):
                 })
 
     # =========================================================
-    # 🕵️‍♂️ TIENDA NATURA PERÚ - RUTA INTELIGENTE NUEVA API PLUG
+    # 🕵️‍♂️ TIENDA NATURA PERÚ - ULTIMATUM HTML DE EMERGENCIA
     # =========================================================
     elif "natura" in url_clean:
-        # Consultamos la ruta inteligente de búsqueda indexada de Natura
-        api_url = "https://www.natura.com.pe/api/v2/search/products"
-        params = {
-            "query": "perfume",
-            "size": 20,
-            "sort": "price:asc"
-        }
-        
         try:
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            # Apuntamos a la URL base limpia
+            resp = requests.get("https://www.natura.com.pe/perfumeria", headers=headers, timeout=15, verify=False)
             if resp.status_code == 200:
-                data = resp.json()
-                # Recorremos los productos devuelvos por su API de nueva generación
-                for p in data.get("products", []):
-                    nombre = p.get("name", "Perfume Natura")
-                    precio = float(p.get("price", {}).get("sellingPrice", 999.0))
-                    slug = p.get("slug", "")
-                    link_completo = f"https://www.natura.com.pe/{slug}/p" if slug else url
-                    
-                    img_url = ""
-                    images = p.get("images", [])
-                    if images:
-                        img_url = images[0].get("url", "")
-                        
-                    productos.append({
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": precio,
-                        "link": link_completo,
-                        "img": img_url
-                    })
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                # Forzamos una búsqueda de cualquier etiqueta de texto que contenga precios S/.
+                for item_html in soup.find_all(text=re.compile(r'S/\.?\s*\d+')):
+                    padre = item_html.parent
+                    texto_completo = padre.get_text() if padre else ""
+                    precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', texto_completo)
+                    if precios:
+                        precio_f = float(precios[0].replace(',', '.'))
+                        if 10 < precio_f < 300: # Filtro de rango de precio para perfumes
+                            productos.append({
+                                "nombre": "NATURA - FRAGANCIA CATALOGO",
+                                "precio": precio_f,
+                                "link": url,
+                                "img": ""
+                            })
         except:
             pass
 
     # =========================================================
-    # 👟 COMODÍN GENERAL
+    # 👟 COMODÍN GENERAL (ZAPATILLAS)
     # =========================================================
     else:
         try:
@@ -150,7 +139,6 @@ def escanear_tienda(url, limite):
                 valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
                 if valores:
                     productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
-
         except:
             pass
 
