@@ -110,28 +110,4 @@ def escanear_tienda(url, limite):
                 a = t.find('a', href=True)
                 link = urljoin(url, a['href']) if a else url
                 img = t.find('img', src=True)
-                img_url = img['src'] if img else ""
-                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-                if valores:
-                    productos.append({"nombre": nombre, "precio": valores[0], "link": link, "img": img_url})
-        except:
-            pass
-
-    return productos
-
-def revisar_ofertas(categoria_filtro="TODOS"):
-    res = supabase.table("radares").select("*").execute()
-    if not res or not res.data:
-        return
-    
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    filtro_web = str(categoria_filtro).upper().strip()
-    
-    for item in res.data:
-        identificador = str(item['identificador']).strip()
-        limite = float(item['precio_max'])
-        url_radar = str(item['url']).strip().lower()
-        
-        parts = identificador.split("-")
-        tienda_txt = parts[0].upper() if len(parts) >
+                img_url = img
