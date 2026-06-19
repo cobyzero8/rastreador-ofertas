@@ -97,41 +97,38 @@ def escanear_tienda(url, limite):
                 "img": img_url
             })
 
-   # =========================================================
-    # 🕵️‍♂️ TIENDA NATURA PERÚ - EDICIÓN UNIVERSAL CATÁLOGO
+  # =========================================================
+    # 🕵️‍♂️ TIENDA NATURA PERÚ - DIAGNÓSTICO DIRECTO SIN SILENCIADOR
     # =========================================================
     elif "natura" in url_clean:
         api_url = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
-        # Usamos el término general "perfume" para capturar todo el catálogo de golpe
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         
-        try:
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-            if resp.status_code == 200:
-                items = resp.json()
-                for item in items:
-                    nombre = item.get("productName", "Perfume Natura")
-                    link_completo = item.get("link", url)
-                    
-                    img_url = ""
-                    items_internos = item.get("items", [])
-                    if items_internos and items_internos[0].get("images"):
-                        img_url = items_internos[0]["images"][0].get("imageUrl", "")
-                    
-                    precio = 999.0
-                    if items_internos and items_internos[0].get("sellers"):
-                        comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                        precio = float(comm_offer.get("Price", 999.0))
-                    
-                    productos.append({
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": precio,
-                        "link": link_completo,
-                        "img": img_url
-                    })
-        except:
-            pass
-
+        # Eliminamos el try/except para capturar el error real en la pantalla
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        resp.raise_for_status() # Nos avisará si hay un bloqueo 403 o similar
+        
+        items = resp.json()
+        for item in items:
+            nombre = item.get("productName", "Perfume Natura")
+            link_completo = item.get("link", url)
+            
+            img_url = ""
+            items_internos = item.get("items", [])
+            if items_internos and items_internos[0].get("images"):
+                img_url = items_internos[0]["images"][0].get("imageUrl", "")
+            
+            precio = 999.0
+            if items_internos and items_internos[0].get("sellers"):
+                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                precio = float(comm_offer.get("Price", 999.0))
+            
+            productos.append({
+                "nombre": f"NATURA - {nombre.upper()}",
+                "precio": precio,
+                "link": link_completo,
+                "img": img_url
+            })
     # =========================================================
     # 👟 COMODÍN GENERAL
     # =========================================================
