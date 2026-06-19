@@ -71,29 +71,68 @@ def escanear_tienda(url, limite):
         }
         
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        resp.raise_for_status()
-        
-        items = resp.json()
-        for item in items:
-            nombre = item.get("productName", "Perfume Belcorp")
-            link_completo = item.get("link", url)
-            
-            img_url = ""
-            items_internos = item.get("items", [])
-            if items_internos and items_internos[0].get("images"):
-                img_url = items_internos[0]["images"][0].get("imageUrl", "")
-            
-            precio = 999.0
-            if items_internos and items_internos[0].get("sellers"):
-                comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                precio = float(comm_offer.get("Price", 999.0))
-            
-            productos.append({
-                "nombre": f"{marca.upper()} - {nombre.upper()}",
-                "precio": precio,
-                "link": link_completo,
-                "img": img_url
-            })
+        if resp.status_code == 200:
+            items = resp.json()
+            for item in items:
+                nombre = item.get("productName", "Perfume Belcorp")
+                link_completo = item.get("link", url)
+                
+                img_url = ""
+                items_internos = item.get("items", [])
+                if items_internos and items_internos[0].get("images"):
+                    img_url = items_internos[0]["images"][0].get("imageUrl", "")
+                
+                precio = 999.0
+                if items_internos and items_internos[0].get("sellers"):
+                    comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                    precio = float(comm_offer.get("Price", 999.0))
+                
+                productos.append({
+                    "nombre": f"{marca.upper()} - {nombre.upper()}",
+                    "precio": precio,
+                    "link": link_completo,
+                    "img": img_url
+                })
+
+    # =========================================================
+    # 🕵️‍♂️ NUEVO MOTOR: MIFARMA PERÚ - API DE CATÁLOGO DIRECTA
+    # =========================================================
+    elif "mifarma" in url_clean:
+        # Extraemos el código o slug de la categoría desde la URL que registraste
+        # https://www.mifarma.com.pe/categoria/cuidado-personal-1 -> api de busqueda vtex
+        api_url = "https://www.mifarma.com.pe/api/catalog_system/pub/products/search"
+        params = {
+            "ft": "shampoo",  # Ataca por palabra de búsqueda masiva en su inventario JSON
+            "_from": 0,
+            "_to": 24,
+            "O": "OrderByPriceASC"
+        }
+        try:
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            if resp.status_code == 200:
+                items = resp.json()
+                for item in items:
+                    nombre = item.get("productName", "Producto Mifarma")
+                    link_completo = item.get("link", url)
+                    
+                    img_url = ""
+                    items_internos = item.get("items", [])
+                    if items_internos and items_internos[0].get("images"):
+                        img_url = items_internos[0]["images"][0].get("imageUrl", "")
+                    
+                    precio = 999.0
+                    if items_internos and items_internos[0].get("sellers"):
+                        comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
+                        precio = float(comm_offer.get("Price", 999.0))
+                    
+                    productos.append({
+                        "nombre": f"MIFARMA - {nombre.upper()}",
+                        "precio": precio,
+                        "link": link_completo,
+                        "img": img_url
+                    })
+        except:
+            pass
 
     # =========================================================
     # 👟 COMODÍN GENERAL (ZAPATILLAS, SUPERMERCADOS, ETC.)
@@ -137,19 +176,21 @@ def revisar_ofertas():
         
         if prods:
             for p in prods:
-                # El ID dinámico se genera solo para las tiendas de perfumes de Belcorp
-                if "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "PERFUME" in cat_txt:
+                # El ID dinámico aplica para perfumería Belcorp y para los elementos dinámicos de Mifarma
+                if "tiendabelcorp" in url_radar or "cyzone" in url_radar or "lbel" in url_radar or "esika" in url_radar or "mifarma" in url_radar or "PERFUME" in cat_txt or cat_txt in ["SHAMPOO", "JABON", "DESODORANTE"]:
                     nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
                     id_registro_dashboard = f"{tienda_txt}-{cat_txt}-{nombre_limpio}-{talla_txt}"
                 else:
                     id_registro_dashboard = identificador
                 
-                # Inserción directa en historial
-                supabase.table("historial_precios").insert({
-                    "identificador": id_registro_dashboard, 
-                    "precio": p['precio'],
-                    "fecha": fecha_hoy
-                }).execute()
+                try:
+                    supabase.table("historial_precios").insert({
+                        "identificador": id_registro_dashboard, 
+                        "precio": p['precio'],
+                        "fecha": fecha_hoy
+                    }).execute()
+                except:
+                    pass
                 
                 if p['precio'] <= limite:
                     ahorro = limite - p['precio']
