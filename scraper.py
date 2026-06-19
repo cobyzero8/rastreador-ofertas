@@ -18,7 +18,7 @@ if not SUPABASE_KEY:
     try:
         import streamlit as st
         SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    except:
+    except Exception:
         pass
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -37,7 +37,7 @@ def enviar_telegram(mensaje, url_compra, url_foto):
     }
     try:
         requests.post(url, json=payload, timeout=10)
-    except:
+    except Exception:
         pass
 
 def escanear_tienda(url, limite):
@@ -58,56 +58,4 @@ def escanear_tienda(url, limite):
         if "cyzone" in marca:
             api_url = "https://cyzone.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         elif "lbel" in marca:
-            api_url = "https://lbel.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
-        else:
-            api_url = "https://esika.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
-
-        params = {
-            "ft": "perfume",
-            "_from": 0,
-            "_to": 20,
-            "O": "OrderByPriceASC"
-        }
-        
-        try:
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-            if resp.status_code == 200:
-                items = resp.json()
-                for item in items:
-                    nombre = item.get("productName", "Perfume Belcorp")
-                    link_completo = item.get("link", url)
-                    
-                    img_url = ""
-                    items_internos = item.get("items", [])
-                    if items_internos and items_internos[0].get("images"):
-                        img_url = items_internos[0]["images"][0].get("imageUrl", "")
-                    
-                    precio = 999.0
-                    if items_internos and items_internos[0].get("sellers"):
-                        comm_offer = items_internos[0]["sellers"][0].get("commertialOffer", {})
-                        precio = float(comm_offer.get("Price", 999.0))
-                    
-                    productos.append({
-                        "nombre": f"{marca.upper()} - {nombre.upper()}",
-                        "precio": precio,
-                        "link": link_completo,
-                        "img": img_url
-                    })
-        except:
-            pass
-
-    # =========================================================
-    # 👟 COMODÍN GENERAL
-    # =========================================================
-    else:
-        try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x)):
-                tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name)', re.I))
-                if not tit: continue
-                nombre = tit.text.strip()
-                a = t.find('a', href=True)
-                link = urljoin(url, a['href']) if a else url
-                img = t.find('img', src=True)
-                img_url = img
+            api_url = "https://lbel.tiendabel
