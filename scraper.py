@@ -39,7 +39,7 @@ def enviar_telegram(mensaje, url_compra, url_foto):
     except Exception:
         pass
 
-def escanear_tienda(url, limite):
+def escanear_tienda(url, limite, palabra_clave="shampoo"):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -50,95 +50,97 @@ def escanear_tienda(url, limite):
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🧪 BLOQUE BELCORP (ESIKA / CYZONE / LBEL)
+    # 🧪 BLOQUE VTEX 1: BELCORP (ESIKA / CYZONE / LBEL)
     # =========================================================
-    if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
+    if any(k in url_clean for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        # ACEPTAMOS 200 (OK) Y 206 (CONTENIDO PARCIAL)
-        if resp.status_code not in [200, 206]:
-            raise Exception(f"La tienda {marca.upper()} respondió con código {resp.status_code}.")
-            
-        items = resp.json()
-        for item in items:
-            nombre = item.get("productName", "Perfume Belcorp")
-            link_completo = item.get("link", url)
-            img_url = ""
-            precio = 999.0
-            
-            items_in = item.get("items", [])
-            if items_in:
-                imgs = items_in[0].get("images", [])
-                if imgs: 
-                    img_url = imgs[0].get("imageUrl", "")
-                sellers = items_in[0].get("sellers", [])
-                if sellers:
-                    oferta = sellers[0].get("commertialOffer", {})
-                    precio = float(oferta.get("Price", 999.0))
-                    
-            if precio < 999.0 and precio > 0:
-                productos.append({"nombre": f"{marca.upper()} - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
+        if resp.status_code in [200, 206]:
+            for item in resp.json():
+                nombre = item.get("productName", "Perfume Belcorp")
+                link_completo = item.get("link", url)
+                img_url = ""
+                precio = 999.0
+                
+                items_in = item.get("items", [])
+                if items_in:
+                    imgs = items_in[0].get("images", [])
+                    if imgs: img_url = imgs[0].get("imageUrl", "")
+                    sellers = items_in[0].get("sellers", [])
+                    if sellers:
+                        precio = float(sellers[0].get("commertialOffer", {}).get("Price", 999.0))
+                        
+                if 0 < precio < 999.0:
+                    productos.append({"nombre": f"{marca.upper()} - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
 
     # =========================================================
-    # 🧼 BLOQUE MIFARMA
+    # 🧼 BLOQUE VTEX 2: MIFARMA / INKAFARMA (NIVEL 1)
     # =========================================================
-    elif "mifarma" in url_clean:
-        api_url = "https://www.mifarma.com.pe/api/catalog_system/pub/products/search"
-        params = {"ft": "shampoo", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
+    elif "mifarma" in url_clean or "inkafarma" in url_clean:
+        dom = "mifarma" if "mifarma" in url_clean else "inkafarma"
+        api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search"
+        
+        # Extracción inteligente del término de búsqueda desde tu enlace
+        termino_busqueda = palabra_clave.lower().strip()
+        if "keyword=" in url_clean:
+            try:
+                match = re.search(r'keyword=([^&]+)', url_clean)
+                if match: termino_busqueda = match.group(1).replace("%20", " ")
+            except Exception: pass
+            
+        params = {"ft": termino_busqueda, "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        # ACEPTAMOS 200 (OK) Y 206 (CONTENIDO PARCIAL)
-        if resp.status_code not in [200, 206]:
-            raise Exception(f"Mifarma respondió con código {resp.status_code}.")
-            
-        items = resp.json()
-        for item in items:
-            nombre = item.get("productName", "Mifarma")
-            link_completo = item.get("link", url)
-            img_url = ""
-            precio = 999.0
-            
-            items_in = item.get("items", [])
-            if items_in:
-                imgs = items_in[0].get("images", [])
-                if imgs: 
-                    img_url = imgs[0].get("imageUrl", "")
-                sellers = items_in[0].get("sellers", [])
-                if sellers:
-                    oferta = sellers[0].get("commertialOffer", {})
-                    precio = float(oferta.get("Price", 999.0))
-                    
-            if precio < 999.0 and precio > 0:
-                productos.append({"nombre": f"MIFARMA - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
+        if resp.status_code in [200, 206]:
+            for item in resp.json():
+                nombre = item.get("productName", "Producto Farmacia")
+                link_completo = item.get("link", url)
+                img_url = ""
+                precio = 999.0
+                
+                items_in = item.get("items", [])
+                if items_in:
+                    imgs = items_in[0].get("images", [])
+                    if imgs: img_url = imgs[0].get("imageUrl", "")
+                    sellers = items_in[0].get("sellers", [])
+                    if sellers:
+                        precio = float(sellers[0].get("commertialOffer", {}).get("Price", 999.0))
+                        
+                if 0 < precio < 999.0:
+                    productos.append({"nombre": f"{dom.upper()} - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
 
     # =========================================================
-    # 👟 COMODÍN GENERAL HTML
+    # 👟 COMODÍN MULTI-CONTENEDOR SUPREME (NIVELES 1, 2 Y 3)
     # =========================================================
     else:
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code not in [200, 206]:
-            raise Exception(f"El enlace general respondió con código {resp.status_code}")
-            
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        for t in soup.find_all('div', class_=lambda x: x and ('product' in x or 'card' in x or 'item' in x)):
-            tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
-            if not tit: continue
-            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-            valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
-            if valores:
-                a = t.find('a', href=True)
-                img = t.find('img', src=True)
-                productos.append({"nombre": tit.text.strip().upper(), "precio": valores[0], "link": urljoin(url, a['href']) if a else url, "img": img['src'] if img else ""})
+        if resp.status_code in [200, 206]:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            # Rastreador masivo de cajas de productos para capturar Adidas, Ripley, Platanitos, Tottus, etc.
+            for t in soup.find_all(['div', 'article', 'li'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'vitrine', 'showcase', 'grid'])):
+                tit = t.find(['h3', 'h2', 'span', 'p', 'h1'], class_=re.compile(r'(title|name|nombre|producto)', re.I))
+                if not tit: continue
+                
+                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                valores = sorted([float(p.replace(',', '.')) for p in precios if float(p.replace(',', '.')) > 2])
+                if valores:
+                    a = t.find('a', href=True)
+                    img = t.find('img', src=True)
+                    productos.append({
+                        "nombre": tit.text.strip().upper(), 
+                        "precio": valores[0], 
+                        "link": urljoin(url, a['href']) if a else url, 
+                        "img": img['src'] if img else ""
+                    })
 
     return productos
 
 def revisar_ofertas(categoria_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
-    if not res or not res.data:
-        return "No hay radares configurados en Supabase."
+    if not res or not res.data: return "Sin radares activos."
     
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     filtro_web = str(categoria_filtro).upper().strip()
@@ -151,44 +153,46 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         
         parts = identificador.split("-")
         tienda_txt = parts[0].upper()
-        cat_txt = parts[1].upper()
+        cat_txt = parts[1].upper().strip()
         talla_txt = parts[3] if len(parts) > 3 else "Todas"
         
+        # --- ENGRANAJE DE MAPEO UNIVERSAL POR PALABRAS CLAVE ---
         grupo_sistema = "OTROS"
-        if cat_txt == "ZAPATILLAS": grupo_sistema = "ZAPATILLAS"
-        elif cat_txt == "PERFUMES": grupo_sistema = "PERFUMES"
-        elif cat_txt == "SHAMPOO": grupo_sistema = "CUIDADO_PERSONAL"
+        if any(k in cat_txt for k in ["ZAPATILLA", "SNEAKER", "RUNNING", "CALZADO", "ZAPATO"]): 
+            grupo_sistema = "ZAPATILLAS"
+        elif any(k in cat_txt for k in ["PERFUME", "FRAGANCIA", "COLONIA"]): 
+            grupo_sistema = "PERFUMES"
+        elif any(k in cat_txt for k in ["SHAMPOO", "JABON", "DESODORANTE", "SALUD", "MEDICINA", "CUIDADO"]): 
+            grupo_sistema = "CUIDADO_PERSONAL"
+        elif any(k in cat_txt for k in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL", "LAPTOP", "CELULAR", "ELECTRO"]): 
+            grupo_sistema = "TECNOLOGIA"
+        elif any(k in cat_txt for k in ["CASACAS", "POLERAS", "POLOS", "BUZOS", "JEANS", "MEDIAS", "ROPA", "ABRIGO", "PANTALON"]): 
+            grupo_sistema = "ROPA"
 
+        # Interruptor táctico por botón
         if filtro_web != "TODOS" and filtro_web != grupo_sistema:
             continue
 
-        prods = escanear_tienda(item['url'], limite)
+        # Pasamos la etiqueta como tercera opción de búsqueda
+        prods = escanear_tienda(item['url'], limite, parts[2])
         
         if prods:
             for p in prods:
-                if grupo_sistema == "PERFUMES":
-                    nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
-                    id_registro_dashboard = f"{tienda_txt}-PERFUMES-{nombre_limpio}-{talla_txt}"
-                elif grupo_sistema == "CUIDADO_PERSONAL":
-                    nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
-                    id_registro_dashboard = f"{tienda_txt}-SHAMPOO-{nombre_limpio}-{talla_txt}"
-                else:
-                    id_registro_dashboard = identificador
+                nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
+                id_registro_dashboard = f"{tienda_txt}-{grupo_sistema}-{nombre_limpio}-{talla_txt}"
                 
                 try:
                     supabase.table("historial_precios").insert({"identificador": id_registro_dashboard, "precio": p['precio'], "fecha": fecha_hoy}).execute()
                     total_procesados += 1
-                except Exception:
-                    pass
+                except Exception: pass
                 
                 if p['precio'] <= limite:
                     ahorro = limite - p['precio']
                     porcentaje = (ahorro / limite) * 100 if limite > 0 else 0
-                    msg = (f"🔥 *¡OFERTA DETECTADA POR COBY!* 🔥\n━━━━━━━━━━━━━━━━━━━\n\n📦 *Producto:* {p['nombre']}\n🏪 *Tienda:* `{tienda_txt}`\n🏷️ *Categoría:* `{cat_txt}`\n\n💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n")
+                    msg = (f"🔥 *¡OFERTA DETECTADA POR COBY ({grupo_sistema})!* 🔥\n━━━━━━━━━━━━━━━━━━━\n\n📦 *Producto:* {p['nombre']}\n🏪 *Tienda:* `{tienda_txt}`\n🏷️ *Categoría:* `{cat_txt}`\n\n💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n🎯 *Tu Precio Límite:* `S/. {limite:.2f}`\n")
                     if p['precio'] < limite: msg += f"📉 *¡Te estás ahorrando:* S/. {ahorro:.2f} ({porcentaje:.1f}% menos)!\n"
-                    else: msg += f"⚖️ *¡Llegó a tu precio objetivo exacto!*\n"
                     msg += f"\n🚨 _¡Aprovecha antes de que vuele el stock!_"
                     enviar_telegram(msg, p['link'], p['img'])
                     time.sleep(0.3)
                     
-    return f"Éxito: Se escanearon los enlaces y se inyectaron {total_procesados} sub-productos nuevos al historial."
+    return f"Éxito: Escaneo completado. Se inyectaron {total_procesados} artículos al tablero."
