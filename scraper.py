@@ -23,35 +23,37 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def escanear_tienda(url, limite, palabra_clave=""):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
     productos = []
-    url_clean = str(url).strip().lower()
-
-    # --- MODO 1: API (Búsqueda Directa) ---
-    if "catalog_system" in url_clean:
-        try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            items = resp.json()
-            for item in items:
-                precio = float(item["items"][0]["sellers"][0]["commertialOffer"]["Price"])
-                productos.append({"nombre": item["productName"].upper(), "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
-        except: pass
-
-    # --- MODO 2: WEB (Navegación Visual) ---
-    else:
-        try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            # Busca todos los contenedores de producto estándar
-            for t in soup.find_all(['div', 'li', 'article'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item'])):
-                tit = t.find(['h3', 'h2', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
-                if not tit: continue
-                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                if precios:
-                    precio = float(precios[0].replace(',', '.'))
-                    a = t.find('a', href=True)
-                    img = t.find('img', src=True)
-                    productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": urljoin(url, a['href']), "img": img['src'] if img else ""})
-        except Exception as e:
-            print(f"Error en escaneo web: {e}")
+    
+    try:
+        resp = requests.get(url, headers=headers, timeout=20, verify=False)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Este selector es universal para Mifarma y tiendas similares
+        items = soup.find_all('div', class_=lambda x: x and ('product-item' in x or 'vtex-search-result' in x or 'product-card' in x))
+        
+        for item in items:
+            # Captura Nombre
+            tit = item.find(['h3', 'a', 'div'], class_=re.compile(r'(name|title|product-item__name)', re.I))
+            if not tit: continue
+            nombre = tit.text.strip().upper()
+            
+            # Captura Precio
+            precio_tag = item.find('span', class_=re.compile(r'(price|best-price)', re.I))
+            if not precio_tag: continue
+            
+            precios = re.findall(r'(\d+[\.,]\d{2})', precio_tag.text.replace(',', '.'))
+            if precios:
+                precio = float(precios[0])
+                # Captura Link e Imagen
+                a_tag = item.find('a', href=True)
+                link = urljoin(url, a_tag['href']) if a_tag else url
+                img_tag = item.find('img', src=True)
+                img = img_tag['src'] if img_tag else ""
+                
+                productos.append({"nombre": nombre, "precio": precio, "link": link, "img": img})
+                
+    except Exception as e:
+        print(f"Error de escaneo: {e}")
 
     return productos
 
