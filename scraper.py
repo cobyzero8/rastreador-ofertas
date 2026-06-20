@@ -40,7 +40,6 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         pass
 
 def escanear_tienda(url, limite):
-    # Camuflaje ultra-pesado para evitar bloqueos nocturnos/vespertinos
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -59,8 +58,9 @@ def escanear_tienda(url, limite):
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        if resp.status_code != 200:
-            raise Exception(f"La tienda {marca.upper()} respondió con código {resp.status_code} (Posible Bloqueo de IP).")
+        # ACEPTAMOS 200 (OK) Y 206 (CONTENIDO PARCIAL)
+        if resp.status_code not in [200, 206]:
+            raise Exception(f"La tienda {marca.upper()} respondió con código {resp.status_code}.")
             
         items = resp.json()
         for item in items:
@@ -90,8 +90,9 @@ def escanear_tienda(url, limite):
         params = {"ft": "shampoo", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-        if resp.status_code != 200:
-            raise Exception(f"Mifarma respondió con código {resp.status_code} (Filtro Anti-Bot).")
+        # ACEPTAMOS 200 (OK) Y 206 (CONTENIDO PARCIAL)
+        if resp.status_code not in [200, 206]:
+            raise Exception(f"Mifarma respondió con código {resp.status_code}.")
             
         items = resp.json()
         for item in items:
@@ -118,7 +119,7 @@ def escanear_tienda(url, limite):
     # =========================================================
     else:
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200:
+        if resp.status_code not in [200, 206]:
             raise Exception(f"El enlace general respondió con código {resp.status_code}")
             
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -161,7 +162,6 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         if filtro_web != "TODOS" and filtro_web != grupo_sistema:
             continue
 
-        # Aquí dejamos que el error suba a la app para saber qué pasa
         prods = escanear_tienda(item['url'], limite)
         
         if prods:
