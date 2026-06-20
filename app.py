@@ -10,7 +10,6 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-CUPONES_FILE = "cupones.json"
 TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
 CHAT_ID_TELEGRAM = "8019752668"
 
@@ -20,10 +19,9 @@ def obtener_tiendas_dinamicas():
         res = supabase.table("radares").select("identificador").execute()
         if res.data:
             for item in res.data:
-                meta = item["identificador"].split("-")
-                tnd = meta[0].upper().strip()
+                tnd = item["identificador"].split("-")[0].upper().strip()
                 if tnd and tnd not in tiendas_base: tiendas_base.append(tnd)
-    except: pass
+    except Exception: pass
     return sorted(tiendas_base)
 
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
@@ -38,7 +36,7 @@ if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
 # ==========================================
-# 📈 DASHBOARD DE CONTROL POR BOTONES
+# 📈 DASHBOARD - BOTONERA DE VISUALIZACIÓN
 # ==========================================
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Mi Central de Ofertas Activas")
@@ -89,27 +87,36 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 
                 link_final, tope_final = "#", "S/. 500.00"
                 for id_radar, url_radar in mapa_urls.items():
-                    if tienda_txt in id_radar and cat_txt in id_radar:
+                    if tienda_txt in id_radar and (cat_txt in id_radar or "PERFUME" in id_radar or "SHAMPOO" in id_radar):
                         link_final = url_radar
                         tope_final = f"S/. {mapa_topes[id_radar]:.2f}"
                         break
                 
+                # REGLA EXACTA DE BOTONES:
                 grupo_sistema = "OTROS"
-                if "ZAPATILLA" in cat_txt or "SNEAKER" in cat_txt or "RUNNING" in cat_txt: grupo_sistema = "ZAPATILLAS"
-                elif "PERFUME" in cat_txt or "FRAGANCIA" in cat_txt: grupo_sistema = "PERFUMES"
-                elif cat_txt in ["SHAMPOO", "JABON", "DESODORANTE", "CUIDADO_PERSONAL", "SALUD"]: grupo_sistema = "CUIDADO_PERSONAL"
-                elif cat_txt in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL", "EQUIPOS"]: grupo_sistema = "TECNOLOGIA"
-                elif cat_txt in ["CASACAS", "POLERAS", "POLOS", "BUZOS", "JEANS", "MEDIAS", "ROPA", "ABRIGO"]: grupo_sistema = "ROPA"
+                if cat_txt == "ZAPATILLAS": grupo_sistema = "ZAPATILLAS"
+                elif cat_txt == "PERFUMES": grupo_sistema = "PERFUMES"
+                elif cat_txt == "SHAMPOO": grupo_sistema = "CUIDADO_PERSONAL"
 
                 if st.session_state.categoria_activa == "TODOS" or st.session_state.categoria_activa == grupo_sistema:
-                    lista_productos_dashboard.append({"Tienda": tienda_txt, "Categoría": cat_txt, "Elemento": prod_txt.replace("_", " ").strip().title(), "Detalle / Talla": talla_txt.replace("_", " "), "Precio Actual": f"S/. {float(reg.get('precio', 0)):.2f}", "Tu Tope Límite": tope_final, "Enlace Compra": link_final})
-    except: pass
+                    lista_productos_dashboard.append({
+                        "Tienda": tienda_txt, 
+                        "Categoría": cat_txt, 
+                        "Producto": prod_txt.replace("_", " ").title(), 
+                        "Detalle": talla_txt.replace("_", " "), 
+                        "Precio Actual": f"S/. {float(reg.get('precio', 0)):.2f}", 
+                        "Tu Tope Límite": tope_final, 
+                        "Enlace Compra": link_final
+                    })
+    except Exception as e: st.warning(f"Sincronizando: {e}")
 
-    if lista_productos_dashboard: st.data_editor(pd.DataFrame(lista_productos_dashboard), column_config={"Enlace Compra": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
-    else: st.info(f"Aún no hay ofertas registradas en el módulo {st.session_state.categoria_activa}.")
+    if lista_productos_dashboard: 
+        st.data_editor(pd.DataFrame(lista_productos_dashboard), column_config={"Enlace Compra": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
+    else: 
+        st.info(f"Aún no hay ofertas registradas en el módulo {st.session_state.categoria_activa}.")
 
 # ==========================================
-# 🛠️ SECCIÓN: CONFIGURAR RADARES Y URLS
+# 🛠️ GESTIÓN DE RADARES
 # ==========================================
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
@@ -122,8 +129,8 @@ elif menu == "🛠️ Configurar Radares y URLs":
             tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
             tienda_manual = st.text_input("✍️ Nueva Tienda", "").strip().upper()
             tienda_final = tienda_manual if tienda_manual else tienda_sel
-            categoria_sel = st.selectbox("Categoría Sugerida", ["Zapatillas", "Perfumes", "Shampoo", "Jabon", "Desodorante", "Tv", "Casacas", "Polos", "Abarrotes", "Otros"])
-            categoria_manual = st.text_input("✍️ Nueva Categoría (Libre)", "").strip().upper()
+            categoria_sel = st.selectbox("Categoría Sugerida", ["Zapatillas", "Perfumes", "Shampoo", "Jabon", "Tv", "Ropa", "Otros"])
+            categoria_manual = st.text_input("✍️ Nueva Categoría", "").strip().upper()
             categoria_final = categoria_manual if categoria_manual else categoria_sel.upper()
         with c2:
             nombre = st.text_input("Nombre descriptivo", value=st.session_state.mod_nombre)
@@ -134,11 +141,11 @@ elif menu == "🛠️ Configurar Radares y URLs":
             
         if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
             if nombre and url:
-                nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.strip()}-{nombre.replace(' ', '_').strip()}-{talla.strip() if talla.strip() else 'TODAS'}"
+                nuevo_id = f"{tienda_final.replace(' ', '_')}-{categoria_final.strip()}-{nombre.replace(' ', '_').strip()}-{talla.strip() if talla.strip() else 'Todas'}"
                 try:
                     supabase.table("radares").delete().eq("identificador", nuevo_id).execute()
                     if st.session_state.mod_url: supabase.table("radares").delete().eq("url", st.session_state.mod_url).execute()
-                except: pass
+                except Exception: pass
                 supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
                 st.session_state.mod_url, st.session_state.mod_nombre, st.session_state.mod_talla, st.session_state.mod_precio = "", "", "", 100
                 st.toast("✅ ¡Radar guardado!")
@@ -148,7 +155,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
     try:
         res_d = supabase.table("radares").select("*").order("id", desc=True).execute()
         lineas = res_d.data if res_d.data else []
-    except: lineas = []
+    except Exception: lineas = []
     
     if lineas:
         for index, item in enumerate(lineas):
@@ -168,13 +175,12 @@ elif menu == "🛠️ Configurar Radares y URLs":
                     st.rerun()
 
 # ==========================================
-# 💥 SECCIÓN: FORZAR ESCANEO QUIRÚRGICO
+# 💥 ESCANEO QUIRÚRGICO (MANDA LA ORDEN AL MOTOR)
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje Quirúrgico por Botones")
-    st.write("### 🚨 Selecciona qué categoría deseas que el robot escanee en este instante:")
+    st.title("💥 Módulo de Patrullaje Quirúrgico")
+    st.write("### 🚨 Selecciona qué módulo exacto debe patrullar el robot ahora:")
     
-    # Fila de disparadores directos
     f1, f2, f3, f4, f5, f6 = st.columns(6)
     categoria_a_lanzar = None
     
@@ -193,10 +199,10 @@ elif menu == "💥 Forzar Escaneo Intensivo":
 
     if categoria_a_lanzar is not None:
         contenedor_mensaje = st.empty()
-        contenedor_mensaje.info(f"⏳ Lanzando robot cazador exclusivo para el bloque: **{categoria_a_lanzar}**...")
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón a buscar: **{categoria_a_lanzar}**...")
         try:
             from scraper import revisar_ofertas
-            revisar_ofertas(categoria_a_lanzar) # Mandamos el filtro directo al script
-            contenedor_mensaje.success(f"✅ ¡Patrullaje completado para `{categoria_a_lanzar}`! Si hubo ofertas que rompieron tu tope, ya vibró tu Telegram.")
+            revisar_ofertas(categoria_a_lanzar)
+            contenedor_mensaje.success(f"✅ ¡Escaneo a `{categoria_a_lanzar}` completado! Revisa el Dashboard o Telegram.")
         except Exception as e:
             contenedor_mensaje.error(f"❌ Error en el motor: {e}")
