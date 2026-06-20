@@ -5,9 +5,10 @@ from bs4 import BeautifulSoup
 import re
 import time
 from datetime import datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 from supabase import create_client, Client
 import urllib3
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURACIÓN DE ÉLITE ---
@@ -47,24 +48,73 @@ def escanear_tienda(url, limite):
     productos = []
     url_clean = str(url).strip().lower()
 
-    # --- BLOQUE BELCORP (ESIKA/CYZONE/LBEL) ---
+    # =========================================================
+    # 🧪 BLOQUE BELCORP (ESIKA / CYZONE / LBEL) - A PRUEBA DE FALLOS
+    # =========================================================
     if "tiendabelcorp" in url_clean or "cyzone" in url_clean or "lbel" in url_clean or "esika" in url_clean:
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
-        params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
+        params = {"ft": "perfume", "_from": 0, "_to": 30, "O": "OrderByPriceASC"}
         
         try:
             resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
             if resp.status_code == 200:
                 for item in resp.json():
                     nombre = item.get("productName", "Perfume Belcorp")
-                    img_url = item["items"][0]["images"][0]["imageUrl"] if item.get("items") and item["items"][0].get("images") else ""
-                    precio = float(item["items"][0]["sellers"][0]["commertialOffer"]["Price"]) if item.get("items") and item["items"][0].get("sellers") else 999.0
-                    productos.append({"nombre": f"{marca.upper()} - {nombre.upper()}", "precio": precio, "link": item.get("link", url), "img": img_url})
-        except Exception as e:
-            print(f"Error Belcorp: {e}")
+                    link_completo = item.get("link", url)
+                    img_url = ""
+                    precio = 999.0
+                    
+                    # Extracción blindada sin corchetes directos para evitar cierres por stock vacío
+                    items_in = item.get("items", [])
+                    if items_in:
+                        imgs = items_in[0].get("images", [])
+                        if imgs: 
+                            img_url = imgs[0].get("imageUrl", "")
+                        sellers = items_in[0].get("sellers", [])
+                        if sellers:
+                            oferta = sellers[0].get("commertialOffer", {})
+                            precio = float(oferta.get("Price", 999.0))
+                            
+                    if precio < 999.0:
+                        productos.append({"nombre": f"{marca.upper()} - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
+        except Exception:
+            pass
 
-    # --- COMODÍN GENERAL (PLATANITOS, MIFARMA, ETC) ---
+    # =========================================================
+    # 🧼 BLOQUE MIFARMA (SHAMPOO / CUIDADO PERSONAL)
+    # =========================================================
+    elif "mifarma" in url_clean:
+        api_url = "https://www.mifarma.com.pe/api/catalog_system/pub/products/search"
+        params = {"ft": "shampoo", "_from": 0, "_to": 30, "O": "OrderByPriceASC"}
+        
+        try:
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            if resp.status_code == 200:
+                for item in resp.json():
+                    nombre = item.get("productName", "Mifarma")
+                    link_completo = item.get("link", url)
+                    img_url = ""
+                    precio = 999.0
+                    
+                    items_in = item.get("items", [])
+                    if items_in:
+                        imgs = items_in[0].get("images", [])
+                        if imgs: 
+                            img_url = imgs[0].get("imageUrl", "")
+                        sellers = items_in[0].get("sellers", [])
+                        if sellers:
+                            oferta = sellers[0].get("commertialOffer", {})
+                            precio = float(oferta.get("Price", 999.0))
+                            
+                    if precio < 999.0:
+                        productos.append({"nombre": f"MIFARMA - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
+        except Exception:
+            pass
+
+    # =========================================================
+    # 👟 COMODÍN GENERAL HTML (PLATANITOS, ETC.)
+    # =========================================================
     else:
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -78,8 +128,8 @@ def escanear_tienda(url, limite):
                     a = t.find('a', href=True)
                     img = t.find('img', src=True)
                     productos.append({"nombre": tit.text.strip().upper(), "precio": valores[0], "link": urljoin(url, a['href']) if a else url, "img": img['src'] if img else ""})
-        except Exception as e:
-            print(f"Error General: {e}")
+        except Exception:
+            pass
 
     return productos
 
@@ -98,18 +148,16 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         
         parts = identificador.split("-")
         tienda_txt = parts[0].upper()
-        cat_txt = parts[1].upper() # PERFUMES, ZAPATILLAS, SHAMPOO
+        cat_txt = parts[1].upper() # Saca exacto "PERFUMES" o "ZAPATILLAS"
         talla_txt = parts[3] if len(parts) > 3 else "Todas"
         
-        # MAPEO EXACTO AL BOTÓN
+        # --- MAPEO EXACTO DE BOTONES ---
         grupo_sistema = "OTROS"
         if cat_txt == "ZAPATILLAS": grupo_sistema = "ZAPATILLAS"
         elif cat_txt == "PERFUMES": grupo_sistema = "PERFUMES"
         elif cat_txt == "SHAMPOO": grupo_sistema = "CUIDADO_PERSONAL"
-        elif cat_txt == "TV": grupo_sistema = "TECNOLOGIA"
-        elif cat_txt == "ROPA": grupo_sistema = "ROPA"
 
-        # BLOQUEO: Si el botón tocado no coincide con el grupo del radar, lo salta.
+        # BLOQUEO QUIRÚRGICO: Si el botón tocado no coincide con el grupo del radar, lo salta.
         if filtro_web != "TODOS" and filtro_web != grupo_sistema:
             continue
 
@@ -117,10 +165,12 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         
         if prods:
             for p in prods:
-                # Para Perfumes, guardamos su nombre real para que no se sobreescriban
                 if grupo_sistema == "PERFUMES":
                     nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
                     id_registro_dashboard = f"{tienda_txt}-PERFUMES-{nombre_limpio}-{talla_txt}"
+                elif grupo_sistema == "CUIDADO_PERSONAL":
+                    nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
+                    id_registro_dashboard = f"{tienda_txt}-SHAMPOO-{nombre_limpio}-{talla_txt}"
                 else:
                     id_registro_dashboard = identificador
                 
