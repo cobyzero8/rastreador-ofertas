@@ -19,32 +19,34 @@ except: pass
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def escanear_tienda(url, limite, palabra_clave=""):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
     
-    # --- MÉTODO API UNIVERSAL (MIFARMA/INKAFARMA) ---
     if "mifarma" in url or "inkafarma" in url:
         dom = "mifarma" if "mifarma" in url else "inkafarma"
-        # Extraer keyword de la URL
-        parsed = urlparse(url)
-        q = parse_qs(parsed.query)
-        kw = q.get('keyword', [palabra_clave])[0]
-        
+        # Ajustamos el keyword usando la palabra clave del radar
+        kw = palabra_clave.strip().replace(" ", "%20")
         api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw}&_from=0&_to=20"
+        
         try:
             resp = requests.get(api_url, headers=headers, timeout=15)
-            items = resp.json()
-            for item in items:
-                precio = item["items"][0]["sellers"][0]["commertialOffer"]["Price"]
-                if precio > 0:
-                    productos.append({
-                        "nombre": item["productName"].upper(),
-                        "precio": float(precio),
-                        "link": item["link"],
-                        "img": item["items"][0]["images"][0]["imageUrl"]
-                    })
+            data = resp.json()
+            
+            # --- DIAGNÓSTICO ---
+            if not data:
+                print(f"DEBUG: La API de {dom} devolvió una lista vacía para la palabra '{kw}'.")
+            else:
+                for item in data:
+                    precio = item["items"][0]["sellers"][0]["commertialOffer"]["Price"]
+                    if precio > 0:
+                        productos.append({
+                            "nombre": item["productName"].upper(),
+                            "precio": float(precio),
+                            "link": item["link"],
+                            "img": item["items"][0]["images"][0]["imageUrl"]
+                        })
         except Exception as e:
-            print(f"Error API: {e}")
+            print(f"Error técnico en {dom}: {e}")
             
     return productos
 
