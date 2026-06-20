@@ -10,11 +10,8 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
-CHAT_ID_TELEGRAM = "8019752668"
-
 def obtener_tiendas_dinamicas():
-    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MIFARMA", "INKAFARMA", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "LBEL", "ESIKA", "CYZONE", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
+    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MIFARMA", "INKAFARMA", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
     try:
         res = supabase.table("radares").select("identificador").execute()
         if res.data:
@@ -36,7 +33,7 @@ if "mod_talla" not in st.session_state: st.session_state.mod_talla = ""
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
 # ==========================================
-# 📈 DASHBOARD VISUALIZADOR
+# 📈 DASHBOARD INTERACTIVO
 # ==========================================
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Mi Central de Ofertas Activas")
@@ -88,21 +85,23 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 
                 prod_txt = parts[2] if len(parts) > 2 else "N/A"
                 prod_txt = prod_txt.replace("___", " ").replace("_", " ").strip()
-                
                 talla_txt = parts[3] if len(parts) > 3 else "Todas"
                 talla_txt = talla_txt.replace("_", " ")
                 
                 link_final, tope_final = "#", "S/. 500.00"
                 for id_radar, url_radar in mapa_urls.items():
-                    if tienda_txt in id_radar and (cat_txt in id_radar or "PERFUME" in id_radar or "SHAMPOO" in id_radar):
+                    if tienda_txt in id_radar:
                         link_final = url_radar
                         tope_final = f"S/. {mapa_topes[id_radar]:.2f}"
                         break
                 
+                # REGLA SEMÁNTICA PARA EL BOTÓN WEB
                 grupo_sistema = "OTROS"
-                if "ZAPATILLA" in cat_txt: grupo_sistema = "ZAPATILLAS"
-                elif "PERFUME" in cat_txt: grupo_sistema = "PERFUMES"
-                elif "SHAMPOO" in cat_txt or "CUIDADO" in cat_txt: grupo_sistema = "CUIDADO_PERSONAL"
+                if any(k in cat_txt for k in ["ZAPATILLA", "SNEAKER", "RUNNING", "CALZADO", "ZAPATO"]): grupo_sistema = "ZAPATILLAS"
+                elif any(k in cat_txt for k in ["PERFUME", "FRAGANCIA", "COLONIA"]): grupo_sistema = "PERFUMES"
+                elif any(k in cat_txt for k in ["SHAMPOO", "JABON", "DESODORANTE", "SALUD", "MEDICINA", "CUIDADO", "CUIDADO_PERSONAL"]): grupo_sistema = "CUIDADO_PERSONAL"
+                elif any(k in cat_txt for k in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL", "LAPTOP", "CELULAR", "ELECTRO"]): grupo_sistema = "TECNOLOGIA"
+                elif any(k in cat_txt for k in ["CASACAS", "POLERAS", "POLOS", "BUZOS", "JEANS", "MEDIAS", "ROPA", "ABRIGO", "PANTALON"]): grupo_sistema = "ROPA"
 
                 if st.session_state.categoria_activa == "TODOS" or st.session_state.categoria_activa == grupo_sistema:
                     lista_productos_dashboard.append({
@@ -129,14 +128,14 @@ elif menu == "🛠️ Configurar Radares y URLs":
             tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
             tienda_manual = st.text_input("✍️ Nueva Tienda", "").strip().upper()
             tienda_final = tienda_manual if tienda_manual else tienda_sel
-            categoria_sel = st.selectbox("Categoría Sugerida", ["Zapatillas", "Perfumes", "Shampoo", "Jabon", "Tv", "Ropa", "Otros"])
+            categoria_sel = st.selectbox("Categoría Sugerida", ["Zapatillas", "Perfumes", "Shampoo", "Jabon", "Tv", "Casacas", "Polos", "Abarrotes", "Otros"])
             categoria_manual = st.text_input("✍️ Nueva Categoría", "").strip().upper()
             categoria_final = categoria_manual if categoria_manual else categoria_sel.upper()
         with c2:
             nombre = st.text_input("Nombre descriptivo", value=st.session_state.mod_nombre)
             url = st.text_input("URL completa", value=st.session_state.mod_url)
         with c3:
-            talla = st.text_input("Talla / Volumen", value=st.session_state.mod_talla)
+            talla = st.text_input("Talla / Volumen / Detalle", value=st.session_state.mod_talla)
             precio_max = st.number_input("Precio máximo (S/.)", value=int(st.session_state.mod_precio), min_value=1)
             
         if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
@@ -175,7 +174,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                     st.rerun()
 
 # ==========================================
-# 💥 ESCANEO QUIRÚRGICO (REPORTE ABIERTO)
+# 💥 ESCANEO QUIRÚRGICO
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje Quirúrgico")
