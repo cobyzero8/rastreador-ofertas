@@ -62,6 +62,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
 
     lista_productos_dashboard = []
     try:
+        # Traemos radares para emparejar
         res_r = supabase.table("radares").select("*").execute()
         mapa_urls, mapa_topes = {}, {}
         if res_r.data:
@@ -70,10 +71,17 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 mapa_urls[id_r_upper] = r["url"]
                 mapa_topes[id_r_upper] = r["precio_max"]
 
+        # Traemos historial
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         if res_h.data:
             productos_procesados = set()
             for reg in res_h.data:
+                precio_actual = float(reg.get('precio', 0))
+                
+                # FILTRO ANTI-BASURA: Ignoramos los productos con precio 0.0 (Agotados en tienda)
+                if precio_actual <= 0:
+                    continue
+
                 id_prod = str(reg["identificador"]).strip()
                 id_prod_upper = id_prod.upper()
                 if id_prod_upper in productos_procesados: continue
@@ -81,30 +89,37 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 
                 parts = id_prod.split("-")
                 tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
-                cat_txt = parts[1].upper() if len(parts) > 1 else "OTROS"
+                cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
+                
+                # Limpiamos los guiones bajos extraños de los nombres
                 prod_txt = parts[2] if len(parts) > 2 else "N/A"
+                prod_txt = prod_txt.replace("___", " ").replace("_", " ").strip()
+                
                 talla_txt = parts[3] if len(parts) > 3 else "Todas"
+                talla_txt = talla_txt.replace("_", " ")
                 
                 link_final, tope_final = "#", "S/. 500.00"
                 for id_radar, url_radar in mapa_urls.items():
-                    if tienda_txt in id_radar and (cat_txt in id_radar or "PERFUME" in id_radar or "SHAMPOO" in id_radar):
+                    if tienda_txt in id_radar and cat_txt in id_radar:
                         link_final = url_radar
                         tope_final = f"S/. {mapa_topes[id_radar]:.2f}"
                         break
                 
-                # REGLA EXACTA DE BOTONES:
+                # REGLA FLEXIBLE DE BOTONES: Busca la palabra clave dentro del texto
                 grupo_sistema = "OTROS"
-                if cat_txt == "ZAPATILLAS": grupo_sistema = "ZAPATILLAS"
-                elif cat_txt == "PERFUMES": grupo_sistema = "PERFUMES"
-                elif cat_txt == "SHAMPOO": grupo_sistema = "CUIDADO_PERSONAL"
+                if "ZAPATILLA" in cat_txt: grupo_sistema = "ZAPATILLAS"
+                elif "PERFUME" in cat_txt: grupo_sistema = "PERFUMES"
+                elif "SHAMPOO" in cat_txt or "CUIDADO" in cat_txt: grupo_sistema = "CUIDADO_PERSONAL"
+                elif "TV" in cat_txt or "TECNOLOGIA" in cat_txt: grupo_sistema = "TECNOLOGIA"
+                elif "ROPA" in cat_txt: grupo_sistema = "ROPA"
 
                 if st.session_state.categoria_activa == "TODOS" or st.session_state.categoria_activa == grupo_sistema:
                     lista_productos_dashboard.append({
                         "Tienda": tienda_txt, 
                         "Categoría": cat_txt, 
-                        "Producto": prod_txt.replace("_", " ").title(), 
-                        "Detalle": talla_txt.replace("_", " "), 
-                        "Precio Actual": f"S/. {float(reg.get('precio', 0)):.2f}", 
+                        "Producto": prod_txt.title(), 
+                        "Detalle": talla_txt, 
+                        "Precio Actual": f"S/. {precio_actual:.2f}", 
                         "Tu Tope Límite": tope_final, 
                         "Enlace Compra": link_final
                     })
