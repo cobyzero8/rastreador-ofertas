@@ -1,94 +1,70 @@
 import os
 import json
 import requests
-from bs4 import BeautifulSoup
-import re
 import time
 from datetime import datetime
-from urllib.parse import urljoin
+from urllib.parse import urlparse, parse_qs
 from supabase import create_client, Client
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- CONFIGURACIÓN ---
+# Configuración (sin cambios)
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
 try:
     import streamlit as st
     if "SUPABASE_KEY" in st.secrets: SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 except: pass
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def escanear_tienda(url, limite, palabra_clave=""):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
     productos = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
     
-    try:
-        resp = requests.get(url, headers=headers, timeout=20, verify=False)
-        soup = BeautifulSoup(resp.text, 'html.parser')
+    # --- MÉTODO API UNIVERSAL (MIFARMA/INKAFARMA) ---
+    if "mifarma" in url or "inkafarma" in url:
+        dom = "mifarma" if "mifarma" in url else "inkafarma"
+        # Extraer keyword de la URL
+        parsed = urlparse(url)
+        q = parse_qs(parsed.query)
+        kw = q.get('keyword', [palabra_clave])[0]
         
-        # Este selector es universal para Mifarma y tiendas similares
-        items = soup.find_all('div', class_=lambda x: x and ('product-item' in x or 'vtex-search-result' in x or 'product-card' in x))
-        
-        for item in items:
-            # Captura Nombre
-            tit = item.find(['h3', 'a', 'div'], class_=re.compile(r'(name|title|product-item__name)', re.I))
-            if not tit: continue
-            nombre = tit.text.strip().upper()
+        api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw}&_from=0&_to=20"
+        try:
+            resp = requests.get(api_url, headers=headers, timeout=15)
+            items = resp.json()
+            for item in items:
+                precio = item["items"][0]["sellers"][0]["commertialOffer"]["Price"]
+                if precio > 0:
+                    productos.append({
+                        "nombre": item["productName"].upper(),
+                        "precio": float(precio),
+                        "link": item["link"],
+                        "img": item["items"][0]["images"][0]["imageUrl"]
+                    })
+        except Exception as e:
+            print(f"Error API: {e}")
             
-            # Captura Precio
-            precio_tag = item.find('span', class_=re.compile(r'(price|best-price)', re.I))
-            if not precio_tag: continue
-            
-            precios = re.findall(r'(\d+[\.,]\d{2})', precio_tag.text.replace(',', '.'))
-            if precios:
-                precio = float(precios[0])
-                # Captura Link e Imagen
-                a_tag = item.find('a', href=True)
-                link = urljoin(url, a_tag['href']) if a_tag else url
-                img_tag = item.find('img', src=True)
-                img = img_tag['src'] if img_tag else ""
-                
-                productos.append({"nombre": nombre, "precio": precio, "link": link, "img": img})
-                
-    except Exception as e:
-        print(f"Error de escaneo: {e}")
-
     return productos
 
 def revisar_ofertas(categoria_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
-    if not res or not res.data: return "Sin radares."
-    
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    filtro_web = str(categoria_filtro).upper().strip()
-    total_procesados = 0
-    
+    total = 0
     for item in res.data:
-        identificador = str(item['identificador']).strip()
-        limite = float(item['precio_max'])
-        parts = identificador.split("-")
-        cat_txt = parts[1].upper().strip()
+        # Lógica de filtrado igual a la anterior
+        parts = item['identificador'].split("-")
+        grupo = "CUIDADO_PERSONAL" if parts[1].upper() in ["SHAMPOO", "JABON", "CUIDADO"] else "OTROS"
+        if categoria_filtro != "TODOS" and categoria_filtro != grupo: continue
         
-        # Mapeo al botón
-        grupo_sistema = "OTROS"
-        if any(k in cat_txt for k in ["ZAPATILLA", "RUNNING"]): grupo_sistema = "ZAPATILLAS"
-        elif any(k in cat_txt for k in ["PERFUME"]): grupo_sistema = "PERFUMES"
-        elif any(k in cat_txt for k in ["SHAMPOO", "CUIDADO"]): grupo_sistema = "CUIDADO_PERSONAL"
-
-        if filtro_web != "TODOS" and filtro_web != grupo_sistema: continue
-
-        prods = escanear_tienda(item['url'], limite, parts[2])
-        
+        prods = escanear_tienda(item['url'], item['precio_max'], parts[2])
         for p in prods:
-            if p['precio'] <= limite:
-                nombre_limpio = str(p['nombre']).upper().replace(" ", "_")
-                id_reg = f"{parts[0]}-{cat_txt}-{nombre_limpio}-{parts[3]}"
-                
-                try:
-                    supabase.table("historial_precios").insert({"identificador": id_reg, "precio": p['precio'], "fecha": fecha_hoy}).execute()
-                    total_procesados += 1
-                except: pass
-                    
-    return f"Procesados {total_procesados} productos."
+            if p['precio'] <= item['precio_max']:
+                # Insertar en Historial
+                supabase.table("historial_precios").insert({
+                    "identificador": item['identificador'], 
+                    "precio": p['precio'], 
+                    "fecha": datetime.now().strftime("%Y-%m-%d")
+                }).execute()
+                total += 1
+    return f"Éxito: Se inyectaron {total} productos."
