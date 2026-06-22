@@ -57,7 +57,6 @@ def escanear_tienda(url, limite):
 
     # --- MOTOR 2: COMODÍN MULTI-PÁGINA (ZAPATILLAS, ROPA, TECNOLOGÍA) ---
     else:
-        # El robot patrullará las primeras 3 páginas automáticamente
         for pagina in range(1, 4):
             url_paginada = url
             if "platanitos.com" in url:
@@ -70,8 +69,7 @@ def escanear_tienda(url, limite):
                 
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 items = soup.find_all(['div', 'article', 'li'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid']))
-                
-                if not items: break # Si la página está vacía, detiene el bucle
+                if not items: break
                 
                 for t in items:
                     tit = t.find(['h3', 'h2', 'span', 'p', 'a'], class_=re.compile(r'(title|name|nombre)', re.I))
@@ -88,13 +86,14 @@ def escanear_tienda(url, limite):
                                 "link": urljoin(url, a['href']), 
                                 "img": img['src'] if img else ""
                             })
-                time.sleep(0.5) # Pausa de cortesía entre páginas
+                time.sleep(0.5)
             except:
                 break
 
     return productos
 
-def revisar_ofertas(categoria_filtro="TODOS"):
+# CORRECCIÓN AQUÍ: Ahora la función ya acepta los dos argumentos desde la app
+def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
     if not res or not res.data: return "Sin radares activos."
     
@@ -102,15 +101,20 @@ def revisar_ofertas(categoria_filtro="TODOS"):
     for item in res.data:
         ident = item['identificador'].upper()
         
-        # Mapeo inteligente incluyendo subcategorías de ropa
+        # Mapeo principal
         if "PERFUME" in ident: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
         elif "TECNOLOGIA" in ident or "TV" in ident: grupo = "TECNOLOGIA"
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
-        # Si estamos filtrando en la app y no coincide el grupo principal, saltar
+        # Filtro 1: Categoría Principal
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: continue
+        
+        # Filtro 2: Subcategoría Quirúrgica de Ropa
+        if grupo == "ROPA" and categoria_filtro == "ROPA":
+            if sub_ropa_filtro != "TODOS" and sub_ropa_filtro not in ident:
+                continue
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
