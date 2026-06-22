@@ -71,7 +71,7 @@ def escanear_tienda(url, limite):
                 if not items: break
                 
                 for t in items:
-                    try: # Un try interno para procesar cada polo de forma independiente
+                    try:
                         tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
                         if not tit or len(tit.text.strip()) < 3: continue
                         
@@ -102,13 +102,13 @@ def escanear_tienda(url, limite):
                                 enlace_final = urljoin(url, a_href) if a_href else url
                                 img = t.find('img', src=True)
                                 
-                                if not any(p['link'] == enlace_final for p in productos):
-                                    productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
+                                # Quitamos la restricción estricta de duplicados internos para listar todo
+                                productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
                     except: 
-                        continue # Si una tarjeta falla, ¡avanza con el siguiente polo sin frenar el script!
+                        continue
                 time.sleep(0.3)
             except: 
-                break # Solo rompe si la página entera cae o no responde
+                break
     return productos
 
 def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
@@ -127,30 +127,17 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
-        if categoria_filtro != "TODOS" and categoria_filtro != grupo: continue
+        # --- FILTRO CRÍTICO AQUÍ: Si el radar no coincide con lo seleccionado, SE SALTA DE INMEDIATO ---
+        if categoria_filtro != "TODOS" and categoria_filtro != grupo: 
+            continue
         if grupo == "ROPA" and categoria_filtro == "ROPA":
-            if sub_ropa_filtro != "TODOS" and sub_ropa_filtro not in ident: continue
+            if sub_ropa_filtro != "TODOS" and sub_ropa_filtro not in ident: 
+                continue
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                hist = supabase.table("historial_precios")\
-                    .select("precio")\
-                    .eq("identificador", item['identificador'])\
-                    .order("id", desc=True)\
-                    .limit(1)\
-                    .execute()
-                
-                enviar_alerta = False
-                precio_anterior = None
-                
-                if hist.data:
-                    precio_anterior = float(hist.data[0]["precio"])
-                    if p['precio'] < precio_anterior:
-                        enviar_alerta = True
-                else:
-                    enviar_alerta = True
-                
+                # Guardamos el registro en el historial para tus estadísticas de todas formas
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], 
@@ -159,27 +146,22 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 }).execute()
                 total += 1
                 
-                if enviar_alerta:
-                    emoji = mapa_emojis.get(grupo, "🔥")
-                    text_alerta = f"{emoji} *¡OFERTA EXCLUSIVA DETECTADA!* {emoji}\n"
-                    text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
-                    text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
-                    text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
-                    
-                    if precio_anterior:
-                        ahorro = precio_anterior - p['precio']
-                        text_alerta += f"📉 *Precio Anterior:* ~~S/. {precio_anterior:.2f}~~\n"
-                        text_alerta += f"🔥 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
-                        text_alerta += f"💰 *¡Bajó S/. {ahorro:.2f}!*\n\n"
-                    else:
-                        text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
-                        text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
-                        
-                    text_alerta += f"🚨 _¡Aprovecha antes de que se agote!_"
-                    enviar_telegram(text_alerta, p['link'], p.get('img', ''))
-                    alertas_enviadas += 1
-                    time.sleep(0.4)
+                # --- MODO ALERTA TOTALAbierta ---
+                # Quitamos la validación del precio_anterior para Platanitos. 
+                # Si cumple el precio tope, ¡TE LO MANDA A TELEGRAM DE INMEDIATO!
+                emoji = mapa_emojis.get(grupo, "🔥")
+                text_alerta = f"{emoji} *PRODUCTO DISPONIBLE EN TU RANGO* {emoji}\n"
+                text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
+                text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
+                text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
+                text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
+                text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
+                text_alerta += f"🚨 _¡Revisa si te gusta el modelo!_"
+                
+                enviar_telegram(text_alerta, p['link'], p.get('img', ''))
+                alertas_enviadas += 1
+                time.sleep(0.4)
             except: pass
             
-    return f"Éxito. Productos: {total}. Alertas: {alertas_enviadas}."
+    return f"Éxito. Procesados: {total}. Alertas enviadas: {alertas_enviadas}."
