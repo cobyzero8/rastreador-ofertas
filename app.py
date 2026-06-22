@@ -133,7 +133,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
             talla = st.text_input("Talla / Detalle", "Todas")
             precio_max = st.number_input("Precio máximo (S/.)", value=100, min_value=1)
         
-        if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
+       if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
             mapa_ids = {
                 "Perfumes": "PERFUMES", "Zapatillas": "ZAPATILLAS", "Tecnologia": "TECNOLOGIA",
                 "Ropa (Medias)": "ROPA_MEDIAS", "Ropa (Polos)": "ROPA_POLOS", "Ropa (Casacas/Poleras)": "ROPA_CASACAS",
@@ -143,4 +143,9 @@ elif menu == "🛠️ Configurar Radares y URLs":
             nuevo_id = f"{tienda_sel}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
             
             try:
-                supabase.table("radares").insert({"url": url.
+                # AQUÍ ESTABA EL ERROR (Línea corregida y cerrada correctamente):
+                supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                st.toast("✅ ¡Radar guardado con subcategoría!")
+                st.rerun()
+            except Exception as e: 
+                st.error(f"Error al guardar: {e}")
