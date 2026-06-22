@@ -102,13 +102,4 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 talla_txt = parts[3] if len(parts) > 3 else "Todas"
                 
                 grupo_sistema = "OTROS"
-                if "ZAPATILLA" in cat_txt: grupo_sistema = "ZAPATILLAS"
-                elif "PERFUME" in cat_txt: grupo_sistema = "PERFUMES"
-                elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo_sistema = "TECNOLOGIA"
-                elif "ROPA" in cat_txt: grupo_sistema = "ROPA"
-
-                if grupo_sistema == "ROPA" and st.session_state.categoria_activa == "ROPA":
-                    if st.session_state.sub_ropa_activa != "TODOS" and st.session_state.sub_ropa_activa not in cat_txt:
-                        continue
-
-                if st.session_state.categoria_activa == "TODOS" or st.session_state.
+                if "
