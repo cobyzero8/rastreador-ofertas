@@ -1,5 +1,4 @@
 import os
-import json
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -20,15 +19,11 @@ try:
 except: pass
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def enviar_telegram(mensaje, url_compra, url_foto):
-    # (Mantén tu función de Telegram aquí igual)
-    pass
-
-def escanear_tienda(url, limite, palabra_clave=""):
+def escanear_tienda(url, limite):
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
-
-    # --- MOTOR 1: BELCORP (PERFUMES) ---
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
+    
+    # MOTOR 1: PERFUMES (BELCORP)
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -41,24 +36,7 @@ def escanear_tienda(url, limite, palabra_clave=""):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
 
-    # --- MOTOR 2: PLAZA VEA (FUERZA BRUTA) ---
-    elif "plazavea" in url:
-        try:
-            resp = requests.get(url, headers=headers, timeout=20)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            for a in soup.find_all('a', href=re.compile(r'/p/')):
-                parent = a.find_parent(['div', 'li', 'article'])
-                if not parent: continue
-                nombre = a.text.strip().upper()
-                precio_tag = parent.find(string=re.compile(r'S/\s*\d+'))
-                if nombre and precio_tag:
-                    precio = float(re.sub(r'[^\d.]', '', precio_tag))
-                    if precio <= limite:
-                        img = parent.find('img')
-                        productos.append({"nombre": nombre, "precio": precio, "link": urljoin("https://www.plazavea.com.pe", a['href']), "img": img['src'] if img else ""})
-        except: pass
-
-    # --- MOTOR 3: COMODÍN GENERAL (PLATANITOS, ETC) ---
+    # MOTOR 2: GENERAL (ZAPATILLAS, ROPA, TECNOLOGÍA)
     else:
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -74,16 +52,15 @@ def escanear_tienda(url, limite, palabra_clave=""):
                         img = t.find('img', src=True)
                         productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": urljoin(url, a['href']), "img": img['src'] if img else ""})
         except: pass
-
     return productos
 
 def revisar_ofertas(categoria_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
     total = 0
     for item in res.data:
-        # Lógica de mapeo a botón
         ident = item['identificador'].upper()
-        grupo = "ZAPATILLAS" if "ZAPATILLA" in ident else "PERFUMES" if "PERFUME" in ident else "CUIDADO_PERSONAL" if "SHAMPOO" in ident or "CUIDADO" in ident else "OTROS"
+        # Mapeo simple: Perfumes, Zapatillas, Ropa, Tecnología
+        grupo = "PERFUMES" if "PERFUME" in ident else "ZAPATILLAS" if "ZAPATILLA" in ident else "ROPA" if "ROPA" in ident else "TECNOLOGIA" if "TECNOLOGIA" in ident or "TV" in ident else "OTROS"
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: continue
         
         prods = escanear_tienda(item['url'], item['precio_max'])
@@ -92,4 +69,4 @@ def revisar_ofertas(categoria_filtro="TODOS"):
                 supabase.table("historial_precios").insert({"identificador": item['identificador'], "precio": p['precio'], "fecha": datetime.now().strftime("%Y-%m-%d")}).execute()
                 total += 1
             except: pass
-    return f"Se procesaron {total} productos."
+    return f"Procesados {total} productos."
