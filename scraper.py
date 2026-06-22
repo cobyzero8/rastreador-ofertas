@@ -21,11 +21,9 @@ except: pass
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def enviar_telegram(mensaje, url_compra, url_foto):
-    # Tus credenciales exactas y seguras
     TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
     CHAT_ID_TELEGRAM = "8019752668"
     
-    # Intentamos enviar con foto incorporada y botón interactivo
     url_api = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
     payload = {
         "chat_id": CHAT_ID_TELEGRAM,
@@ -41,7 +39,6 @@ def enviar_telegram(mensaje, url_compra, url_foto):
     
     try:
         r = requests.post(url_api, json=payload, timeout=12, verify=False)
-        # Si falla el envío con foto por formato, usamos plan B de puro texto para no perder la alerta
         if r.status_code != 200:
             url_text = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
             payload_text = {
@@ -70,7 +67,6 @@ def escanear_tienda(url, limite, palabra_clave=""):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
 
-
     # --- MOTOR 3: COMODÍN GENERAL (PLATANITOS, ETC) ---
     else:
         try:
@@ -92,17 +88,27 @@ def escanear_tienda(url, limite, palabra_clave=""):
 
 def revisar_ofertas(categoria_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
+    if not res or not res.data: return "Sin radares activos."
+    
     total = 0
     for item in res.data:
-        # Lógica de mapeo a botón
         ident = item['identificador'].upper()
-        grupo = "ZAPATILLAS" if "ZAPATILLA" in ident else "PERFUMES" if "PERFUME" in ident else "ROPA" if "ROPA" in ident or "CUIDADO" in ident else "OTROS"
+        # Mapeo de categorías ajustado a tus nuevos botones de app.py
+        grupo = "PERFUMES" if "PERFUME" in ident else "ZAPATILLAS" if "ZAPATILLA" in ident else "ROPA" if "ROPA" in ident else "TECNOLOGIA" if "TEC" in ident or "TV" in ident else "OTROS"
+        
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: continue
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
+                # 1. Registro en la base de datos
                 supabase.table("historial_precios").insert({"identificador": item['identificador'], "precio": p['precio'], "fecha": datetime.now().strftime("%Y-%m-%d")}).execute()
                 total += 1
+                
+                # 2. DISPARO AL TELEGRAM (¡La pieza faltante!)
+                msg = f"🔥 *¡OFERTA DETECTADA POR COBY ({grupo})!* 🔥\n━━━━━━━━━━━━━━━━━━━\n\n📦 *Producto:* {p['nombre']}\n💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n🎯 *Tu Límite:* `S/. {item['precio_max']:.2f}`\n\n🚨 _¡Aprovecha la oferta antes que cambie el precio!_"
+                enviar_telegram(msg, p['link'], p.get('img', ''))
+                time.sleep(0.5) # Pausa estratégica para que Telegram no nos marque como Spam
             except: pass
-    return f"Se procesaron {total} productos."
+            
+    return f"Éxito: Se procesaron e inyectaron {total} productos al tablero."
