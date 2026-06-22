@@ -11,15 +11,22 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def obtener_tiendas_dinamicas():
+    # Eliminamos el filtro estricto y dejamos que el código nos diga qué hay realmente
     tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
     try:
+        # Recuperamos todo sin condiciones
         res = supabase.table("radares").select("identificador").execute()
-        if res.data:
+        if res and res.data:
             for item in res.data:
-                tnd = item["identificador"].split("-")[0].upper().strip()
-                if tnd and tnd not in tiendas_base: tiendas_base.append(tnd)
-    except Exception: pass
-    return sorted(tiendas_base)
+                # Extraemos la primera parte del identificador sin importar el formato
+                parts = item["identificador"].split("-")
+                if len(parts) > 0:
+                    tnd = parts[0].upper().strip()
+                    if tnd not in tiendas_base: 
+                        tiendas_base.append(tnd)
+    except Exception as e:
+        st.error(f"Error técnico al leer base de datos: {e}")
+    return sorted(list(set(tiendas_base)))
 
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
 st.sidebar.caption("🚀 _Central de Ofertas Automatizada_")
