@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import re
 import time
 from datetime import datetime
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import urljoin
 from supabase import create_client, Client
 import urllib3
 
@@ -78,7 +78,7 @@ def escanear_tienda(url, limite, palabra_clave=""):
                     if 0 < precio < 999.0:
                         productos.append({"nombre": f"{marca.upper()} - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
         except Exception as e:
-            print(f"Error Belcorp: {e}")
+            pass
 
     # =========================================================
     # 🧼 MOTOR 2: MIFARMA / INKAFARMA - CUIDADO PERSONAL
@@ -86,34 +86,51 @@ def escanear_tienda(url, limite, palabra_clave=""):
     elif "mifarma" in url_clean or "inkafarma" in url_clean:
         dom = "mifarma" if "mifarma" in url_clean else "inkafarma"
         
-        # Estrategia Multi-búsqueda: Intenta con la marca, luego con genéricos
         busquedas = [palabra_clave, "shampoo", "cuidado personal"]
         for kw in busquedas:
-            if not kw: continue
+            # Ignoramos si la palabra es "General" o está vacía
+            if not kw or kw.lower() == "general": continue
             kw_clean = kw.strip().replace(" ", "%20")
-            api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw_clean}&_from=0&_to=20"
             
-            try:
-                resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
-                if resp.status_code in [200, 206]:
-                    data = resp.json()
-                    for item in data:
-                        precio = 999.0
-                        items_in = item.get("items", [])
-                        if items_in and items_in[0].get("sellers"):
-                            precio = float(items_in[0]["sellers"][0].get("commertialOffer", {}).get("Price", 999.0))
+            # Estrategia Doble-Cañón: VTEX IO (Moderno) y Legacy (Antiguo)
+            urls_api = [
+                f"https://www.{dom}.com.pe/api/io/_v/api/intelligent-search/product_search?query={kw_clean}",
+                f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw_clean}&_from=0&_to=20"
+            ]
+            
+            for api_url in urls_api:
+                try:
+                    resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
+                    if resp.status_code in [200, 206]:
+                        data = resp.json()
                         
-                        if 0 < precio < 999.0:
-                            img_url = items_in[0]["images"][0]["imageUrl"] if items_in[0].get("images") else ""
-                            productos.append({
-                                "nombre": f"{dom.upper()} - {item.get('productName', '').upper()}",
-                                "precio": precio,
-                                "link": item.get("link", url),
-                                "img": img_url
-                            })
-                    if productos: break # Si encontró con esta palabra, deja de buscar
-            except Exception as e:
-                continue
+                        # Adaptador para API Moderna (VTEX IO) que devuelve diccionario
+                        if isinstance(data, dict) and "products" in data:
+                            data = data.get("products", [])
+                            
+                        # Si no hay datos, pasa al siguiente enlace
+                        if not isinstance(data, list) or len(data) == 0:
+                            continue
+                            
+                        for item in data:
+                            precio = 999.0
+                            items_in = item.get("items", [])
+                            if items_in and items_in[0].get("sellers"):
+                                offer = items_in[0]["sellers"][0].get("commertialOffer", {})
+                                precio = float(offer.get("Price", 999.0))
+                            
+                            if 0 < precio < 999.0:
+                                img_url = items_in[0]["images"][0]["imageUrl"] if items_in[0].get("images") else ""
+                                productos.append({
+                                    "nombre": f"{dom.upper()} - {item.get('productName', '').upper()}",
+                                    "precio": precio,
+                                    "link": item.get("link", url),
+                                    "img": img_url
+                                })
+                        if productos: break
+                except Exception:
+                    pass
+            if productos: break
 
     # =========================================================
     # 👟 MOTOR 3: COMODÍN HTML (PLATANITOS, ROPA, TV)
@@ -138,8 +155,8 @@ def escanear_tienda(url, limite, palabra_clave=""):
                             "link": urljoin(url, a['href']) if a else url, 
                             "img": img['src'] if img else ""
                         })
-        except Exception as e:
-            print(f"Error HTML: {e}")
+        except Exception:
+            pass
 
     return productos
 
@@ -171,14 +188,12 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         if filtro_web != "TODOS" and filtro_web != grupo_sistema:
             continue
 
-        # Pasamos parts[2] (el nombre) como palabra clave para Mifarma
         prods = escanear_tienda(item['url'], limite, parts[2])
         
         if prods:
             for p in prods:
                 nombre_limpio = str(p['nombre']).upper().replace(" ", "_").replace("-", "_").replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
                 
-                # Normalizamos el identificador final
                 if grupo_sistema == "PERFUMES": id_reg = f"{tienda_txt}-PERFUMES-{nombre_limpio}-{talla_txt}"
                 elif grupo_sistema == "CUIDADO_PERSONAL": id_reg = f"{tienda_txt}-SHAMPOO-{nombre_limpio}-{talla_txt}"
                 else: id_reg = f"{tienda_txt}-{grupo_sistema}-{nombre_limpio}-{talla_txt}"
