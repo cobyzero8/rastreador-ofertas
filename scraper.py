@@ -69,44 +69,46 @@ def escanear_tienda(url, limite):
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element']))
                 if not items: break
+                
                 for t in items:
-                    tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
-                    if not tit or len(tit.text.strip()) < 3: continue
-                    precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                    if precios:
-                        precio = float(precios[0].replace(',', '.'))
-                        if precio <= limite:
-                            a_href = None
-                            enlaces_internos = t.find_all('a', href=True)
-                            
-                            # FILTRO QUIRÚRGICO EXTRA DE ENLACES PARA PLATANITOS
-                            for enlace in enlaces_internos:
-                                href_test = enlace['href'].lower()
-                                # Ignoramos filtros generales y páginas de marca
-                                if any(x in href_test for x in ['cat=', 'brand=', 'filter=', 'javascript', 'productos?']):
-                                    continue
-                                # Damos máxima prioridad a links que lleven la palabra 'detalle' o 'producto'
-                                if 'detalle' in href_test or 'producto' in href_test:
+                    try: # Un try interno para procesar cada polo de forma independiente
+                        tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
+                        if not tit or len(tit.text.strip()) < 3: continue
+                        
+                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                        if precios:
+                            precio = float(precios[0].replace(',', '.'))
+                            if precio <= limite:
+                                a_href = None
+                                enlaces_internos = t.find_all('a', href=True)
+                                
+                                for enlace in enlaces_internos:
+                                    href_test = enlace['href'].lower()
+                                    if any(x in href_test for x in ['cat=', 'brand=', 'filter=', 'javascript', 'productos?']):
+                                        continue
+                                    if 'detalle' in href_test or 'producto' in href_test:
+                                        a_href = enlace['href']
+                                        break
                                     a_href = enlace['href']
-                                    break
-                                a_href = enlace['href']
-                            
-                            if not a_href and enlaces_internos:
-                                a_href = enlaces_internos[0]['href']
-                            if not a_href and t.name == 'a' and t.has_attr('href'):
-                                a_href = t['href']
                                 
-                            # Si sigue saliendo un link general, lo saltamos para no mandar basura
-                            if a_href and 'productos?' in a_href.lower():
-                                continue
+                                if not a_href and enlaces_internos:
+                                    a_href = enlaces_internos[0]['href']
+                                if not a_href and t.name == 'a' and t.has_attr('href'):
+                                    a_href = t['href']
+                                    
+                                if a_href and 'productos?' in a_href.lower():
+                                    continue
+                                    
+                                enlace_final = urljoin(url, a_href) if a_href else url
+                                img = t.find('img', src=True)
                                 
-                            enlace_final = urljoin(url, a_href) if a_href else url
-                            img = t.find('img', src=True)
-                            
-                            if not any(p['link'] == enlace_final for p in productos):
-                                productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
-                time.sleep(0.5)
-            except: break
+                                if not any(p['link'] == enlace_final for p in productos):
+                                    productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
+                    except: 
+                        continue # Si una tarjeta falla, ¡avanza con el siguiente polo sin frenar el script!
+                time.sleep(0.3)
+            except: 
+                break # Solo rompe si la página entera cae o no responde
     return productos
 
 def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
