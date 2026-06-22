@@ -51,7 +51,7 @@ def escanear_tienda(url, limite, palabra_clave=""):
     url_clean = str(url).strip().lower()
 
     # =========================================================
-    # 🧪 MOTOR 1: BELCORP (ESIKA / CYZONE / LBEL) - PERFUMES
+    # 🧪 MOTOR 1: BELCORP (ESIKA / CYZONE / LBEL) - INTACTO
     # =========================================================
     if any(k in url_clean for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url_clean else "lbel" if "lbel" in url_clean else "esika"
@@ -77,63 +77,25 @@ def escanear_tienda(url, limite, palabra_clave=""):
                             
                     if 0 < precio < 999.0:
                         productos.append({"nombre": f"{marca.upper()} - {nombre.upper()}", "precio": precio, "link": link_completo, "img": img_url})
-        except Exception as e:
+        except Exception:
             pass
 
     # =========================================================
-    # 🧼 MOTOR 2: MIFARMA / INKAFARMA - CUIDADO PERSONAL
+    # 🚨 MOTOR 2: MIFARMA - MODO SONDA ESPÍA 🚨
     # =========================================================
     elif "mifarma" in url_clean or "inkafarma" in url_clean:
         dom = "mifarma" if "mifarma" in url_clean else "inkafarma"
         
-        busquedas = [palabra_clave, "shampoo", "cuidado personal"]
-        for kw in busquedas:
-            # Ignoramos si la palabra es "General" o está vacía
-            if not kw or kw.lower() == "general": continue
-            kw_clean = kw.strip().replace(" ", "%20")
-            
-            # Estrategia Doble-Cañón: VTEX IO (Moderno) y Legacy (Antiguo)
-            urls_api = [
-                f"https://www.{dom}.com.pe/api/io/_v/api/intelligent-search/product_search?query={kw_clean}",
-                f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw_clean}&_from=0&_to=20"
-            ]
-            
-            for api_url in urls_api:
-                try:
-                    resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
-                    if resp.status_code in [200, 206]:
-                        data = resp.json()
-                        
-                        # Adaptador para API Moderna (VTEX IO) que devuelve diccionario
-                        if isinstance(data, dict) and "products" in data:
-                            data = data.get("products", [])
-                            
-                        # Si no hay datos, pasa al siguiente enlace
-                        if not isinstance(data, list) or len(data) == 0:
-                            continue
-                            
-                        for item in data:
-                            precio = 999.0
-                            items_in = item.get("items", [])
-                            if items_in and items_in[0].get("sellers"):
-                                offer = items_in[0]["sellers"][0].get("commertialOffer", {})
-                                precio = float(offer.get("Price", 999.0))
-                            
-                            if 0 < precio < 999.0:
-                                img_url = items_in[0]["images"][0]["imageUrl"] if items_in[0].get("images") else ""
-                                productos.append({
-                                    "nombre": f"{dom.upper()} - {item.get('productName', '').upper()}",
-                                    "precio": precio,
-                                    "link": item.get("link", url),
-                                    "img": img_url
-                                })
-                        if productos: break
-                except Exception:
-                    pass
-            if productos: break
+        kw_clean = palabra_clave.strip().replace(" ", "%20") if palabra_clave and palabra_clave.lower() != "general" else "shampoo"
+        api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw_clean}&_from=0&_to=20"
+        
+        resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
+        
+        # BOMBA DE DIAGNÓSTICO: Fuerza a la app a mostrar lo que ocultaba Mifarma
+        raise Exception(f"🔍 RADIOGRAFÍA {dom.upper()}:\nSTATUS CODE: {resp.status_code}\nURL USADA: {api_url}\nRESPUESTA SERVIDOR:\n{resp.text[:300]}")
 
     # =========================================================
-    # 👟 MOTOR 3: COMODÍN HTML (PLATANITOS, ROPA, TV)
+    # 👟 MOTOR 3: COMODÍN HTML (PLATANITOS, ROPA) - INTACTO
     # =========================================================
     else:
         try:
@@ -177,7 +139,6 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         cat_txt = parts[1].upper().strip()
         talla_txt = parts[3] if len(parts) > 3 else "Todas"
         
-        # ENGRANAJE DE MAPEO PARA EL BOTÓN
         grupo_sistema = "OTROS"
         if any(k in cat_txt for k in ["ZAPATILLA", "SNEAKER", "RUNNING", "CALZADO"]): grupo_sistema = "ZAPATILLAS"
         elif any(k in cat_txt for k in ["PERFUME", "FRAGANCIA"]): grupo_sistema = "PERFUMES"
@@ -188,6 +149,7 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         if filtro_web != "TODOS" and filtro_web != grupo_sistema:
             continue
 
+        # El error de la bomba espía subirá directamente a tu pantalla
         prods = escanear_tienda(item['url'], limite, parts[2])
         
         if prods:
