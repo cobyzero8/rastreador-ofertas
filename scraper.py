@@ -21,8 +21,37 @@ except: pass
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def enviar_telegram(mensaje, url_compra, url_foto):
-    # (Mantén tu función de Telegram aquí igual)
-    pass
+    # Tus credenciales exactas y seguras
+    TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
+    CHAT_ID_TELEGRAM = "8019752668"
+    
+    # Intentamos enviar con foto incorporada y botón interactivo
+    url_api = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID_TELEGRAM,
+        "photo": url_foto if url_foto else "https://via.placeholder.com/150",
+        "caption": mensaje,
+        "parse_mode": "Markdown",
+        "reply_markup": json.dumps({
+            "inline_keyboard": [[
+                {"text": "🛒 Comprar Aquí", "url": url_compra}
+            ]]
+        })
+    }
+    
+    try:
+        r = requests.post(url_api, json=payload, timeout=12, verify=False)
+        # Si falla el envío con foto por formato, usamos plan B de puro texto para no perder la alerta
+        if r.status_code != 200:
+            url_text = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
+            payload_text = {
+                "chat_id": CHAT_ID_TELEGRAM,
+                "text": mensaje + f"\n\n🛒 [Ir a la Tienda]({url_compra})",
+                "parse_mode": "Markdown"
+            }
+            requests.post(url_text, json=payload_text, timeout=10, verify=False)
+    except Exception as e:
+        print(f"Error en envío de Telegram: {e}")
 
 def escanear_tienda(url, limite, palabra_clave=""):
     productos = []
