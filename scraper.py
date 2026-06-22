@@ -18,35 +18,36 @@ try:
 except: pass
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ... (mantén tus importaciones y configuraciones igual)
+
 def escanear_tienda(url, limite, palabra_clave=""):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
     productos = []
     
     if "mifarma" in url or "inkafarma" in url:
         dom = "mifarma" if "mifarma" in url else "inkafarma"
-        # Ajustamos el keyword usando la palabra clave del radar
-        kw = palabra_clave.strip().replace(" ", "%20")
-        api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw}&_from=0&_to=20"
+        # INTENTO 1: Buscar por la palabra clave del identificador (ej: HEAD & SHOULDERS)
+        # INTENTO 2: Si eso falla, busca por la categoría (ej: SHAMPOO)
+        busquedas = [palabra_clave, "shampoo", "cuidado personal"]
         
-        try:
-            resp = requests.get(api_url, headers=headers, timeout=15)
-            data = resp.json()
-            
-            # --- DIAGNÓSTICO ---
-            if not data:
-                print(f"DEBUG: La API de {dom} devolvió una lista vacía para la palabra '{kw}'.")
-            else:
-                for item in data:
-                    precio = item["items"][0]["sellers"][0]["commertialOffer"]["Price"]
-                    if precio > 0:
-                        productos.append({
-                            "nombre": item["productName"].upper(),
-                            "precio": float(precio),
-                            "link": item["link"],
-                            "img": item["items"][0]["images"][0]["imageUrl"]
-                        })
-        except Exception as e:
-            print(f"Error técnico en {dom}: {e}")
+        for kw in busquedas:
+            kw_clean = kw.strip().replace(" ", "%20")
+            api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw_clean}&_from=0&_to=20"
+            try:
+                resp = requests.get(api_url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data:
+                        precio = item["items"][0]["sellers"][0]["commertialOffer"]["Price"]
+                        if precio > 0:
+                            productos.append({
+                                "nombre": item["productName"].upper(),
+                                "precio": float(precio),
+                                "link": item["link"],
+                                "img": item["items"][0]["images"][0]["imageUrl"]
+                            })
+                    if productos: break # Si encontramos productos, paramos de buscar
+            except: continue
             
     return productos
 
