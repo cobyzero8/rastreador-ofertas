@@ -76,26 +76,29 @@ def escanear_tienda(url, limite):
                     if precios:
                         precio = float(precios[0].replace(',', '.'))
                         if precio <= limite:
-                            # --- MEJORA AQUÍ: Búsqueda agresiva y específica del link del producto ---
                             a_href = None
-                            
-                            # Intentamos buscar primero un enlace que envuelva la imagen o el título, o que tenga "detalle" o "producto" en la URL
                             enlaces_internos = t.find_all('a', href=True)
+                            
+                            # FILTRO QUIRÚRGICO EXTRA DE ENLACES PARA PLATANITOS
                             for enlace in enlaces_internos:
                                 href_test = enlace['href'].lower()
-                                # Descartamos enlaces que apunten a marcas, filtros o tallas comunes de Platanitos
-                                if any(x in href_test for x in ['cat=', 'brand=', 'filter=', 'javascript', 'talla=']):
+                                # Ignoramos filtros generales y páginas de marca
+                                if any(x in href_test for x in ['cat=', 'brand=', 'filter=', 'javascript', 'productos?']):
                                     continue
+                                # Damos máxima prioridad a links que lleven la palabra 'detalle' o 'producto'
+                                if 'detalle' in href_test or 'producto' in href_test:
+                                    a_href = enlace['href']
+                                    break
                                 a_href = enlace['href']
-                                break
                             
-                            # Si no se halló un link limpio en el bucle, tomamos el primero disponible en la tarjeta
                             if not a_href and enlaces_internos:
                                 a_href = enlaces_internos[0]['href']
-                                
-                            # Si de plano la tarjeta es un enlace directo en sí misma
                             if not a_href and t.name == 'a' and t.has_attr('href'):
                                 a_href = t['href']
+                                
+                            # Si sigue saliendo un link general, lo saltamos para no mandar basura
+                            if a_href and 'productos?' in a_href.lower():
+                                continue
                                 
                             enlace_final = urljoin(url, a_href) if a_href else url
                             img = t.find('img', src=True)
@@ -105,6 +108,7 @@ def escanear_tienda(url, limite):
                 time.sleep(0.5)
             except: break
     return productos
+
 def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
     if not res or not res.data: return "Sin radares activos."
@@ -128,7 +132,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                # Consulta limpia de historial
                 hist = supabase.table("historial_precios")\
                     .select("precio")\
                     .eq("identificador", item['identificador'])\
@@ -146,7 +149,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 else:
                     enviar_alerta = True
                 
-                # REPARADO AQUÍ: Línea compacta e inmune a cortes
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], 
