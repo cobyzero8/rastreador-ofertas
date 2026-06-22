@@ -177,24 +177,21 @@ elif menu == "🛠️ Configurar Radares y URLs":
 # 💥 ESCANEO QUIRÚRGICO
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje Quirúrgico")
-    st.write("### 🚨 Selecciona qué módulo exacto debe patrullar el robot ahora:")
-    
-    f1, f2, f3, f4, f5, f6 = st.columns(6)
-    categoria_a_lanzar = None
-    
-    with f1:
-        if st.button("🚀 Escanear TODO", use_container_width=True, type="primary"): categoria_a_lanzar = "TODOS"
-    with f2:
-        if st.button("👟 Solo Zapatillas", use_container_width=True): categoria_a_lanzar = "ZAPATILLAS"
-    with f3:
-        if st.button("🧪 Solo Perfumes", use_container_width=True): categoria_a_lanzar = "PERFUMES"
-    with f4:
-        if st.button("🧼 Solo Cuidado Pers.", use_container_width=True): categoria_a_lanzar = "CUIDADO_PERSONAL"
-    with f5:
-        if st.button("📺 Solo Tecnología", use_container_width=True): categoria_a_lanzar = "TECNOLOGIA"
-    with f6:
-        if st.button("👕 Solo Ropa", use_container_width=True): categoria_a_lanzar = "ROPA"
+    # ... (mismo encabezado, solo cambia la botonera) ...
+    st.write("### 🗂️ Selecciona qué ofertas deseas inspeccionar:")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.categoria_activa == "PERFUMES" else "secondary"): st.session_state.categoria_activa = "PERFUMES"
+    with c2:
+        if st.button("👟 Zapatillas", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ZAPATILLAS" else "secondary"): st.session_state.categoria_activa = "ZAPATILLAS"
+    with c3:
+        if st.button("👕 Ropa", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ROPA" else "secondary"): st.session_state.categoria_activa = "ROPA"
+    with c4:
+        if st.button("📺 Tecnología", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TECNOLOGIA" else "secondary"): st.session_state.categoria_activa = "TECNOLOGIA"
+    with c5:
+        if st.button("🌐 Todo", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TODOS" else "secondary"): st.session_state.categoria_activa = "TODOS"
+
+# ... (resto de la lógica igual, eliminando las referencias a Cuidado Personal) ...
 
     if categoria_a_lanzar is not None:
         contenedor_mensaje = st.empty()
