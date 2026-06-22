@@ -115,6 +115,9 @@ if menu == "📈 Ver Dashboard / Ofertas":
 # ==========================================
 # 🛠️ GESTIÓN DE RADARES (RECUPERADO Y MEJORADO)
 # ==========================================
+# ==========================================
+# 🛠️ GESTIÓN DE RADARES
+# ==========================================
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
@@ -133,7 +136,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
             talla = st.text_input("Talla / Detalle", "Todas")
             precio_max = st.number_input("Precio máximo (S/.)", value=100, min_value=1)
         
-       if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
+        if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
             mapa_ids = {
                 "Perfumes": "PERFUMES", "Zapatillas": "ZAPATILLAS", "Tecnologia": "TECNOLOGIA",
                 "Ropa (Medias)": "ROPA_MEDIAS", "Ropa (Polos)": "ROPA_POLOS", "Ropa (Casacas/Poleras)": "ROPA_CASACAS",
@@ -143,9 +146,48 @@ elif menu == "🛠️ Configurar Radares y URLs":
             nuevo_id = f"{tienda_sel}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
             
             try:
-                # AQUÍ ESTABA EL ERROR (Línea corregida y cerrada correctamente):
                 supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
                 st.toast("✅ ¡Radar guardado con subcategoría!")
                 st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+
+    # 📋 LISTA DE RADARES ACTIVOS
+    st.write("---")
+    st.subheader("📋 Radares Guardados en la Base de Datos")
+    
+    try:
+        res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
+        if res_radares.data:
+            df_radares = pd.DataFrame(res_radares.data)
+            
+            df_mostrar = df_radares[["id", "identificador", "precio_max", "url"]].copy()
+            df_mostrar.columns = ["ID", "Identificador Único", "Precio Máximo (S/.)", "URL del Radar"]
+            
+            st.data_editor(
+                df_mostrar,
+                column_config={"URL del Radar": st.column_config.LinkColumn("🔗 Ver Enlace Registrado")},
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            st.write("▼ **Zona de Eliminación de Radares:**")
+            col_del1, col_del2 = st.columns([1, 4])
+            with col_del1:
+                id_eliminar = st.number_input("Ingresa el ID a borrar:", min_value=1, step=1)
+            with col_del2:
+                st.write("##")
+                if st.button("🗑️ ELIMINAR RADAR SELECCIONADO", type="secondary"):
+                    try:
+                        supabase.table("radares").delete().eq("id", id_eliminar).execute()
+                        st.success(f"💥 Radar con ID {id_eliminar} eliminado correctamente.")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"No se pudo eliminar: {err}")
+                        
+        else:
+            st.info("No tienes ningún radar guardado todavía en Supabase.")
+    except Exception as e:
+        st.error(f"Error al conectar con la lista de radares: {e}")
             except Exception as e: 
                 st.error(f"Error al guardar: {e}")
