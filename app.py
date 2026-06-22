@@ -125,4 +125,82 @@ elif menu == "🛠️ Configurar Radares y URLs":
         with c1:
             tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
             cat_menu = st.selectbox("Categoría Principal", ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Ropa (Deportivos)", "Tecnologia"])
-        with
+        with c2:
+            nombre = st.text_input("Nombre descriptivo (ej: Casaca_Corta_Viento)")
+            url = st.text_input("URL completa de la Tienda")
+        with c3:
+            talla = st.text_input("Talla / Detalle", "Todas")
+            precio_max = st.number_input("Precio máximo (S/.)", value=100, min_value=1)
+        
+        if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
+            mapa_ids = {
+                "Perfumes": "PERFUMES", "Zapatillas": "ZAPATILLAS", "Tecnologia": "TECNOLOGIA",
+                "Ropa (Medias)": "ROPA_MEDIAS", "Ropa (Polos)": "ROPA_POLOS", "Ropa (Casacas/Poleras)": "ROPA_CASACAS",
+                "Ropa (Shorts)": "ROPA_SHORTS", "Ropa (Buzos)": "ROPA_BUZOS", "Ropa (Deportivos)": "ROPA_DEPORTIVOS"
+            }
+            cat_final = mapa_ids[cat_menu]
+            nuevo_id = f"{tienda_sel}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
+            
+            try:
+                supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                st.toast("✅ ¡Radar guardado con subcategoría!")
+                st.rerun()
+            except Exception as e: st.error(f"Error al guardar: {e}")
+
+    st.write("---")
+    st.subheader("📋 Radares Guardados en la Base de Datos")
+    
+    try:
+        res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
+        if res_radares.data:
+            df_radares = pd.DataFrame(res_radares.data)
+            df_mostrar = df_radares[["id", "identificador", "precio_max", "url"]].copy()
+            df_mostrar.columns = ["ID", "Identificador Único", "Precio Máximo (S/.)", "URL del Radar"]
+            
+            st.data_editor(
+                df_mostrar,
+                column_config={"URL del Radar": st.column_config.LinkColumn("🔗 Ver Enlace Registrado")},
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            st.write("▼ **Zona de Eliminación de Radares:**")
+            col_del1, col_del2 = st.columns([1, 4])
+            with col_del1:
+                id_eliminar = st.number_input("Ingresa el ID a borrar:", min_value=1, step=1)
+            with col_del2:
+                st.write("##")
+                if st.button("🗑️ ELIMINAR RADAR SELECCIONADO", type="secondary"):
+                    try:
+                        supabase.table("radares").delete().eq("id", id_eliminar).execute()
+                        st.success(f"💥 Radar con ID {id_eliminar} eliminado correctamente.")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"No se pudo eliminar: {err}")
+        else:
+            st.info("No tienes ningún radar guardado todavía en Supabase.")
+    except Exception as e:
+        st.error(f"Error al conectar con la lista de radares: {e}")
+
+# ==========================================
+# 💥 ESCANEO QUIRÚRGICO
+# ==========================================
+elif menu == "💥 Forzar Escaneo Intensivo":
+    st.title("💥 Módulo de Patrullaje")
+    botonera()
+    
+    if st.session_state.categoria_activa == "ROPA":
+        sub_botonera_ropa()
+        
+    st.write("---")
+    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
+        contenedor_mensaje = st.empty()
+        sub_info = f" ({st.session_state.sub_ropa_activa})" if st.session_state.categoria_activa == "ROPA" else ""
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón para: **{st.session_state.categoria_activa}**{sub_info}...")
+        
+        try:
+            from scraper import revisar_ofertas
+            msg = revisar_ofertas(st.session_state.categoria_activa, st.session_state.sub_ropa_activa)
+            contenedor_mensaje.success(f"✅ {msg}")
+        except Exception as e:
+            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
