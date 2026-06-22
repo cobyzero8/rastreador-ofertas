@@ -127,7 +127,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
-    categorias_formulario = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Ropa (Deportivos)", "Tecnologia", "Otros"]
+    categorias_formulario = ["PERFUMES", "ZAPATILLAS", "ROPA (MEDIAS)", "ROPA (POLOS)", "ROPA (CASACAS/POLERAS)", "ROPA (SHORTS)", "ROPA (BUZOS)", "ROPA (DEPORTIVOS)", "TECNOLOGIA", "OTROS"]
     
     with st.container(border=True):
         if st.session_state.mod_id is not None:
