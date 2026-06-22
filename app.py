@@ -156,17 +156,25 @@ elif menu == "🛠️ Configurar Radares y URLs":
         with c_btn1:
             texto_boton = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
             if st.button(texto_boton, type="primary", use_container_width=True):
-                if categoria_manual:
-                    cat_final = categoria_manual.replace(" ", "_")
-                else:
-                    mapa_ids = {
-                        "Perfumes": "PERFUMES", "Zapatillas": "ZAPATILLAS", "Tecnologia": "TECNOLOGIA", "Otros": "OTROS",
-                        "Ropa (Medias)": "ROPA_MEDIAS", "Ropa (Polos)": "ROPA_POLOS", "Ropa (Casacas/Poleras)": "ROPA_CASACAS",
-                        "Ropa (Shorts)": "ROPA_SHORTS", "Ropa (Buzos)": "ROPA_BUZOS", "Ropa (Deportivos)": "ROPA_DEPORTIVOS"
-                    }
-                    cat_final = mapa_ids.get(cat_menu, "OTROS")
+            # Si escribió una categoría manual, se usa directamente.
+            if categoria_manual:
+                cat_final = categoria_manual.replace(" ", "_").upper()
+            else:
+                # Limpiamos y estandarizamos la opción elegida para evitar fallos por tildes o espacios
+                cat_limpia = cat_menu.lower()
                 
-                nuevo_id = f"{tienda_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
+                if "medias" in cat_limpia: cat_final = "ROPA_MEDIAS"
+                elif "polos" in cat_limpia: cat_final = "ROPA_POLOS"
+                elif "casacas" in cat_limpia or "poleras" in cat_limpia: cat_final = "ROPA_CASACAS"
+                elif "shorts" in cat_limpia: cat_final = "ROPA_SHORTS"
+                elif "buzos" in cat_limpia: cat_final = "ROPA_BUZOS"
+                elif "deportivos" in cat_limpia: cat_final = "ROPA_DEPORTIVOS"
+                elif "perfume" in cat_limpia: cat_final = "PERFUMES"
+                elif "zapatilla" in cat_limpia: cat_final = "ZAPATILLAS"
+                elif "tecno" in cat_limpia or "tv" in cat_limpia: cat_final = "TECNOLOGIA"
+                else: cat_final = "OTROS"
+            
+            nuevo_id = f"{tienda_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
                 
                 try:
                     if st.session_state.mod_id is not None:
