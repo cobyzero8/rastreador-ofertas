@@ -76,15 +76,35 @@ def escanear_tienda(url, limite):
                     if precios:
                         precio = float(precios[0].replace(',', '.'))
                         if precio <= limite:
-                            a = t if t.name == 'a' and t.has_attr('href') else t.find('a', href=True)
+                            # --- MEJORA AQUÍ: Búsqueda agresiva y específica del link del producto ---
+                            a_href = None
+                            
+                            # Intentamos buscar primero un enlace que envuelva la imagen o el título, o que tenga "detalle" o "producto" en la URL
+                            enlaces_internos = t.find_all('a', href=True)
+                            for enlace in enlaces_internos:
+                                href_test = enlace['href'].lower()
+                                # Descartamos enlaces que apunten a marcas, filtros o tallas comunes de Platanitos
+                                if any(x in href_test for x in ['cat=', 'brand=', 'filter=', 'javascript', 'talla=']):
+                                    continue
+                                a_href = enlace['href']
+                                break
+                            
+                            # Si no se halló un link limpio en el bucle, tomamos el primero disponible en la tarjeta
+                            if not a_href and enlaces_internos:
+                                a_href = enlaces_internos[0]['href']
+                                
+                            # Si de plano la tarjeta es un enlace directo en sí misma
+                            if not a_href and t.name == 'a' and t.has_attr('href'):
+                                a_href = t['href']
+                                
+                            enlace_final = urljoin(url, a_href) if a_href else url
                             img = t.find('img', src=True)
-                            enlace_final = urljoin(url, a['href']) if a else url
+                            
                             if not any(p['link'] == enlace_final for p in productos):
                                 productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
                 time.sleep(0.5)
             except: break
     return productos
-
 def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     res = supabase.table("radares").select("*").execute()
     if not res or not res.data: return "Sin radares activos."
