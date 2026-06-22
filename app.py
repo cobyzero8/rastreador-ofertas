@@ -96,5 +96,171 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 productos_processed.add(id_prod.upper())
                 
                 parts = id_prod.split("-")
-                tienda_txt = parts[0].upper()
-                cat_txt = parts[1].
+                tienda_txt = parts[0].upper() if len(parts) > 0 else "N/A"
+                cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
+                prod_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
+                talla_txt = parts[3] if len(parts) > 3 else "Todas"
+                
+                grupo_sistema = "OTROS"
+                if "ZAPATILLA" in cat_txt: grupo_sistema = "ZAPATILLAS"
+                elif "PERFUME" in cat_txt: grupo_sistema = "PERFUMES"
+                elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo_sistema = "TECNOLOGIA"
+                elif "ROPA" in cat_txt: grupo_sistema = "ROPA"
+
+                if grupo_sistema == "ROPA" and st.session_state.categoria_activa == "ROPA":
+                    if st.session_state.sub_ropa_activa != "TODOS" and st.session_state.sub_ropa_activa not in cat_txt:
+                        continue
+
+                if st.session_state.categoria_activa == "TODOS" or st.session_state.categoria_activa == grupo_sistema:
+                    lista_productos_dashboard.append({
+                        "Tienda": tienda_txt, "Categoría": cat_txt.replace("ROPA_", ""), "Producto": prod_txt, "Detalle": talla_txt, "Precio Actual": f"S/. {precio_actual:.2f}", "Tu Tope": f"S/. {mapa_topes.get(id_prod.upper(), 0):.2f}", "Enlace": mapa_urls.get(id_prod.upper(), "#")
+                    })
+    except Exception as e: st.warning(f"Sincronizando: {e}")
+
+    if lista_productos_dashboard: 
+        st.data_editor(pd.DataFrame(lista_productos_dashboard), column_config={"Enlace": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
+    else: st.info("No hay ofertas registradas en esta selección.")
+
+# ==========================================
+# 🛠️ GESTIÓN DE RADARES (CON ENTRADA MANUAL COMPLETA)
+# ==========================================
+elif menu == "🛠️ Configurar Radares y URLs":
+    st.title("🛠️ Panel de Gestión de Enlaces")
+    lista_tiendas = obtener_tiendas_dinamicas()
+    categorias_formulario = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Ropa (Deportivos)", "Tecnologia", "Otros"]
+    
+    with st.container(border=True):
+        if st.session_state.mod_id is not None:
+            st.markdown("### ✏️ Modificando Radar Activo")
+        else:
+            st.markdown("### 📝 Registrar Nuevo Radar Activo")
+            
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            idx_tnd = lista_tiendas.index(st.session_state.mod_tienda) if st.session_state.mod_tienda in lista_tiendas else 0
+            tienda_sel = st.selectbox("Selecciona Tienda Sugerida", lista_tiendas, index=idx_tnd)
+            tienda_manual = st.text_input("✍️ O escribe una Nueva Tienda", "").strip().upper()
+            tienda_final = tienda_manual if tienda_manual else tienda_sel
+            
+            idx_cat = categorias_formulario.index(st.session_state.mod_cat) if st.session_state.mod_cat in categorias_formulario else 0
+            cat_menu = st.selectbox("Categoría Sugerida", categorias_formulario, index=idx_cat)
+            categoria_manual = st.text_input("✍️ O escribe una Nueva Categoría", "").strip().upper()
+        with c2:
+            nombre = st.text_input("Nombre descriptivo (ej: Casaca_Corta_Viento)", value=st.session_state.mod_nombre)
+            url = st.text_input("URL completa de la Tienda", value=st.session_state.mod_url)
+        with c3:
+            talla = st.text_input("Talla / Volumen / Detalle", value=st.session_state.mod_talla)
+            precio_max = st.number_input("Precio máximo (S/.)", value=int(st.session_state.mod_precio), min_value=1)
+        
+        c_btn1, c_btn2 = st.columns([8, 2])
+        with c_btn1:
+            texto_boton = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
+            if st.button(texto_boton, type="primary", use_container_width=True):
+                if categoria_manual:
+                    cat_final = categoria_manual.replace(" ", "_")
+                else:
+                    mapa_ids = {
+                        "Perfumes": "PERFUMES", "Zapatillas": "ZAPATILLAS", "Tecnologia": "TECNOLOGIA", "Otros": "OTROS",
+                        "Ropa (Medias)": "ROPA_MEDIAS", "Ropa (Polos)": "ROPA_POLOS", "Ropa (Casacas/Poleras)": "ROPA_CASACAS",
+                        "Ropa (Shorts)": "ROPA_SHORTS", "Ropa (Buzos)": "ROPA_BUZOS", "Ropa (Deportivos)": "ROPA_DEPORTIVOS"
+                    }
+                    cat_final = mapa_ids.get(cat_menu, "OTROS")
+                
+                nuevo_id = f"{tienda_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
+                
+                try:
+                    if st.session_state.mod_id is not None:
+                        supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
+                        st.toast("✅ ¡Radar modificado con éxito!")
+                    else:
+                        supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                        st.toast("✅ ¡Radar guardado con éxito!")
+                    
+                    st.session_state.mod_id = None
+                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
+                    st.session_state.mod_precio = 100
+                    st.rerun()
+                except Exception as e: st.error(f"Error al procesar: {e}")
+                
+        with c_btn2:
+            if st.session_state.mod_id is not None:
+                if st.button("❌ Cancelar", use_container_width=True):
+                    st.session_state.mod_id = None
+                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
+                    st.session_state.mod_precio = 100
+                    st.rerun()
+
+    st.write("---")
+    st.markdown("### 📋 Registro Actual de la Base de Datos (Radares Activos)")
+    
+    try:
+        res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
+        if res_radares.data:
+            for index, item in enumerate(res_radares.data):
+                parts = item["identificador"].split("-")
+                tienda_p = parts[0].upper()
+                cat_p = parts[1].upper()
+                nombre_p = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
+                talla_p = parts[3].replace("_", " ") if len(parts) > 3 else "Todas"
+                
+                with st.container(border=True):
+                    col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
+                    
+                    with col_info:
+                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('ROPA_', 'ROPA ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
+                        st.caption(f"🔗 **URL Guardada:** [{item['url']}]({item['url']})")
+                    
+                    with col_mod:
+                        st.write("")
+                        if st.button(f"📝 Modificar", key=f"mod_btn_{item['id']}", use_container_width=True):
+                            st.session_state.mod_id = item["id"]
+                            st.session_state.mod_tienda = tienda_p
+                            
+                            rev_mapa = {
+                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "TECNOLOGIA": "Tecnologia", "OTROS": "Otros",
+                                "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
+                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)", "ROPA_DEPORTIVOS": "Ropa (Deportivos)"
+                            }
+                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
+                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
+                            st.session_state.mod_url = item["url"]
+                            st.session_state.mod_talla = talla_p
+                            st.session_state.mod_precio = item["precio_max"]
+                            st.rerun()
+                    
+                    with col_del:
+                        st.write("")
+                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
+                            try:
+                                supabase.table("radares").delete().eq("id", item["id"]).execute()
+                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
+                                st.rerun()
+                            except Exception as err:
+                                st.error(f"Error: {err}")
+        else:
+            st.info("Aún no hay radares registrados en la base de datos.")
+    except Exception as e:
+        st.error(f"Error al conectar con la lista de radares: {e}")
+
+# ==========================================
+# 💥 ESCANEO QUIRÚRGICO
+# ==========================================
+elif menu == "💥 Forzar Escaneo Intensivo":
+    st.title("💥 Módulo de Patrullaje")
+    botonera()
+    
+    if st.session_state.categoria_activa == "ROPA":
+        sub_botonera_ropa()
+        
+    st.write("---")
+    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
+        contenedor_mensaje = st.empty()
+        sub_info = f" ({st.session_state.sub_ropa_activa})" if st.session_state.categoria_activa == "ROPA" else ""
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón para: **{st.session_state.categoria_activa}**{sub_info}...")
+        
+        try:
+            from scraper import revisar_ofertas
+            msg = revisar_ofertas(st.session_state.categoria_activa, st.session_state.sub_ropa_activa)
+            contenedor_mensaje.success(f"✅ {msg}")
+        except Exception as e:
+            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
