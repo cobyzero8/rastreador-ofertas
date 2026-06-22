@@ -91,8 +91,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     
     total = 0
     alertas_enviadas = 0
-    
-    # Emojis dinámicos según el grupo
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "ROPA": "👕", "OTROS": "📦"}
     
     for item in res.data:
@@ -110,8 +108,7 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                # --- PILAR 2: FILTRO ANTIDUPLICADOS INTELIGENTE ---
-                # Consultamos el último precio histórico que guardamos para este radar específico
+                # Consulta limpia de historial
                 hist = supabase.table("historial_precios")\
                     .select("precio")\
                     .eq("identificador", item['identificador'])\
@@ -124,12 +121,41 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 
                 if hist.data:
                     precio_anterior = float(hist.data[0]["precio"])
-                    # Solo alerta si bajó de precio respecto al último registro conocido
                     if p['precio'] < precio_anterior:
                         enviar_alerta = True
                 else:
-                    # Si no hay registros previos, es un producto nuevo en el radar. ¡Se alerta!
                     enviar_alerta = True
                 
-                # Registramos el precio actual en la base de datos de todas formas para el gráfico/tablero
-                supabase.table("historial_precios
+                # REPARADO AQUÍ: Línea compacta e inmune a cortes
+                fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+                supabase.table("historial_precios").insert({
+                    "identificador": item['identificador'], 
+                    "precio": p['precio'], 
+                    "fecha": fecha_hoy
+                }).execute()
+                total += 1
+                
+                if enviar_alerta:
+                    emoji = mapa_emojis.get(grupo, "🔥")
+                    text_alerta = f"{emoji} *¡OFERTA EXCLUSIVA DETECTADA!* {emoji}\n"
+                    text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
+                    text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
+                    text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
+                    
+                    if precio_anterior:
+                        ahorro = precio_anterior - p['precio']
+                        text_alerta += f"📉 *Precio Anterior:* ~~S/. {precio_anterior:.2f}~~\n"
+                        text_alerta += f"🔥 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
+                        text_alerta += f"💰 *¡Bajó S/. {ahorro:.2f}!*\n\n"
+                    else:
+                        text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
+                        text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
+                        
+                    text_alerta += f"🚨 _¡Aprovecha antes de que se agote!_"
+                    enviar_telegram(text_alerta, p['link'], p.get('img', ''))
+                    alertas_enviadas += 1
+                    time.sleep(0.4)
+            except: pass
+            
+    return f"Éxito. Productos: {total}. Alertas: {alertas_enviadas}."
