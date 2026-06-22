@@ -113,14 +113,14 @@ if menu == "📈 Ver Dashboard / Ofertas":
     else: st.info("No hay ofertas registradas en esta selección.")
 
 # ==========================================
-# 🛠️ GESTIÓN DE RADARES
+# 🛠️ GESTIÓN DE RADARES (DISEÑO MEJORADO ORIGINAL)
 # ==========================================
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
     
     with st.container(border=True):
-        st.subheader("➕ Añadir Nuevo Radar")
+        st.write("### 📝 Registrar o Modificar Radar Activo")
         c1, c2, c3 = st.columns(3)
         with c1:
             tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
@@ -129,7 +129,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
             nombre = st.text_input("Nombre descriptivo (ej: Casaca_Corta_Viento)")
             url = st.text_input("URL completa de la Tienda")
         with c3:
-            talla = st.text_input("Talla / Detalle", "Todas")
+            talla = st.text_input("Talla / Volumen / Detalle", "Todas")
             precio_max = st.number_input("Precio máximo (S/.)", value=100, min_value=1)
         
         if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
@@ -147,38 +147,39 @@ elif menu == "🛠️ Configurar Radares y URLs":
                 st.rerun()
             except Exception as e: st.error(f"Error al guardar: {e}")
 
+    # 📋 SECCIÓN MEJORADA ESTILO ORIGINAL
     st.write("---")
-    st.subheader("📋 Radares Guardados en la Base de Datos")
+    st.markdown("### 📋 Registro Actual de la Base de Datos (Radares Activos)")
     
     try:
         res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
         if res_radares.data:
-            df_radares = pd.DataFrame(res_radares.data)
-            df_mostrar = df_radares[["id", "identificador", "precio_max", "url"]].copy()
-            df_mostrar.columns = ["ID", "Identificador Único", "Precio Máximo (S/.)", "URL del Radar"]
-            
-            st.data_editor(
-                df_mostrar,
-                column_config={"URL del Radar": st.column_config.LinkColumn("🔗 Ver Enlace Registrado")},
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            st.write("▼ **Zona de Eliminación de Radares:**")
-            col_del1, col_del2 = st.columns([1, 4])
-            with col_del1:
-                id_eliminar = st.number_input("Ingresa el ID a borrar:", min_value=1, step=1)
-            with col_del2:
-                st.write("##")
-                if st.button("🗑️ ELIMINAR RADAR SELECCIONADO", type="secondary"):
-                    try:
-                        supabase.table("radares").delete().eq("id", id_eliminar).execute()
-                        st.success(f"💥 Radar con ID {id_eliminar} eliminado correctamente.")
-                        st.rerun()
-                    except Exception as err:
-                        st.error(f"No se pudo eliminar: {err}")
+            for index, item in enumerate(res_radares.data):
+                parts = item["identificador"].split("-")
+                tienda_p = parts[0].upper()
+                cat_p = parts[1].upper().replace("ROPA_", "ROPA ")
+                nombre_p = parts[2].replace("_", " ").title()
+                talla_p = parts[3].replace("_", " ") if len(parts) > 3 else "Todas"
+                
+                # Contenedor visual estilizado para cada radar
+                with st.container(border=True):
+                    col_info, col_btn = st.columns([8, 2])
+                    
+                    with col_info:
+                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
+                        st.caption(f"🔗 **URL Guardada:** [{item['url']}]({item['url']})")
+                    
+                    with col_btn:
+                        st.write("") # Alineación espacial
+                        if st.button(f"🗑️ Eliminar", key=f"del_{item['id']}", use_container_width=True, type="secondary"):
+                            try:
+                                supabase.table("radares").delete().eq("id", item["id"]).execute()
+                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
+                                st.rerun()
+                            except Exception as err:
+                                st.error(f"Error: {err}")
         else:
-            st.info("No tienes ningún radar guardado todavía en Supabase.")
+            st.info("Aún no hay radares registrados en la base de datos.")
     except Exception as e:
         st.error(f"Error al conectar con la lista de radares: {e}")
 
