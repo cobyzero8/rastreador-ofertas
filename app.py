@@ -113,13 +113,15 @@ if menu == "📈 Ver Dashboard / Ofertas":
     else: st.info("No hay ofertas registradas en esta selección.")
 
 # ==========================================
-# 🛠️ GESTIÓN DE RADARES
+# 🛠️ GESTIÓN DE RADARES (RECUPERADO Y MEJORADO)
 # ==========================================
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
     
+    # Formulario para Guardar
     with st.container(border=True):
+        st.subheader("➕ Añadir Nuevo Radar")
         c1, c2, c3 = st.columns(3)
         with c1:
             tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
@@ -141,31 +143,4 @@ elif menu == "🛠️ Configurar Radares y URLs":
             nuevo_id = f"{tienda_sel}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
             
             try:
-                supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
-                st.toast("✅ ¡Radar guardado con subcategoría!")
-                st.rerun()
-            except Exception as e: st.error(f"Error al guardar: {e}")
-
-# ==========================================
-# 💥 ESCANEO QUIRÚRGICO (ACTUALIZADO)
-# ==========================================
-elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje")
-    botonera()
-    
-    if st.session_state.categoria_activa == "ROPA":
-        sub_botonera_ropa()
-        
-    st.write("---")
-    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
-        contenedor_mensaje = st.empty()
-        sub_info = f" ({st.session_state.sub_ropa_activa})" if st.session_state.categoria_activa == "ROPA" else ""
-        contenedor_mensaje.info(f"⏳ Lanzando escuadrón para: **{st.session_state.categoria_activa}**{sub_info}...")
-        
-        try:
-            from scraper import revisar_ofertas
-            # Le pasamos la categoría principal y la subcategoría seleccionada al scraper
-            msg = revisar_ofertas(st.session_state.categoria_activa, st.session_state.sub_ropa_activa)
-            contenedor_mensaje.success(f"✅ {msg}")
-        except Exception as e:
-            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
+                supabase.table("radares").insert({"url": url.
