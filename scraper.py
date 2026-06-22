@@ -23,34 +23,22 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def enviar_telegram(mensaje, url_compra, url_foto):
     TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
     CHAT_ID_TELEGRAM = "8019752668"
-    
     url_api = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
     payload = {
         "chat_id": CHAT_ID_TELEGRAM,
         "photo": url_foto if url_foto else "https://via.placeholder.com/150",
         "caption": mensaje,
         "parse_mode": "Markdown",
-        "reply_markup": json.dumps({
-            "inline_keyboard": [[
-                {"text": "🛒 Comprar Aquí", "url": url_compra}
-            ]]
-        })
+        "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🛒 Comprar Aquí", "url": url_compra}]]})
     }
-    
     try:
         r = requests.post(url_api, json=payload, timeout=12, verify=False)
         if r.status_code != 200:
             url_text = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-            payload_text = {
-                "chat_id": CHAT_ID_TELEGRAM,
-                "text": mensaje + f"\n\n🛒 [Ir a la Tienda]({url_compra})",
-                "parse_mode": "Markdown"
-            }
-            requests.post(url_text, json=payload_text, timeout=10, verify=False)
-    except Exception as e:
-        print(f"Error en envío de Telegram: {e}")
+            requests.post(url_text, json={"chat_id": CHAT_ID_TELEGRAM, "text": mensaje + f"\n\n🛒 [Ir a la Tienda]({url_compra})", "parse_mode": "Markdown"}, timeout=10, verify=False)
+    except: pass
 
-def escanear_tienda(url, limite, palabra_clave=""):
+def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
 
@@ -67,22 +55,42 @@ def escanear_tienda(url, limite, palabra_clave=""):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
 
-    # --- MOTOR 3: COMODÍN GENERAL (PLATANITOS, ETC) ---
+    # --- MOTOR 2: COMODÍN MULTI-PÁGINA (ZAPATILLAS, ROPA, TECNOLOGÍA) ---
     else:
-        try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            for t in soup.find_all(['div', 'article', 'li'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid'])):
-                tit = t.find(['h3', 'h2', 'span', 'p', 'a'], class_=re.compile(r'(title|name|nombre)', re.I))
-                if not tit: continue
-                precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                if precios:
-                    precio = float(precios[0].replace(',', '.'))
-                    if precio <= limite:
-                        a = t.find('a', href=True)
-                        img = t.find('img', src=True)
-                        productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": urljoin(url, a['href']), "img": img['src'] if img else ""})
-        except: pass
+        # El robot patrullará las primeras 3 páginas automáticamente
+        for pagina in range(1, 4):
+            url_paginada = url
+            if "platanitos.com" in url:
+                conector = "&" if "?" in url else "?"
+                url_paginada = f"{url}{conector}page={pagina}"
+            
+            try:
+                resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
+                if resp.status_code not in [200, 206]: break
+                
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                items = soup.find_all(['div', 'article', 'li'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid']))
+                
+                if not items: break # Si la página está vacía, detiene el bucle
+                
+                for t in items:
+                    tit = t.find(['h3', 'h2', 'span', 'p', 'a'], class_=re.compile(r'(title|name|nombre)', re.I))
+                    if not tit: continue
+                    precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                    if precios:
+                        precio = float(precios[0].replace(',', '.'))
+                        if precio <= limite:
+                            a = t.find('a', href=True)
+                            img = t.find('img', src=True)
+                            productos.append({
+                                "nombre": tit.text.strip().upper(), 
+                                "precio": precio, 
+                                "link": urljoin(url, a['href']), 
+                                "img": img['src'] if img else ""
+                            })
+                time.sleep(0.5) # Pausa de cortesía entre páginas
+            except:
+                break
 
     return productos
 
@@ -93,22 +101,26 @@ def revisar_ofertas(categoria_filtro="TODOS"):
     total = 0
     for item in res.data:
         ident = item['identificador'].upper()
-        # Mapeo de categorías ajustado a tus nuevos botones de app.py
-        grupo = "PERFUMES" if "PERFUME" in ident else "ZAPATILLAS" if "ZAPATILLA" in ident else "ROPA" if "ROPA" in ident else "TECNOLOGIA" if "TEC" in ident or "TV" in ident else "OTROS"
         
+        # Mapeo inteligente incluyendo subcategorías de ropa
+        if "PERFUME" in ident: grupo = "PERFUMES"
+        elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
+        elif "TECNOLOGIA" in ident or "TV" in ident: grupo = "TECNOLOGIA"
+        elif "ROPA" in ident: grupo = "ROPA"
+        else: grupo = "OTROS"
+        
+        # Si estamos filtrando en la app y no coincide el grupo principal, saltar
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: continue
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                # 1. Registro en la base de datos
                 supabase.table("historial_precios").insert({"identificador": item['identificador'], "precio": p['precio'], "fecha": datetime.now().strftime("%Y-%m-%d")}).execute()
                 total += 1
                 
-                # 2. DISPARO AL TELEGRAM (¡La pieza faltante!)
-                msg = f"🔥 *¡OFERTA DETECTADA POR COBY ({grupo})!* 🔥\n━━━━━━━━━━━━━━━━━━━\n\n📦 *Producto:* {p['nombre']}\n💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n🎯 *Tu Límite:* `S/. {item['precio_max']:.2f}`\n\n🚨 _¡Aprovecha la oferta antes que cambie el precio!_"
+                msg = f"🔥 *¡OFERTA DETECTADA POR COBY ({grupo})!* 🔥\n━━━━━━━━━━━━━━━━━━━\n\n📦 *Producto:* {p['nombre']}\n💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n🎯 *Tu Límite:* `S/. {item['precio_max']:.2f}`\n"
                 enviar_telegram(msg, p['link'], p.get('img', ''))
-                time.sleep(0.5) # Pausa estratégica para que Telegram no nos marque como Spam
+                time.sleep(0.3)
             except: pass
             
-    return f"Éxito: Se procesaron e inyectaron {total} productos al tablero."
+    return f"Éxito: Se procesaron {total} productos en total."
