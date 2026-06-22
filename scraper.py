@@ -81,21 +81,51 @@ def escanear_tienda(url, limite, palabra_clave=""):
             pass
 
     # =========================================================
-    # 🚨 MOTOR 2: MIFARMA - MODO SONDA ESPÍA 🚨
+    # 🚨 MOTOR 2: MIFARMA / INKAFARMA - INFILTRACIÓN CON SESIÓN
     # =========================================================
     elif "mifarma" in url_clean or "inkafarma" in url_clean:
         dom = "mifarma" if "mifarma" in url_clean else "inkafarma"
         
-        kw_clean = palabra_clave.strip().replace(" ", "%20") if palabra_clave and palabra_clave.lower() != "general" else "shampoo"
-        api_url = f"https://www.{dom}.com.pe/api/catalog_system/pub/products/search?ft={kw_clean}&_from=0&_to=20"
+        # 1. Creamos un navegador virtual (Session) para guardar cookies
+        session = requests.Session()
+        session.headers.update(headers)
         
-        resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
-        
-        # BOMBA DE DIAGNÓSTICO: Fuerza a la app a mostrar lo que ocultaba Mifarma
-        raise Exception(f"🔍 RADIOGRAFÍA {dom.upper()}:\nSTATUS CODE: {resp.status_code}\nURL USADA: {api_url}\nRESPUESTA SERVIDOR:\n{resp.text[:300]}")
+        try:
+            # 2. Entramos a la portada para que el servidor nos valide
+            session.get(f"https://www.{dom}.com.pe/", timeout=10, verify=False)
+            
+            # 3. Con el acceso concedido, atacamos la API moderna
+            kw_clean = palabra_clave.strip().replace(" ", "%20") if palabra_clave and palabra_clave.lower() != "general" else "shampoo"
+            api_url = f"https://www.{dom}.com.pe/api/io/_v/api/intelligent-search/product_search?query={kw_clean}&count=15"
+            
+            resp = session.get(api_url, timeout=15, verify=False)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("products", []) if isinstance(data, dict) else data
+                
+                for item in items:
+                    precio = 999.0
+                    items_in = item.get("items", [])
+                    if items_in and items_in[0].get("sellers"):
+                        offer = items_in[0]["sellers"][0].get("commertialOffer", {})
+                        precio = float(offer.get("Price", 999.0))
+                    
+                    if 0 < precio < 999.0:
+                        img_url = items_in[0]["images"][0]["imageUrl"] if items_in[0].get("images") else ""
+                        # Construimos el enlace final al producto
+                        link_final = f"https://www.{dom}.com.pe/{item.get('linkText', '')}/p"
+                        productos.append({
+                            "nombre": f"{dom.upper()} - {item.get('productName', '').upper()}",
+                            "precio": precio,
+                            "link": link_final,
+                            "img": img_url
+                        })
+        except Exception:
+            pass
 
     # =========================================================
-    # 👟 MOTOR 3: COMODÍN HTML (PLATANITOS, ROPA) - INTACTO
+    # 👟 MOTOR 3: COMODÍN HTML (PLATANITOS, ETC) - INTACTO
     # =========================================================
     else:
         try:
@@ -149,7 +179,6 @@ def revisar_ofertas(categoria_filtro="TODOS"):
         if filtro_web != "TODOS" and filtro_web != grupo_sistema:
             continue
 
-        # El error de la bomba espía subirá directamente a tu pantalla
         prods = escanear_tienda(item['url'], limite, parts[2])
         
         if prods:
