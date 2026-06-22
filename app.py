@@ -4,11 +4,15 @@ import os
 import pandas as pd
 from supabase import create_client, Client
 
-st.set_page_config(page_title="COBY & GEMINI - Sistema Inteligente", layout="wide")
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# PROTECCIÓN DE CONEXIÓN
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error("❌ Error de conexión: No se pudieron cargar los secretos. Revisa el panel de Streamlit.")
+    st.stop() # Esto detiene la app para que no siga intentando leer tablas vacías
 
 def obtener_tiendas_dinamicas():
     # Eliminamos el filtro estricto y dejamos que el código nos diga qué hay realmente
