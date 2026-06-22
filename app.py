@@ -40,7 +40,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
     if "categoria_activa" not in st.session_state: st.session_state.categoria_activa = "TODOS"
 
     st.write("### 🗂️ Selecciona qué ofertas deseas inspeccionar:")
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         if st.button("🌐 Todo Junto", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "TODOS" else "primary"): st.session_state.categoria_activa = "TODOS"
     with c2:
@@ -48,11 +48,11 @@ if menu == "📈 Ver Dashboard / Ofertas":
     with c3:
         if st.button("🧪 Perfumes", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "PERFUMES" else "primary"): st.session_state.categoria_activa = "PERFUMES"
     with c4:
-        if st.button("🧼 Cuidado Personal", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "CUIDADO_PERSONAL" else "primary"): st.session_state.categoria_activa = "CUIDADO_PERSONAL"
+         if st.button("👕 Ropa", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "ROPA" else "primary"): st.session_state.categoria_activa = "ROPA"
     with c5:
         if st.button("📺 Tecnología", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "TECNOLOGIA" else "primary"): st.session_state.categoria_activa = "TECNOLOGIA"
-    with c6:
-        if st.button("👕 Ropa", use_container_width=True, type="secondary" if st.session_state.categoria_activa != "ROPA" else "primary"): st.session_state.categoria_activa = "ROPA"
+    
+      
 
     st.markdown(f"📍 Módulo visualizado actualmente: **{st.session_state.categoria_activa}**")
     st.write("---")
@@ -99,7 +99,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 grupo_sistema = "OTROS"
                 if any(k in cat_txt for k in ["ZAPATILLA", "SNEAKER", "RUNNING", "CALZADO", "ZAPATO"]): grupo_sistema = "ZAPATILLAS"
                 elif any(k in cat_txt for k in ["PERFUME", "FRAGANCIA", "COLONIA"]): grupo_sistema = "PERFUMES"
-                elif any(k in cat_txt for k in ["SHAMPOO", "JABON", "DESODORANTE", "SALUD", "MEDICINA", "CUIDADO", "CUIDADO_PERSONAL"]): grupo_sistema = "CUIDADO_PERSONAL"
                 elif any(k in cat_txt for k in ["TV", "TELEVISOR", "REFRIS", "SAMSUNG", "TECNOLOGIA", "ELECTRONICA", "JBL", "LAPTOP", "CELULAR", "ELECTRO"]): grupo_sistema = "TECNOLOGIA"
                 elif any(k in cat_txt for k in ["CASACAS", "POLERAS", "POLOS", "BUZOS", "JEANS", "MEDIAS", "ROPA", "ABRIGO", "PANTALON"]): grupo_sistema = "ROPA"
 
@@ -128,7 +127,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
             tienda_sel = st.selectbox("Selecciona Tienda", lista_tiendas)
             tienda_manual = st.text_input("✍️ Nueva Tienda", "").strip().upper()
             tienda_final = tienda_manual if tienda_manual else tienda_sel
-            categoria_sel = st.selectbox("Categoría Sugerida", ["Zapatillas", "Perfumes", "Shampoo", "Jabon", "Tv", "Casacas", "Polos", "Abarrotes", "Otros"])
+            categoria_sel = st.selectbox("Categoría Sugerida", ["ZAPATILLAS", "PERFUMES", "TV", "CASACAS", "POLOS", "OTROS"])
             categoria_manual = st.text_input("✍️ Nueva Categoría", "").strip().upper()
             categoria_final = categoria_manual if categoria_manual else categoria_sel.upper()
         with c2:
@@ -183,7 +182,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje Quirúrgico")
     st.write("### 🚨 Selecciona qué módulo exacto debe patrullar el robot ahora:")
     
-    f1, f2, f3, f4, f5, f6 = st.columns(6)
+    f1, f2, f3, f4, f5 = st.columns(5)
     categoria_a_lanzar = None
     
     with f1:
@@ -193,11 +192,11 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     with f3:
         if st.button("🧪 Solo Perfumes", use_container_width=True): categoria_a_lanzar = "PERFUMES"
     with f4:
-        if st.button("🧼 Solo Cuidado Pers.", use_container_width=True): categoria_a_lanzar = "CUIDADO_PERSONAL"
+        if st.button("👕 Solo Ropa", use_container_width=True): categoria_a_lanzar = "ROPA"
     with f5:
         if st.button("📺 Solo Tecnología", use_container_width=True): categoria_a_lanzar = "TECNOLOGIA"
-    with f6:
-        if st.button("👕 Solo Ropa", use_container_width=True): categoria_a_lanzar = "ROPA"
+    
+        
 
     if categoria_a_lanzar is not None:
         contenedor_mensaje = st.empty()
