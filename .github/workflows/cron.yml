@@ -1,31 +1,31 @@
-name: Radar de Ofertas Coby Automático
+name: Patrullero de Ofertas Coby 24/7
 
 on:
   schedule:
-    # 🕒 Configuración de patrullaje intensivo en formato UTC
-    # Corre cada 4 horas todos los días (Equivale a las 02:00, 06:00, 10:00, 14:00, 18:00 y 22:00 hora Perú)
-    - cron: '0 */4 * * *'
-  workflow_dispatch: # Esto te permite también activar la guardia manualmente desde el propio GitHub si quieres
+    # Corre automáticamente cada 6 horas (a las 00:00, 06:00, 12:00 y 18:00)
+    - cron: '0 */6 * * *'
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  run-scraper:
+  cron_scan:
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Clonando Repositorio
+      - name: Descargando Repositorio
         uses: actions/checkout@v3
 
-      - name: 🐍 Configurando Python de Élite
+      - name: Configurando Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: ⚡ Instalar Librerías Requeridas
+      - name: Instalando Librerías Básicas y Streamlit
         run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 supabase pandas plotly streamlit
+          pip install requests beautifulsoup4 supabase urllib3 pandas streamlit st-annotated-text
 
-- name: 🚀 Iniciar Patrullaje de Ofertas Nocturno
+      - name: Ejecutando Patrullaje de Ofertas
         env:
-          SUPABASE_URL: "https://uxornuepdxqlhzizjnhr.supabase.co"
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-        run: python scraper.py
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python -c "import os; from scraper import revisar_ofertas; print(revisar_ofertas('TODOS', 'TODOS'))"
