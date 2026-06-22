@@ -43,6 +43,15 @@ def botonera():
     with c5:
         if st.button("🌐 Todo", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TODOS" else "secondary"): st.session_state.categoria_activa = "TODOS"
 
+def sub_botonera_ropa():
+    st.write("▼ **Filtrar por tipo de prenda:**")
+    sub_cols = st.columns(7)
+    sub_cats = [("Todo Ropa", "TODOS"), ("🧦 Medias", "MEDIAS"), ("👕 Polos", "POLOS"), ("🧥 Casacas/Poleras", "CASACAS"), ("🩳 Shorts", "SHORTS"), ("👖 Buzos", "BUZOS"), ("🏋️‍♂️ Deportivos", "DEPORTIVOS")]
+    for idx, (label, val) in enumerate(sub_cats):
+        if sub_cols[idx].button(label, key=f"sub_{menu}_{val}", use_container_width=True, type="primary" if st.session_state.sub_ropa_activa == val else "secondary"):
+            st.session_state.sub_ropa_activa = val
+            st.rerun()
+
 # ==========================================
 # 📈 DASHBOARD INTERACTIVO
 # ==========================================
@@ -50,15 +59,8 @@ if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Mi Central de Ofertas Activas")
     botonera()
     
-    # 👕 SUB-MENÚ DE ROPA EXCLUSIVO
     if st.session_state.categoria_activa == "ROPA":
-        st.write("▼ **Filtrar por tipo de prenda:**")
-        sub_cols = st.columns(7)
-        sub_cats = [("Todo Ropa", "TODOS"), ("🧦 Medias", "MEDIAS"), ("👕 Polos", "POLOS"), ("🧥 Casacas/Poleras", "CASACAS"), ("🩳 Shorts", "SHORTS"), ("👖 Buzos", "BUZOS"), ("🏋️‍♂️ Deportivos", "DEPORTIVOS")]
-        for idx, (label, val) in enumerate(sub_cats):
-            if sub_cols[idx].button(label, use_container_width=True, type="primary" if st.session_state.sub_ropa_activa == val else "secondary"):
-                st.session_state.sub_ropa_activa = val
-                st.rerun()
+        sub_botonera_ropa()
 
     st.markdown(f"📍 Módulo visualizado actualmente: **{st.session_state.categoria_activa}** {f' > **{st.session_state.sub_ropa_activa}**' if st.session_state.categoria_activa == 'ROPA' else ''}")
     st.write("---")
@@ -96,7 +98,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo_sistema = "TECNOLOGIA"
                 elif "ROPA" in cat_txt: grupo_sistema = "ROPA"
 
-                # FILTRADO INTELIGENTE DE SUB-CATEGORÍAS DE ROPA
                 if grupo_sistema == "ROPA" and st.session_state.categoria_activa == "ROPA":
                     if st.session_state.sub_ropa_activa != "TODOS" and st.session_state.sub_ropa_activa not in cat_txt:
                         continue
@@ -131,7 +132,6 @@ elif menu == "🛠️ Configurar Radares y URLs":
             precio_max = st.number_input("Precio máximo (S/.)", value=100, min_value=1)
         
         if st.button("💾 GUARDAR NUEVO RADAR EN LA NUBE", type="primary", use_container_width=True):
-            # Formateo semántico automático del ID según la subcategoría elegida
             mapa_ids = {
                 "Perfumes": "PERFUMES", "Zapatillas": "ZAPATILLAS", "Tecnologia": "TECNOLOGIA",
                 "Ropa (Medias)": "ROPA_MEDIAS", "Ropa (Polos)": "ROPA_POLOS", "Ropa (Casacas/Poleras)": "ROPA_CASACAS",
@@ -147,12 +147,25 @@ elif menu == "🛠️ Configurar Radares y URLs":
             except Exception as e: st.error(f"Error al guardar: {e}")
 
 # ==========================================
-# 💥 ESCANEO QUIRÚRGICO
+# 💥 ESCANEO QUIRÚRGICO (ACTUALIZADO)
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje")
     botonera()
-    if st.button("🚀 INICIAR BARRIDO", type="primary"):
-        from scraper import revisar_ofertas
-        msg = revisar_ofertas(st.session_state.categoria_activa)
-        st.success(msg)
+    
+    if st.session_state.categoria_activa == "ROPA":
+        sub_botonera_ropa()
+        
+    st.write("---")
+    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
+        contenedor_mensaje = st.empty()
+        sub_info = f" ({st.session_state.sub_ropa_activa})" if st.session_state.categoria_activa == "ROPA" else ""
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón para: **{st.session_state.categoria_activa}**{sub_info}...")
+        
+        try:
+            from scraper import revisar_ofertas
+            # Le pasamos la categoría principal y la subcategoría seleccionada al scraper
+            msg = revisar_ofertas(st.session_state.categoria_activa, st.session_state.sub_ropa_activa)
+            contenedor_mensaje.success(f"✅ {msg}")
+        except Exception as e:
+            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
