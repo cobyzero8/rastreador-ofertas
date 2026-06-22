@@ -41,14 +41,37 @@ def enviar_telegram(mensaje, url_compra, url_foto):
         pass
 
 def escanear_tienda(url, limite, palabra_clave=""):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Connection": "keep-alive"
-    }
     productos = []
-    url_clean = str(url).strip().lower()
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
+    
+    # Motor especializado para Plaza Vea
+    if "plazavea" in url:
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            # Selector robusto que atrapa todas las tarjetas de producto en Plaza Vea
+            items = soup.find_all('div', class_='ProductCard')
+            
+            for item in items:
+                nombre_tag = item.find('a', class_='ProductCard__name')
+                precio_tag = item.find('span', class_='ProductCard__price__now-price')
+                link_tag = item.find('a', class_='ProductCard__link')
+                img_tag = item.find('img')
+                
+                if nombre_tag and precio_tag:
+                    nombre = nombre_tag.text.strip().upper()
+                    # Limpiamos el precio para convertirlo a número
+                    precio = float(re.sub(r'[^\d.]', '', precio_tag.text.replace(',', '.')))
+                    
+                    if precio <= limite:
+                        productos.append({
+                            "nombre": nombre,
+                            "precio": precio,
+                            "link": urljoin("https://www.plazavea.com.pe", link_tag['href']),
+                            "img": img_tag['src'] if img_tag else ""
+                        })
+        except Exception as e:
+            print(f"Error específico Plaza Vea: {e}")
 
     # =========================================================
     # 🧪 MOTOR 1: BELCORP (ESIKA / CYZONE / LBEL) - INTACTO
