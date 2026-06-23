@@ -131,7 +131,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
-    cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Ropa (Deportivos)", "Tecnologia", "Otros"]
+    cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Tecnologia", "Otros"]
     
     with st.container(border=True):
         if st.session_state.mod_id is not None: st.markdown("### ✏️ Modificando Radar")
@@ -166,7 +166,6 @@ elif menu == "🛠️ Configurar Radares y URLs":
                     elif "casacas" in cl or "poleras" in cl: cat_final = "ROPA_CASACAS"
                     elif "shorts" in cl: cat_final = "ROPA_SHORTS"
                     elif "buzos" in cl: cat_final = "ROPA_BUZOS"
-                    elif "deportivos" in cl: cat_final = "ROPA_DEPORTIVOS"
                     elif "perfume" in cl: cat_final = "PERFUMES"
                     elif "zapatilla" in cl: cat_final = "ZAPATILLAS"
                     elif "tecno" in cl or "tv" in cl: cat_final = "TECNOLOGIA"
@@ -218,7 +217,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                             rev_mapa = {
                                 "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "TECNOLOGIA": "Tecnologia", "OTROS": "Otros",
                                 "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
-                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)", "ROPA_DEPORTIVOS": "Ropa (Deportivos)"
+                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)"
                             }
                             st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
                             st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
