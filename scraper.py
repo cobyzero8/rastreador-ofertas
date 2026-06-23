@@ -46,6 +46,9 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
 
+    # =======================================================
+    # MOTOR 1: BELCORP (Perfumes)
+    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -57,6 +60,74 @@ def escanear_tienda(url, limite):
                 if 0 < precio <= limite:
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
+
+    # =======================================================
+    # MOTOR 2: MERCADO LIBRE (¡NUEVO TÁCTICO!)
+    # =======================================================
+    elif "mercadolibre.com" in url:
+        for pagina in range(1, 4):
+            # Formato de paginación de Mercado Libre: _Desde_51, _Desde_101, etc.
+            url_paginada = url
+            if pagina > 1:
+                desde = ((pagina - 1) * 50) + 1
+                if "_Desde_" in url:
+                    url_paginada = re.sub(r'_Desde_\d+', f'_Desde_{desde}', url)
+                else:
+                    # Si la URL base no tiene el parámetro, se lo inyectamos antes de los filtros
+                    if "/_" in url:
+                        url_paginada = url.replace("/_", f"_Desde_{desde}_")
+                    elif "?" in url:
+                        parts = url.split("?")
+                        url_paginada = f"{parts[0]}_Desde_{desde}?{parts[1]}"
+                    else:
+                        url_paginada = f"{url}_Desde_{desde}"
+            try:
+                resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
+                if resp.status_code != 200: break
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                # Buscamos las tarjetas de productos estándar de Mercado Libre
+                items = soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-layout__item|ui-search-result__wrapper)'))
+                if not items: items = soup.find_all('div', class_='ui-search-result')
+                if not items: break
+                
+                for t in items:
+                    try:
+                        tit_el = t.find(['h2', 'h3', 'p'], class_=re.compile(r'(ui-search-item__title|poly-component__title)'))
+                        if not tit_el: continue
+                        
+                        # Extraer precio limpio ignorando centavos flotantes si los hay
+                        precio_contenedor = t.find('span', class_=re.compile(r'(vtex-price|andes-money-amount|poly-price)'))
+                        if not precio_contenedor: continue
+                        
+                        numeros = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_contenedor.text)
+                        if not numeros: 
+                            numeros = re.findall(r'\d+', precio_contenedor.text.replace('.', '').replace(',', ''))
+                        
+                        if numeros:
+                            precio = float(numeros[0].replace(',', '.'))
+                            if precio <= limite:
+                                link_el = t.find('a', href=True)
+                                img_el = t.find('img', src=True)
+                                if not img_el and t.find('img', data_src=True):
+                                    img_final = t.find('img')['data_src']
+                                else:
+                                    img_final = img_el['src'] if img_el else ""
+                                    
+                                if link_el:
+                                    productos.append({
+                                        "nombre": tit_el.text.strip().upper(),
+                                        "precio": precio,
+                                        "link": link_el['href'],
+                                        "img": img_final
+                                    })
+                    except: continue
+                time.sleep(0.3)
+            except: break
+
+    # =======================================================
+    # MOTOR 3: PLATANITOS
+    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -102,13 +173,10 @@ def escanear_tienda(url, limite):
                                 enlace_final = urljoin(url, a_href) if a_href else url
                                 img = t.find('img', src=True)
                                 
-                                # Guardamos todo lo que encontremos en esta página
                                 productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
-                    except: 
-                        continue
+                    except: continue
                 time.sleep(0.3)
-            except: 
-                break
+            except: break
     return productos
 
 def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
@@ -118,9 +186,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     total = 0
     alertas_enviadas = 0
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "ROPA": "👕", "OTROS": "📦"}
-    
-    # --- MEMORIA CORTA DE ESTE ESCANEO ---
-    # Usaremos un conjunto (set) para recordar los nombres de productos que ya mandamos en este clic
     enviados_en_este_clic = set()
     
     for item in res.data:
@@ -141,16 +206,11 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         for p in prods:
             try:
                 nombre_unico = p['nombre'].strip().upper()
-                
-                # --- NUEVO FILTRO ANTIDUPLICADOS INTERNO ---
-                # Si el nombre del polo ya está en nuestra lista de enviados de este clic, lo saltamos
                 if nombre_unico in enviados_en_este_clic:
                     continue
                 
-                # Si es un modelo nuevo en este escaneo, lo agregamos a la memoria para que no se repita
                 enviados_en_este_clic.add(nombre_unico)
                 
-                # Guardamos registro histórico en Supabase
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], 
@@ -159,7 +219,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 }).execute()
                 total += 1
                 
-                # Enviamos el mensaje limpio a Telegram
                 emoji = mapa_emojis.get(grupo, "🔥")
                 text_alerta = f"{emoji} *PRODUCTO DISPONIBLE EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
