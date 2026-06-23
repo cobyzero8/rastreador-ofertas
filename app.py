@@ -35,43 +35,53 @@ if "mod_url" not in st.session_state: st.session_state.mod_url = ""
 if "mod_talla" not in st.session_state: st.session_state.mod_talla = "Todas"
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
-if "categoria_activa" not in st.session_state: st.session_state.categoria_activa = "TODOS"
-if "sub_ropa_activa" not in st.session_state: st.session_state.sub_ropa_activa = "TODOS"
+# Ahora solo necesitamos una sola variable global para saber qué buscar
+if "filtro_activo" not in st.session_state: st.session_state.filtro_activo = "TODOS"
 
-def botonera():
-    c1, c2, c3, c4, c5 = st.columns(5)
+def botonera_independiente():
+    st.write("### 🎛️ Filtro de Selección Directa")
+    
+    # Fila 1: Especialidades generales
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.categoria_activa == "PERFUMES" else "secondary"): 
-            st.session_state.categoria_activa = "PERFUMES"
-            st.session_state.sub_ropa_activa = "TODOS"
+        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.filtro_activa == "PERFUMES" else "secondary"): 
+            st.session_state.filtro_activo = "PERFUMES"
             st.rerun()
     with c2:
-        if st.button("👟 Zapatillas", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ZAPATILLAS" else "secondary"): 
-            st.session_state.categoria_activa = "ZAPATILLAS"
-            st.session_state.sub_ropa_activa = "TODOS"
+        if st.button("👟 Zapatillas", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ZAPATILLAS" else "secondary"): 
+            st.session_state.filtro_activo = "ZAPATILLAS"
             st.rerun()
     with c3:
-        if st.button("👕 Ropa", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ROPA" else "secondary"): 
-            st.session_state.categoria_activa = "ROPA"
+        if st.button("📺 Tecnología", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TECNOLOGIA" else "secondary"): 
+            st.session_state.filtro_activo = "TECNOLOGIA"
             st.rerun()
     with c4:
-        if st.button("📺 Tecnología", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TECNOLOGIA" else "secondary"): 
-            st.session_state.categoria_activa = "TECNOLOGIA"
-            st.session_state.sub_ropa_activa = "TODOS"
-            st.rerun()
-    with c5:
-        if st.button("🌐 Todo", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TODOS" else "secondary"): 
-            st.session_state.categoria_activa = "TODOS"
-            st.session_state.sub_ropa_activa = "TODOS"
+        if st.button("🌐 Ver Todo", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TODOS" else "secondary"): 
+            st.session_state.filtro_activo = "TODOS"
             st.rerun()
 
-def sub_botonera_ropa():
-    st.write("▼ **Filtrar por tipo de prenda:**")
-    sub_cols = st.columns(6)
-    sub_cats = [("Todo Ropa", "TODOS"), ("🧦 Medias", "MEDIAS"), ("👕 Polos", "POLOS"), ("🧥 Casacas/Poleras", "CASACAS"), ("🩳 Shorts", "SHORTS"), ("👖 Buzos", "BUZOS")]
-    for idx, (label, val) in enumerate(sub_cats):
-        if sub_cols[idx].button(label, key=f"sub_{menu}_{val}", use_container_width=True, type="primary" if st.session_state.sub_ropa_activa == val else "secondary"):
-            st.session_state.sub_ropa_activa = val
+    # Fila 2: Desglose textil al mismo nivel
+    st.write("▼ **Categorías de Ropa Directas:**")
+    c5, c6, c7, c8, c9 = st.columns(5)
+    with c5:
+        if st.button("🧦 Medias", use_container_width=True, type="primary" if st.session_state.filtro_activo == "MEDIAS" else "secondary"): 
+            st.session_state.filtro_activo = "MEDIAS"
+            st.rerun()
+    with c6:
+        if st.button("👕 Polos", use_container_width=True, type="primary" if st.session_state.filtro_activo == "POLOS" else "secondary"): 
+            st.session_state.filtro_activo = "POLOS"
+            st.rerun()
+    with c7:
+        if st.button("🧥 Casacas/Poleras", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CASACAS" else "secondary"): 
+            st.session_state.filtro_activo = "CASACAS"
+            st.rerun()
+    with c8:
+        if st.button("🩳 Shorts", use_container_width=True, type="primary" if st.session_state.filtro_activo == "SHORTS" else "secondary"): 
+            st.session_state.filtro_activo = "SHORTS"
+            st.rerun()
+    with c9:
+        if st.button("👖 Buzos", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BUZOS" else "secondary"): 
+            st.session_state.filtro_activo = "BUZOS"
             st.rerun()
 
 # ==========================================
@@ -79,12 +89,11 @@ def sub_botonera_ropa():
 # ==========================================
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Central de Ofertas Activas")
-    botonera()
-    
-    if st.session_state.categoria_activa == "ROPA":
-        sub_botonera_ropa()
+    botonera_independiente()
 
     st.write("---")
+    st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
+    
     lista_dashboard = []
     try:
         res_r = supabase.table("radares").select("*").execute()
@@ -112,21 +121,21 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 prd_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
                 tll_txt = parts[3] if len(parts) > 3 else "Todas"
                 
+                # Clasificador plano para el Dashboard
                 grupo = "OTROS"
                 if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
                 elif "PERFUME" in cat_txt: grupo = "PERFUMES"
                 elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo = "TECNOLOGIA"
-                elif "ROPA" in cat_txt: grupo = "ROPA"
+                elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
+                elif "POLOS" in cat_txt: grupo = "POLOS"
+                elif "CASACAS" in cat_txt: grupo = "CASACAS"
+                elif "SHORTS" in cat_txt: grupo = "SHORTS"
+                elif "BUZOS" in cat_txt: grupo = "BUZOS"
 
-                # Filtro Quirúrgico de Ropa en Dashboard
-                if grupo == "ROPA" and st.session_state.categoria_activa == "ROPA":
-                    if st.session_state.sub_ropa_activa != "TODOS" and st.session_state.sub_ropa_activa not in cat_txt:
-                        continue
-
-                c_activa = st.session_state.categoria_activa
+                f_activo = st.session_state.filtro_activo
                 mostrar = False
-                if c_activa == "TODOS": mostrar = True
-                if c_activa == grupo: mostrar = True
+                if f_activo == "TODOS": mostrar = True
+                if f_activo == grupo: mostrar = True
                 
                 if mostrar:
                     lista_dashboard.append({
@@ -136,7 +145,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
 
     if lista_dashboard: 
         st.data_editor(pd.DataFrame(lista_dashboard), column_config={"Enlace": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
-    else: st.info("No hay ofertas registradas.")
+    else: st.info("No hay ofertas registradas en este rango.")
 
 # ==========================================
 # 🛠️ GESTIÓN DE RADARES
@@ -250,29 +259,23 @@ elif menu == "🛠️ Configurar Radares y URLs":
     except Exception as e: st.error(f"Error al conectar: {e}")
 
 # ==========================================
-# 💥 ESCANEO QUIRÚRGICO (REPARADO)
+# 💥 ESCANEO QUIRÚRGICO (BOTONES PLANOS)
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje")
-    botonera()
-    if st.session_state.categoria_activa == "ROPA": 
-        sub_botonera_ropa()
+    botonera_independiente()
         
     st.write("---")
     if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
         contenedor_mensaje = st.empty()
         
-        # Sincronización estricta de variables antes del disparo
-        categoria_envio = st.session_state.categoria_activa
-        sub_ropa_envio = st.session_state.sub_ropa_activa if categoria_envio == "ROPA" else "TODOS"
-        
-        sub_info_visual = f" ({sub_ropa_envio})" if categoria_envio == "ROPA" else ""
-        contenedor_mensaje.info(f"⏳ Lanzando escuadrón quirúrgico para: **{categoria_envio}**{sub_info_visual}...")
+        target = st.session_state.filtro_activo
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón directo para el objetivo: **{target}**...")
         
         try:
             from scraper import revisar_ofertas
-            # Pasamos los parámetros corregidos para cortar la mezcla de data
-            msg = revisar_ofertas(categoria_envio, sub_ropa_envio)
+            # Ahora enviamos un filtro único y plano al scraper
+            msg = revisar_ofertas(target)
             contenedor_mensaje.success(f"✅ {msg}")
         except Exception as e: 
             contenedor_mensaje.error(f"❌ Error en el motor: {e}")
