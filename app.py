@@ -35,7 +35,6 @@ if "mod_url" not in st.session_state: st.session_state.mod_url = ""
 if "mod_talla" not in st.session_state: st.session_state.mod_talla = "Todas"
 if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 
-# Ahora solo necesitamos una sola variable global para saber qué buscar
 if "filtro_activo" not in st.session_state: st.session_state.filtro_activo = "TODOS"
 
 def botonera_independiente():
@@ -44,7 +43,8 @@ def botonera_independiente():
     # Fila 1: Especialidades generales
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.filtro_activa == "PERFUMES" else "secondary"): 
+        # CORREGIDO AQUÍ: filtro_activo en lugar de filtro_activa
+        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PERFUMES" else "secondary"): 
             st.session_state.filtro_activo = "PERFUMES"
             st.rerun()
     with c2:
@@ -121,7 +121,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 prd_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
                 tll_txt = parts[3] if len(parts) > 3 else "Todas"
                 
-                # Clasificador plano para el Dashboard
                 grupo = "OTROS"
                 if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
                 elif "PERFUME" in cat_txt: grupo = "PERFUMES"
@@ -239,43 +238,4 @@ elif menu == "🛠️ Configurar Radares y URLs":
                             rev_mapa = {
                                 "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "TECNOLOGIA": "Tecnologia", "OTROS": "Otros",
                                 "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
-                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)"
-                            }
-                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
-                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
-                            st.session_state.mod_url = item["url"]
-                            st.session_state.mod_talla = talla_p
-                            st.session_state.mod_precio = item["precio_max"]
-                            st.rerun()
-                    with col_del:
-                        st.write("")
-                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
-                            try:
-                                supabase.table("radares").delete().eq("id", item["id"]).execute()
-                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
-                                st.rerun()
-                            except Exception as err: st.error(f"Error: {err}")
-        else: st.info("No hay radares registrados.")
-    except Exception as e: st.error(f"Error al conectar: {e}")
-
-# ==========================================
-# 💥 ESCANEO QUIRÚRGICO (BOTONES PLANOS)
-# ==========================================
-elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje")
-    botonera_independiente()
-        
-    st.write("---")
-    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
-        contenedor_mensaje = st.empty()
-        
-        target = st.session_state.filtro_activo
-        contenedor_mensaje.info(f"⏳ Lanzando escuadrón directo para el objetivo: **{target}**...")
-        
-        try:
-            from scraper import revisar_ofertas
-            # Ahora enviamos un filtro único y plano al scraper
-            msg = revisar_ofertas(target)
-            contenedor_mensaje.success(f"✅ {msg}")
-        except Exception as e: 
-            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
+                                "ROPA_SHORTS": "Ropa (Short
