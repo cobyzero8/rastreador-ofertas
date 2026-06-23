@@ -41,19 +41,33 @@ if "sub_ropa_activa" not in st.session_state: st.session_state.sub_ropa_activa =
 def botonera():
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.categoria_activa == "PERFUMES" else "secondary"): st.session_state.categoria_activa = "PERFUMES"
+        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.categoria_activa == "PERFUMES" else "secondary"): 
+            st.session_state.categoria_activa = "PERFUMES"
+            st.session_state.sub_ropa_activa = "TODOS"
+            st.rerun()
     with c2:
-        if st.button("👟 Zapatillas", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ZAPATILLAS" else "secondary"): st.session_state.categoria_activa = "ZAPATILLAS"
+        if st.button("👟 Zapatillas", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ZAPATILLAS" else "secondary"): 
+            st.session_state.categoria_activa = "ZAPATILLAS"
+            st.session_state.sub_ropa_activa = "TODOS"
+            st.rerun()
     with c3:
-        if st.button("👕 Ropa", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ROPA" else "secondary"): st.session_state.categoria_activa = "ROPA"
+        if st.button("👕 Ropa", use_container_width=True, type="primary" if st.session_state.categoria_activa == "ROPA" else "secondary"): 
+            st.session_state.categoria_activa = "ROPA"
+            st.rerun()
     with c4:
-        if st.button("📺 Tecnología", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TECNOLOGIA" else "secondary"): st.session_state.categoria_activa = "TECNOLOGIA"
+        if st.button("📺 Tecnología", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TECNOLOGIA" else "secondary"): 
+            st.session_state.categoria_activa = "TECNOLOGIA"
+            st.session_state.sub_ropa_activa = "TODOS"
+            st.rerun()
     with c5:
-        if st.button("🌐 Todo", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TODOS" else "secondary"): st.session_state.categoria_activa = "TODOS"
+        if st.button("🌐 Todo", use_container_width=True, type="primary" if st.session_state.categoria_activa == "TODOS" else "secondary"): 
+            st.session_state.categoria_activa = "TODOS"
+            st.session_state.sub_ropa_activa = "TODOS"
+            st.rerun()
 
 def sub_botonera_ropa():
     st.write("▼ **Filtrar por tipo de prenda:**")
-    sub_cols = st.columns(7)
+    sub_cols = st.columns(6)
     sub_cats = [("Todo Ropa", "TODOS"), ("🧦 Medias", "MEDIAS"), ("👕 Polos", "POLOS"), ("🧥 Casacas/Poleras", "CASACAS"), ("🩳 Shorts", "SHORTS"), ("👖 Buzos", "BUZOS")]
     for idx, (label, val) in enumerate(sub_cats):
         if sub_cols[idx].button(label, key=f"sub_{menu}_{val}", use_container_width=True, type="primary" if st.session_state.sub_ropa_activa == val else "secondary"):
@@ -104,12 +118,11 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo = "TECNOLOGIA"
                 elif "ROPA" in cat_txt: grupo = "ROPA"
 
-                # Filtro Ropa
+                # Filtro Quirúrgico de Ropa en Dashboard
                 if grupo == "ROPA" and st.session_state.categoria_activa == "ROPA":
                     if st.session_state.sub_ropa_activa != "TODOS" and st.session_state.sub_ropa_activa not in cat_txt:
                         continue
 
-                # RESTRUCTURADO AQUÍ (Líneas cortas e independientes para evitar fallos):
                 c_activa = st.session_state.categoria_activa
                 mostrar = False
                 if c_activa == "TODOS": mostrar = True
@@ -237,19 +250,29 @@ elif menu == "🛠️ Configurar Radares y URLs":
     except Exception as e: st.error(f"Error al conectar: {e}")
 
 # ==========================================
-# 💥 ESCANEO QUIRÚRGICO
+# 💥 ESCANEO QUIRÚRGICO (REPARADO)
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje")
     botonera()
-    if st.session_state.categoria_activa == "ROPA": sub_botonera_ropa()
+    if st.session_state.categoria_activa == "ROPA": 
+        sub_botonera_ropa()
+        
     st.write("---")
     if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
         contenedor_mensaje = st.empty()
-        sub_info = f" ({st.session_state.sub_ropa_activa})" if st.session_state.categoria_activa == "ROPA" else ""
-        contenedor_mensaje.info(f"⏳ Lanzando escuadrón para: **{st.session_state.categoria_activa}**{sub_info}...")
+        
+        # Sincronización estricta de variables antes del disparo
+        categoria_envio = st.session_state.categoria_activa
+        sub_ropa_envio = st.session_state.sub_ropa_activa if categoria_envio == "ROPA" else "TODOS"
+        
+        sub_info_visual = f" ({sub_ropa_envio})" if categoria_envio == "ROPA" else ""
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón quirúrgico para: **{categoria_envio}**{sub_info_visual}...")
+        
         try:
             from scraper import revisar_ofertas
-            msg = revisar_ofertas(st.session_state.categoria_activa, st.session_state.sub_ropa_activa)
+            # Pasamos los parámetros corregidos para cortar la mezcla de data
+            msg = revisar_ofertas(categoria_envio, sub_ropa_envio)
             contenedor_mensaje.success(f"✅ {msg}")
-        except Exception as e: contenedor_mensaje.error(f"❌ Error en el motor: {e}")
+        except Exception as e: 
+            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
