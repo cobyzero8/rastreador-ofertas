@@ -62,7 +62,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MERCADO LIBRE (Calibrado)
+    # MOTOR 2: MERCADO LIBRE (Separado y reparado al 100%)
     # =======================================================
     elif "mercadolibre.com" in url:
         for pagina in range(1, 4):
@@ -84,50 +84,52 @@ def escanear_tienda(url, limite):
                 if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Selector universal de tarjetas de Mercado Libre (cubre ropa y calzado)
+                # Buscamos todas las cajas de productos en Mercado Libre
                 items = soup.find_all(['li', 'div', 'article'], class_=re.compile(r'(ui-search-layout__item|ui-search-result|poly-card)'))
                 if not items: break
                 
                 for t in items:
                     try:
-                        # Búsqueda más agresiva del título
-                        tit_el = t.find(['h2', 'h3', 'p', 'a'], class_=re.compile(r'(title|name|nombre)', re.I))
+                        # Buscador directo de títulos en Mercado Libre
+                        tit_el = t.find(class_=re.compile(r'(ui-search-item__title|poly-component__title)'))
+                        if not tit_el: 
+                            tit_el = t.find(['h2', 'h3'])
                         if not tit_el or len(tit_el.text.strip()) < 3: continue
                         
-                        # Captura del precio sin importar la etiqueta interna
-                        precio_contenedor = t.find(class_=re.compile(r'(price|amount|precio)', re.I))
-                        if not precio_contenedor: continue
+                        # Buscador directo del precio en Mercado Libre
+                        precio_el = t.find('span', class_=re.compile(r'(andes-money-amount__fraction|poly-price__current)'))
+                        if not precio_el: 
+                            precio_el = t.find(class_=re.compile(r'price', re.I))
+                        if not precio_el: continue
                         
-                        # Extraer solo números limpios de la zona del precio
-                        numeros = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_contenedor.text)
-                        if not numeros:
-                            numeros = re.findall(r'\d+', precio_contenedor.text.replace('.', '').replace(',', ''))
+                        # Limpieza del precio para convertir a número flotante
+                        precio_texto = precio_el.text.replace('S/', '').replace(' ', '').replace(',', '').strip()
+                        numeros = re.findall(r'\d+', precio_texto)
+                        if not numeros: continue
+                        precio = float(numeros[0])
                         
-                        if numeros:
-                            precio = float(numeros[0].replace(',', '.'))
-                            if precio <= limite:
-                                link_el = t.find('a', href=True)
-                                img_el = t.find('img')
+                        if precio <= limite:
+                            link_el = t.find('a', href=True)
+                            img_el = t.find('img')
+                            
+                            img_final = ""
+                            if img_el:
+                                if img_el.has_attr('data-src'): img_final = img_el['data-src']
+                                elif img_el.has_attr('src'): img_final = img_el['src']
                                 
-                                # Manejo de imágenes diferidas (Lazy load)
-                                img_final = ""
-                                if img_el:
-                                    if img_el.has_attr('data-src'): img_final = img_el['data-src']
-                                    elif img_el.has_attr('src'): img_final = img_el['src']
-                                    
-                                if link_el and link_el['href'].startswith('http'):
-                                    productos.append({
-                                        "nombre": tit_el.text.strip().upper(),
-                                        "precio": precio,
-                                        "link": link_el['href'],
-                                        "img": img_final
-                                    })
+                            if link_el and link_el['href'].startswith('http'):
+                                productos.append({
+                                    "nombre": tit_el.text.strip().upper(),
+                                    "precio": precio,
+                                    "link": link_el['href'],
+                                    "img": img_final
+                                })
                     except: continue
                 time.sleep(0.3)
             except: break
 
     # =======================================================
-    # MOTOR 3: PLATANITOS
+    # MOTOR 3: PLATANITOS (Tu motor original intacto)
     # =======================================================
     else:
         for pagina in range(1, 4):
@@ -197,6 +199,7 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
+        # FILTRO DE CATEGORÍA ESTRICTO
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: 
             continue
         if grupo == "ROPA" and categoria_filtro == "ROPA":
