@@ -62,10 +62,9 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MARATHON (¡NUEVO OBJETIVO!)
+    # MOTOR 2: MARATHON (Corregido para .store y .com)
     # =======================================================
-    elif "marathon.com" in url:
-        # Paginación estándar de Marathon en Perú (?page=1, ?page=2)
+    elif "marathon." in url:
         for pagina in range(1, 4):
             conector = "&" if "?" in url else "?"
             url_paginada = f"{url}{conector}page={pagina}"
@@ -74,44 +73,45 @@ def escanear_tienda(url, limite):
                 if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Selector nativo de tarjetas de producto en Marathon
-                items = soup.select('.product-item, [class*="product-card"], .product-item-info')
+                # Buscador flexible de grillas deportivas de Marathon
+                items = soup.select('.product-item, [class*="product-card"], .product-item-info, .productListing')
+                if not items: 
+                    items = soup.find_all(class_=re.compile(r'(product-item|product-card)', re.I))
                 if not items: break
                 
                 for t in items:
                     try:
-                        # Extraer título del producto
                         tit_el = t.select_one('.product-item-link, [class*="name"], [class*="title"], h2, h3')
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
                         
-                        # Extraer precio (prioriza el precio de oferta actual)
                         precio_el = t.select_one('[data-price-type="finalPrice"] .price, .special-price .price, .price-wrapper .price, .price')
+                        if not precio_el: 
+                            precio_el = t.find(class_=re.compile(r'price', re.I))
                         if not precio_el: continue
                         
-                        # Limpieza del formato de moneda (S/. 120.00 -> 120.00)
                         numeros = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_el.text)
+                        if not numeros:
+                            numeros = re.findall(r'\d+', precio_el.text.replace('.', '').replace(',', ''))
+                        
                         if numeros:
                             precio = float(numeros[0].replace(',', '.'))
-                        else:
-                            continue
-                        
-                        if 0 < precio <= limite:
-                            link_el = t.find('a', href=True)
-                            img_el = t.find('img', class_="product-image-photo")
-                            if not img_el: img_el = t.find('img')
-                            
-                            img_final = ""
-                            if img_el:
-                                img_final = img_el.get('data-src', img_el.get('src', ''))
+                            if 0 < precio <= limite:
+                                link_el = t.find('a', href=True)
+                                img_el = t.find('img')
                                 
-                            if link_el and link_el['href'].startswith('http'):
-                                productos.append({
-                                    "nombre": nombre_prod,
-                                    "precio": precio,
-                                    "link": link_el['href'],
-                                    "img": img_final
-                                })
+                                img_final = ""
+                                if img_el:
+                                    img_final = img_el.get('data-src', img_el.get('src', ''))
+                                    
+                                if link_el:
+                                    enlace_final = urljoin(url, link_el['href'])
+                                    productos.append({
+                                        "nombre": nombre_prod,
+                                        "precio": precio,
+                                        "link": enlace_final,
+                                        "img": img_final
+                                    })
                     except: continue
                 time.sleep(0.3)
             except: break
