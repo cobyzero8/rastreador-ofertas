@@ -62,7 +62,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MERCADO LIBRE (Modo Diagnóstico)
+    # MOTOR 2: MERCADO LIBRE (Selector de amplio espectro)
     # =======================================================
     elif "mercadolibre.com" in url:
         for pagina in range(1, 4):
@@ -79,37 +79,30 @@ def escanear_tienda(url, limite):
                     else: url_paginada = f"{url}_Desde_{desde}"
             try:
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
-                
-                # Reporte en la pantalla si ML nos bloquea la entrada (ej: Error 403 o 503)
-                if resp.status_code != 200:
-                    try: st.warning(f"⚠️ Mercado Libre devolvió código: {resp.status_code} en pág {pagina}")
-                    except: pass
-                    break
-                    
+                if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Captura flexible de tarjetas
-                items = soup.select('.ui-search-layout__item, .ui-search-result, .poly-card')
-                
-                # Reporte si la página web cargó pero vino vacía de productos
+                # Buscamos por las estructuras de bloques de Mercado Libre
+                items = soup.select('.ui-search-layout__item, .ui-search-result, .poly-card, .ui-search-result__wrapper')
                 if not items:
-                    try: st.info(f"🔍 ML cargó pero no detectó tarjetas con los selectores estándar.")
+                    # Alternativa agresiva si ML cambia la grilla
+                    items = soup.find_all(class_=re.compile(r'(layout__item|result__wrapper|poly-card)', re.I))
+                
+                if not items:
+                    try: st.info("🔍 ML cargó pero no detectó tarjetas. Probando rastreo de enlaces directos...")
                     except: pass
                     break
                 
                 for t in items:
                     try:
-                        tit_el = t.select_one('.ui-search-item__title, .poly-component__title, h2, h3')
+                        tit_el = t.select_one('.ui-search-item__title, .poly-component__title, h2, h3, [class*="title"]')
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
                         
-                        # Extraer el texto numérico del precio principal
-                        precio_el = t.select_one('.andes-money-amount__fraction, .poly-price__current .andes-money-amount__fraction')
+                        precio_el = t.select_one('.andes-money-amount__fraction, .poly-price__current .andes-money-amount__fraction, [class*="fraction"]')
                         if precio_el:
-                            precio_limpio = precio_el.text.replace('.', '').replace(',', '').strip()
-                            precio = float(precio_limpio)
+                            precio = float(precio_el.text.replace('.', '').replace(',', '').strip())
                         else:
-                            # Intento de rescate por texto general
                             numeros = re.findall(r'S/\s*(\d+)', t.text)
                             if numeros: precio = float(numeros[0])
                             else: continue
@@ -124,13 +117,9 @@ def escanear_tienda(url, limite):
                                 
                             if link_el and link_el['href'].startswith('http'):
                                 productos.append({"nombre": nombre_prod, "precio": precio, "link": link_el['href'], "img": img_final})
-                    except Exception as e:
-                        continue
-                time.sleep(0.4)
-            except Exception as e:
-                try: st.error(f"❌ Fallo crítico de conexión con ML: {e}")
-                except: pass
-                break
+                    except: continue
+                time.sleep(0.3)
+            except: break
 
     # =======================================================
     # MOTOR 3: PLATANITOS
@@ -199,9 +188,13 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
+        # --- FILTRADO DE CATEGORÍA MATRIZ ---
         if cat_filtro != "TODOS" and cat_filtro != grupo:
             continue
             
+        # --- FILTRADO QUIRÚRGICO DE SUB-PRENDAS DE ROPA ---
+        # Si elegiste una subcategoría específica (ej: POLOS), obligamos a que esté en el identificador.
+        # Si el radar de ropa no tiene la palabra clave, se salta inmediatamente sin escanear.
         if grupo == "ROPA" and cat_filtro == "ROPA":
             if sub_filtro != "TODOS" and sub_filtro not in ident:
                 continue
