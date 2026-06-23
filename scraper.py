@@ -62,90 +62,60 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MERCADO LIBRE (Fuerza Bruta por Enlaces)
+    # MOTOR 2: MARATHON (¡NUEVO OBJETIVO!)
     # =======================================================
-    elif "mercadolibre.com" in url:
+    elif "marathon.com" in url:
+        # Paginación estándar de Marathon en Perú (?page=1, ?page=2)
         for pagina in range(1, 4):
-            url_paginada = url
-            if pagina > 1:
-                desde = ((pagina - 1) * 50) + 1
-                if "_Desde_" in url: url_paginada = re.sub(r'_Desde_\d+', f'_Desde_{desde}', url)
-                else:
-                    if "/_" in url: url_paginada = url.replace("/_", f"_Desde_{desde}_")
-                    elif "?" in url:
-                        parts = url.split("?")
-                        url_paginada = f"{parts[0]}_Desde_{desde}?{parts[1]}"
-                    else: url_paginada = f"{url}_Desde_{desde}"
+            conector = "&" if "?" in url else "?"
+            url_paginada = f"{url}{conector}page={pagina}"
             try:
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
                 if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscamos de forma masiva absolutamente todos los enlaces que apunten a un artículo real
-                enlaces = soup.find_all('a', href=True)
-                enlaces_productos = []
-                for e in enlaces:
-                    href = e['href']
-                    # Filtro clave: Debe ser un link de producto y no repetirse en la lista temporal
-                    if ('articulo.mercadolibre.com.pe' in href or '/p/MPE' in href) and href not in enlaces_productos:
-                        enlaces_productos.append(href)
+                # Selector nativo de tarjetas de producto en Marathon
+                items = soup.select('.product-item, [class*="product-card"], .product-item-info')
+                if not items: break
                 
-                if not enlaces_productos:
-                    continue
-                
-                # Procesamos cada enlace recolectado de forma directa simulando su tarjeta
-                for link in enlaces_productos:
+                for t in items:
                     try:
-                        # Buscamos el contenedor más cercano al enlace para jalar su texto e imagen
-                        ancestro = soup.find('a', href=link)
-                        if not ancestro: continue
+                        # Extraer título del producto
+                        tit_el = t.select_one('.product-item-link, [class*="name"], [class*="title"], h2, h3')
+                        if not tit_el: continue
+                        nombre_prod = tit_el.text.strip().upper()
                         
-                        # Subimos un nivel en el HTML para capturar el texto que rodea a este producto
-                        contenedor_tarjeta = ancestro.find_parent(['div', 'li', 'article'])
-                        texto_bloque = contenedor_tarjeta.text if contenedor_tarjeta else ancestro.text
+                        # Extraer precio (prioriza el precio de oferta actual)
+                        precio_el = t.select_one('[data-price-type="finalPrice"] .price, .special-price .price, .price-wrapper .price, .price')
+                        if not precio_el: continue
                         
-                        # Extracción agresiva de títulos (limpiamos textos raros)
-                        titulo_limpio = "POLO ADIDAS IMPORTADO"
-                        h_tit = contenedor_tarjeta.find(['h2', 'h3', 'p']) if contenedor_tarjeta else None
-                        if h_tit: 
-                            titulo_limpio = h_tit.text.strip().upper()
+                        # Limpieza del formato de moneda (S/. 120.00 -> 120.00)
+                        numeros = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_el.text)
+                        if numeros:
+                            precio = float(numeros[0].replace(',', '.'))
                         else:
-                            # Si no hay cabecera, usamos las palabras clave de la URL del producto
-                            slug = link.split('/')[3].replace('-', ' ').upper()
-                            if len(slug) > 5 and not slug.startswith('MPE'): titulo_limpio = slug
+                            continue
                         
-                        # Captura numérica del precio dentro de este bloque específico
-                        precio = None
-                        if contenedor_tarjeta:
-                            # Buscamos la clase de fracción numérica que usa ML
-                            fraccion = contenedor_tarjeta.select_one('.andes-money-amount__fraction, .poly-price__current .andes-money-amount__fraction')
-                            if fraccion:
-                                precio = float(fraccion.text.replace('.', '').replace(',', '').strip())
-                        
-                        if precio is None:
-                            # Respaldo por expresiones regulares en el texto del bloque
-                            numeros = re.findall(r'(?:S/\s*)(\d+)', texto_bloque)
-                            if numeros: precio = float(numeros[0])
-                            else: continue
-                        
-                        # Filtro por precio máximo
                         if 0 < precio <= limite:
-                            img_src = ""
-                            if contenedor_tarjeta:
-                                img_el = contenedor_tarjeta.find('img')
-                                if img_el:
-                                    img_src = img_el.get('data-src', img_el.get('src', ''))
+                            link_el = t.find('a', href=True)
+                            img_el = t.find('img', class_="product-image-photo")
+                            if not img_el: img_el = t.find('img')
                             
-                            productos.append({
-                                "nombre": titulo_limpio,
-                                "precio": precio,
-                                "link": link,
-                                "img": img_src
-                            })
+                            img_final = ""
+                            if img_el:
+                                img_final = img_el.get('data-src', img_el.get('src', ''))
+                                
+                            if link_el and link_el['href'].startswith('http'):
+                                productos.append({
+                                    "nombre": nombre_prod,
+                                    "precio": precio,
+                                    "link": link_el['href'],
+                                    "img": img_final
+                                })
                     except: continue
                 time.sleep(0.3)
             except: break
-            
+
     # =======================================================
     # MOTOR 3: PLATANITOS
     # =======================================================
