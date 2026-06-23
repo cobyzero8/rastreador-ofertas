@@ -46,9 +46,6 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
-    # =======================================================
-    # MOTOR 1: BELCORP
-    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -61,16 +58,12 @@ def escanear_tienda(url, limite):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
 
-    # =======================================================
-    # MOTOR 2: MERCADO LIBRE (Selector de amplio espectro)
-    # =======================================================
     elif "mercadolibre.com" in url:
         for pagina in range(1, 4):
             url_paginada = url
             if pagina > 1:
                 desde = ((pagina - 1) * 50) + 1
-                if "_Desde_" in url:
-                    url_paginada = re.sub(r'_Desde_\d+', f'_Desde_{desde}', url)
+                if "_Desde_" in url: url_paginada = re.sub(r'_Desde_\d+', f'_Desde_{desde}', url)
                 else:
                     if "/_" in url: url_paginada = url.replace("/_", f"_Desde_{desde}_")
                     elif "?" in url:
@@ -82,16 +75,10 @@ def escanear_tienda(url, limite):
                 if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscamos por las estructuras de bloques de Mercado Libre
-                items = soup.select('.ui-search-layout__item, .ui-search-result, .poly-card, .ui-search-result__wrapper')
+                # Extractor de amplio espectro para Mercado Libre
+                items = soup.select('.ui-search-layout__item, .ui-search-result, .poly-card, [class*="search-result"]')
                 if not items:
-                    # Alternativa agresiva si ML cambia la grilla
                     items = soup.find_all(class_=re.compile(r'(layout__item|result__wrapper|poly-card)', re.I))
-                
-                if not items:
-                    try: st.info("🔍 ML cargó pero no detectó tarjetas. Probando rastreo de enlaces directos...")
-                    except: pass
-                    break
                 
                 for t in items:
                     try:
@@ -120,10 +107,6 @@ def escanear_tienda(url, limite):
                     except: continue
                 time.sleep(0.3)
             except: break
-
-    # =======================================================
-    # MOTOR 3: PLATANITOS
-    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -168,36 +151,34 @@ def escanear_tienda(url, limite):
             except: break
     return productos
 
-def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
+def revisar_ofertas(filtro_objetivo="TODOS"):
     res = supabase.table("radares").select("*").execute()
     if not res or not res.data: return "Sin radares activos."
     
     total = 0
     alertas_enviadas = 0
-    mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "ROPA": "👕", "OTROS": "📦"}
+    mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "OTROS": "📦"}
     enviados_en_este_clic = set()
     
-    cat_filtro = str(categoria_filtro).strip().upper()
-    sub_filtro = str(sub_ropa_filtro).strip().upper()
+    target = str(filtro_objetivo).strip().upper()
     
     for item in res.data:
         ident = item['identificador'].upper()
+        
+        # Mapeo directo y plano según la etiqueta del radar
         if "PERFUME" in ident: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
         elif "TECNOLOGIA" in ident or "TV" in ident: grupo = "TECNOLOGIA"
-        elif "ROPA" in ident: grupo = "ROPA"
+        elif "MEDIAS" in ident: grupo = "MEDIAS"
+        elif "POLOS" in ident: grupo = "POLOS"
+        elif "CASACAS" in ident: grupo = "CASACAS"
+        elif "SHORTS" in ident: grupo = "SHORTS"
+        elif "BUZOS" in ident: grupo = "BUZOS"
         else: grupo = "OTROS"
         
-        # --- FILTRADO DE CATEGORÍA MATRIZ ---
-        if cat_filtro != "TODOS" and cat_filtro != grupo:
+        # FILTRO ULTRA-ESTRICTO: Si no coincide con el botón presionado, se aborta el radar al instante
+        if target != "TODOS" and target != grupo:
             continue
-            
-        # --- FILTRADO QUIRÚRGICO DE SUB-PRENDAS DE ROPA ---
-        # Si elegiste una subcategoría específica (ej: POLOS), obligamos a que esté en el identificador.
-        # Si el radar de ropa no tiene la palabra clave, se salta inmediatamente sin escanear.
-        if grupo == "ROPA" and cat_filtro == "ROPA":
-            if sub_filtro != "TODOS" and sub_filtro not in ident:
-                continue
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
