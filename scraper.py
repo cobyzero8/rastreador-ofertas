@@ -44,7 +44,23 @@ def enviar_telegram(mensaje, url_compra, url_foto):
 
 def escanear_tienda(url, limite):
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
+    
+    # --- CAMUFLAJE DE NAVEGADOR AVANZADO ---
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1"
+    }
 
     # =======================================================
     # MOTOR 1: BELCORP
@@ -54,7 +70,7 @@ def escanear_tienda(url, limite):
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         try:
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            resp = requests.get(api_url, headers={"User-Agent": headers["User-Agent"]}, params=params, timeout=15, verify=False)
             for item in resp.json():
                 precio = float(item["items"][0]["sellers"][0]["commertialOffer"]["Price"])
                 if 0 < precio <= limite:
@@ -62,17 +78,19 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MARATHON (Modo Diagnóstico Quirúrgico)
+    # MOTOR 2: MARATHON (Con Camuflaje)
     # =======================================================
     elif "marathon." in url:
         for pagina in range(1, 4):
             conector = "&" if "?" in url else "?"
             url_paginada = f"{url}{conector}page={pagina}"
             try:
+                # Inyectamos el referer dinámico para simular navegación orgánica
+                headers["Referer"] = url
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
                 
                 if resp.status_code != 200:
-                    try: st.warning(f"⚠️ Marathon denegó acceso con código: {resp.status_code}")
+                    try: st.warning(f"⚠️ Marathon denegó acceso con código: {resp.status_code} en pág {pagina}")
                     except: pass
                     break
                     
@@ -80,10 +98,8 @@ def escanear_tienda(url, limite):
                 items = soup.select('.product-item, [class*="product-card"], .product-item-info, .productListing')
                 
                 if not items:
-                    # Imprimimos chisme en Streamlit para saber qué está respondiendo la web real
-                    try: st.info(f"🔎 Marathon cargó (200 OK) pero el HTML vino sin estructura de productos. Longitud HTML: {len(resp.text)} caracteres.")
-                    except: pass
-                    break
+                    items = soup.find_all(class_=re.compile(r'(product-item|product-card)', re.I))
+                if not items: break
                 
                 for t in items:
                     try:
@@ -110,7 +126,7 @@ def escanear_tienda(url, limite):
                                         "nombre": nombre_prod, "precio": precio, "link": urljoin(url, link_el['href']), "img": img_final
                                     })
                     except: continue
-                time.sleep(0.3)
+                time.sleep(0.5)
             except Exception as err:
                 try: st.error(f"❌ Error de red en Marathon: {err}")
                 except: pass
@@ -126,7 +142,7 @@ def escanear_tienda(url, limite):
                 conector = "&" if "?" in url else "?"
                 url_paginada = f"{url}{conector}page={pagina}"
             try:
-                resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
+                resp = requests.get(url_paginada, headers={"User-Agent": headers["User-Agent"]}, timeout=15, verify=False)
                 if resp.status_code not in [200, 206]: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element']))
@@ -209,7 +225,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 text_alerta = f"{emoji} *PRODUCTO DISPONIBLE EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
-                text_alータ += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
+                text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
                 text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
                 text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
                 text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
