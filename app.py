@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from supabase import create_client, Client
 
-st.set_page_config(page_title="COBY & GEMINI", layout="wide")
+st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -43,7 +43,6 @@ def botonera_independiente():
     # Fila 1: Especialidades generales
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        # CORREGIDO AQUÍ: filtro_activo en lugar de filtro_activa
         if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PERFUMES" else "secondary"): 
             st.session_state.filtro_activo = "PERFUMES"
             st.rerun()
@@ -239,3 +238,41 @@ elif menu == "🛠️ Configurar Radares y URLs":
                                 "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "TECNOLOGIA": "Tecnologia", "OTROS": "Otros",
                                 "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
                                 "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)"
+                            }
+                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
+                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
+                            st.session_state.mod_url = item["url"]
+                            st.session_state.mod_talla = talla_p
+                            st.session_state.mod_precio = item["precio_max"]
+                            st.rerun()
+                    with col_del:
+                        st.write("")
+                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
+                            try:
+                                supabase.table("radares").delete().eq("id", item["id"]).execute()
+                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
+                                st.rerun()
+                            except Exception as err: st.error(f"Error: {err}")
+        else: st.info("No hay radares registrados.")
+    except Exception as e: st.error(f"Error al conectar: {e}")
+
+# ==========================================
+# 💥 ESCANEO QUIRÚRGICO (BOTONES PLANOS)
+# ==========================================
+elif menu == "💥 Forzar Escaneo Intensivo":
+    st.title("💥 Módulo de Patrullaje")
+    botonera_independiente()
+        
+    st.write("---")
+    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
+        contenedor_mensaje = st.empty()
+        
+        target = st.session_state.filtro_activo
+        contenedor_mensaje.info(f"⏳ Lanzando escuadrón directo para el objetivo: **{target}**...")
+        
+        try:
+            from scraper import revisar_ofertas
+            msg = revisar_ofertas(target)
+            contenedor_mensaje.success(f"✅ {msg}")
+        except Exception as e: 
+            contenedor_mensaje.error(f"❌ Error en el motor: {e}")
