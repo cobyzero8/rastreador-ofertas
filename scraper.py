@@ -44,7 +44,7 @@ def enviar_telegram(mensaje, url_compra, url_foto):
 
 def escanear_tienda(url, limite):
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
 
     # =======================================================
     # MOTOR 1: BELCORP
@@ -62,7 +62,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MARATHON (Corregido para .store y .com)
+    # MOTOR 2: MARATHON (Modo Diagnóstico Quirúrgico)
     # =======================================================
     elif "marathon." in url:
         for pagina in range(1, 4):
@@ -70,14 +70,20 @@ def escanear_tienda(url, limite):
             url_paginada = f"{url}{conector}page={pagina}"
             try:
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
-                if resp.status_code != 200: break
-                soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscador flexible de grillas deportivas de Marathon
+                if resp.status_code != 200:
+                    try: st.warning(f"⚠️ Marathon denegó acceso con código: {resp.status_code}")
+                    except: pass
+                    break
+                    
+                soup = BeautifulSoup(resp.text, 'html.parser')
                 items = soup.select('.product-item, [class*="product-card"], .product-item-info, .productListing')
-                if not items: 
-                    items = soup.find_all(class_=re.compile(r'(product-item|product-card)', re.I))
-                if not items: break
+                
+                if not items:
+                    # Imprimimos chisme en Streamlit para saber qué está respondiendo la web real
+                    try: st.info(f"🔎 Marathon cargó (200 OK) pero el HTML vino sin estructura de productos. Longitud HTML: {len(resp.text)} caracteres.")
+                    except: pass
+                    break
                 
                 for t in items:
                     try:
@@ -86,35 +92,29 @@ def escanear_tienda(url, limite):
                         nombre_prod = tit_el.text.strip().upper()
                         
                         precio_el = t.select_one('[data-price-type="finalPrice"] .price, .special-price .price, .price-wrapper .price, .price')
-                        if not precio_el: 
-                            precio_el = t.find(class_=re.compile(r'price', re.I))
+                        if not precio_el: precio_el = t.find(class_=re.compile(r'price', re.I))
                         if not precio_el: continue
                         
                         numeros = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_el.text)
-                        if not numeros:
-                            numeros = re.findall(r'\d+', precio_el.text.replace('.', '').replace(',', ''))
+                        if not numeros: numeros = re.findall(r'\d+', precio_el.text.replace('.', '').replace(',', ''))
                         
                         if numeros:
                             precio = float(numeros[0].replace(',', '.'))
                             if 0 < precio <= limite:
                                 link_el = t.find('a', href=True)
                                 img_el = t.find('img')
-                                
-                                img_final = ""
-                                if img_el:
-                                    img_final = img_el.get('data-src', img_el.get('src', ''))
+                                img_final = img_el.get('data-src', img_el.get('src', '')) if img_el else ""
                                     
                                 if link_el:
-                                    enlace_final = urljoin(url, link_el['href'])
                                     productos.append({
-                                        "nombre": nombre_prod,
-                                        "precio": precio,
-                                        "link": enlace_final,
-                                        "img": img_final
+                                        "nombre": nombre_prod, "precio": precio, "link": urljoin(url, link_el['href']), "img": img_final
                                     })
                     except: continue
                 time.sleep(0.3)
-            except: break
+            except Exception as err:
+                try: st.error(f"❌ Error de red en Marathon: {err}")
+                except: pass
+                break
 
     # =======================================================
     # MOTOR 3: PLATANITOS
@@ -209,7 +209,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 text_alerta = f"{emoji} *PRODUCTO DISPONIBLE EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
-                text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
+                text_alータ += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
                 text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
                 text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
                 text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
