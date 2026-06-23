@@ -44,7 +44,7 @@ def enviar_telegram(mensaje, url_compra, url_foto):
 
 def escanear_tienda(url, limite):
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
 
     # =======================================================
     # MOTOR 1: BELCORP (Perfumes)
@@ -62,7 +62,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MERCADO LIBRE (Separado y reparado al 100%)
+    # MOTOR 2: MERCADO LIBRE (Ultra compatible)
     # =======================================================
     elif "mercadolibre.com" in url:
         for pagina in range(1, 4):
@@ -84,31 +84,31 @@ def escanear_tienda(url, limite):
                 if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscamos todas las cajas de productos en Mercado Libre
-                items = soup.find_all(['li', 'div', 'article'], class_=re.compile(r'(ui-search-layout__item|ui-search-result|poly-card)'))
+                # Selector mas amplio posible para capturar cualquier diseño de tarjeta de ML
+                items = soup.select('.ui-search-layout__item, .ui-search-result, .poly-card, [class*="search-result"]')
                 if not items: break
                 
                 for t in items:
                     try:
-                        # Buscador directo de títulos en Mercado Libre
-                        tit_el = t.find(class_=re.compile(r'(ui-search-item__title|poly-component__title)'))
-                        if not tit_el: 
-                            tit_el = t.find(['h2', 'h3'])
+                        # Busqueda del Titulo por clases comunes o etiquetas semánticas
+                        tit_el = t.select_one('.ui-search-item__title, .poly-component__title, h2, h3')
                         if not tit_el or len(tit_el.text.strip()) < 3: continue
+                        nombre_prod = tit_el.text.strip().upper()
                         
-                        # Buscador directo del precio en Mercado Libre
-                        precio_el = t.find('span', class_=re.compile(r'(andes-money-amount__fraction|poly-price__current)'))
-                        if not precio_el: 
-                            precio_el = t.find(class_=re.compile(r'price', re.I))
-                        if not precio_el: continue
+                        # Busqueda del precio: apuntamos directo a la fraccion entera del monto
+                        precio_el = t.select_one('.andes-money-amount__fraction, .poly-price__current .andes-money-amount__fraction')
+                        if not precio_el:
+                            # Respaldo si cambia la clase de la fraccion
+                            texto_tarjeta = t.text
+                            match_precio = re.search(r'(?:S/\.?\s*)(\d+)', texto_tarjeta)
+                            if match_precio:
+                                precio = float(match_precio.group(1))
+                            else:
+                                continue
+                        else:
+                            precio = float(precio_el.text.replace('.', '').replace(',', '').strip())
                         
-                        # Limpieza del precio para convertir a número flotante
-                        precio_texto = precio_el.text.replace('S/', '').replace(' ', '').replace(',', '').strip()
-                        numeros = re.findall(r'\d+', precio_texto)
-                        if not numeros: continue
-                        precio = float(numeros[0])
-                        
-                        if precio <= limite:
+                        if 0 < precio <= limite:
                             link_el = t.find('a', href=True)
                             img_el = t.find('img')
                             
@@ -119,17 +119,17 @@ def escanear_tienda(url, limite):
                                 
                             if link_el and link_el['href'].startswith('http'):
                                 productos.append({
-                                    "nombre": tit_el.text.strip().upper(),
+                                    "nombre": nombre_prod,
                                     "precio": precio,
                                     "link": link_el['href'],
                                     "img": img_final
                                 })
                     except: continue
-                time.sleep(0.3)
+                time.sleep(0.4)
             except: break
 
     # =======================================================
-    # MOTOR 3: PLATANITOS (Tu motor original intacto)
+    # MOTOR 3: PLATANITOS (Intacto e inmune)
     # =======================================================
     else:
         for pagina in range(1, 4):
@@ -199,7 +199,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
-        # FILTRO DE CATEGORÍA ESTRICTO
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: 
             continue
         if grupo == "ROPA" and categoria_filtro == "ROPA":
