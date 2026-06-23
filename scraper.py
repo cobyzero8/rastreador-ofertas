@@ -102,7 +102,7 @@ def escanear_tienda(url, limite):
                                 enlace_final = urljoin(url, a_href) if a_href else url
                                 img = t.find('img', src=True)
                                 
-                                # Quitamos la restricción estricta de duplicados internos para listar todo
+                                # Guardamos todo lo que encontremos en esta página
                                 productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
                     except: 
                         continue
@@ -119,6 +119,10 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     alertas_enviadas = 0
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "ROPA": "👕", "OTROS": "📦"}
     
+    # --- MEMORIA CORTA DE ESTE ESCANEO ---
+    # Usaremos un conjunto (set) para recordar los nombres de productos que ya mandamos en este clic
+    enviados_en_este_clic = set()
+    
     for item in res.data:
         ident = item['identificador'].upper()
         if "PERFUME" in ident: grupo = "PERFUMES"
@@ -127,7 +131,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
-        # --- FILTRO CRÍTICO AQUÍ: Si el radar no coincide con lo seleccionado, SE SALTA DE INMEDIATO ---
         if categoria_filtro != "TODOS" and categoria_filtro != grupo: 
             continue
         if grupo == "ROPA" and categoria_filtro == "ROPA":
@@ -137,7 +140,17 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                # Guardamos el registro en el historial para tus estadísticas de todas formas
+                nombre_unico = p['nombre'].strip().upper()
+                
+                # --- NUEVO FILTRO ANTIDUPLICADOS INTERNO ---
+                # Si el nombre del polo ya está en nuestra lista de enviados de este clic, lo saltamos
+                if nombre_unico in enviados_en_este_clic:
+                    continue
+                
+                # Si es un modelo nuevo en este escaneo, lo agregamos a la memoria para que no se repita
+                enviados_en_este_clic.add(nombre_unico)
+                
+                # Guardamos registro histórico en Supabase
                 fecha_hoy = datetime.now().strftime("%Y-%m-%d")
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], 
@@ -146,9 +159,7 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 }).execute()
                 total += 1
                 
-                # --- MODO ALERTA TOTALAbierta ---
-                # Quitamos la validación del precio_anterior para Platanitos. 
-                # Si cumple el precio tope, ¡TE LO MANDA A TELEGRAM DE INMEDIATO!
+                # Enviamos el mensaje limpio a Telegram
                 emoji = mapa_emojis.get(grupo, "🔥")
                 text_alerta = f"{emoji} *PRODUCTO DISPONIBLE EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -164,4 +175,4 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 time.sleep(0.4)
             except: pass
             
-    return f"Éxito. Procesados: {total}. Alertas enviadas: {alertas_enviadas}."
+    return f"Éxito. Modelos únicos: {total}. Alertas enviadas: {alertas_enviadas}."
