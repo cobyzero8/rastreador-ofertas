@@ -62,18 +62,16 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MERCADO LIBRE (¡NUEVO TÁCTICO!)
+    # MOTOR 2: MERCADO LIBRE (Calibrado)
     # =======================================================
     elif "mercadolibre.com" in url:
         for pagina in range(1, 4):
-            # Formato de paginación de Mercado Libre: _Desde_51, _Desde_101, etc.
             url_paginada = url
             if pagina > 1:
                 desde = ((pagina - 1) * 50) + 1
                 if "_Desde_" in url:
                     url_paginada = re.sub(r'_Desde_\d+', f'_Desde_{desde}', url)
                 else:
-                    # Si la URL base no tiene el parámetro, se lo inyectamos antes de los filtros
                     if "/_" in url:
                         url_paginada = url.replace("/_", f"_Desde_{desde}_")
                     elif "?" in url:
@@ -86,35 +84,38 @@ def escanear_tienda(url, limite):
                 if resp.status_code != 200: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscamos las tarjetas de productos estándar de Mercado Libre
-                items = soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-layout__item|ui-search-result__wrapper)'))
-                if not items: items = soup.find_all('div', class_='ui-search-result')
+                # Selector universal de tarjetas de Mercado Libre (cubre ropa y calzado)
+                items = soup.find_all(['li', 'div', 'article'], class_=re.compile(r'(ui-search-layout__item|ui-search-result|poly-card)'))
                 if not items: break
                 
                 for t in items:
                     try:
-                        tit_el = t.find(['h2', 'h3', 'p'], class_=re.compile(r'(ui-search-item__title|poly-component__title)'))
-                        if not tit_el: continue
+                        # Búsqueda más agresiva del título
+                        tit_el = t.find(['h2', 'h3', 'p', 'a'], class_=re.compile(r'(title|name|nombre)', re.I))
+                        if not tit_el or len(tit_el.text.strip()) < 3: continue
                         
-                        # Extraer precio limpio ignorando centavos flotantes si los hay
-                        precio_contenedor = t.find('span', class_=re.compile(r'(vtex-price|andes-money-amount|poly-price)'))
+                        # Captura del precio sin importar la etiqueta interna
+                        precio_contenedor = t.find(class_=re.compile(r'(price|amount|precio)', re.I))
                         if not precio_contenedor: continue
                         
+                        # Extraer solo números limpios de la zona del precio
                         numeros = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_contenedor.text)
-                        if not numeros: 
+                        if not numeros:
                             numeros = re.findall(r'\d+', precio_contenedor.text.replace('.', '').replace(',', ''))
                         
                         if numeros:
                             precio = float(numeros[0].replace(',', '.'))
                             if precio <= limite:
                                 link_el = t.find('a', href=True)
-                                img_el = t.find('img', src=True)
-                                if not img_el and t.find('img', data_src=True):
-                                    img_final = t.find('img')['data_src']
-                                else:
-                                    img_final = img_el['src'] if img_el else ""
+                                img_el = t.find('img')
+                                
+                                # Manejo de imágenes diferidas (Lazy load)
+                                img_final = ""
+                                if img_el:
+                                    if img_el.has_attr('data-src'): img_final = img_el['data-src']
+                                    elif img_el.has_attr('src'): img_final = img_el['src']
                                     
-                                if link_el:
+                                if link_el and link_el['href'].startswith('http'):
                                     productos.append({
                                         "nombre": tit_el.text.strip().upper(),
                                         "precio": precio,
