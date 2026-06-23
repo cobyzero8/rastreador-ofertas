@@ -62,7 +62,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: MERCADO LIBRE
+    # MOTOR 2: MERCADO LIBRE (Modo Diagnóstico)
     # =======================================================
     elif "mercadolibre.com" in url:
         for pagina in range(1, 4):
@@ -79,11 +79,23 @@ def escanear_tienda(url, limite):
                     else: url_paginada = f"{url}_Desde_{desde}"
             try:
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
-                if resp.status_code != 200: break
+                
+                # Reporte en la pantalla si ML nos bloquea la entrada (ej: Error 403 o 503)
+                if resp.status_code != 200:
+                    try: st.warning(f"⚠️ Mercado Libre devolvió código: {resp.status_code} en pág {pagina}")
+                    except: pass
+                    break
+                    
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
+                # Captura flexible de tarjetas
                 items = soup.select('.ui-search-layout__item, .ui-search-result, .poly-card')
-                if not items: items = soup.find_all(['li', 'div'], class_=re.compile(r'(item|result|card)'))
+                
+                # Reporte si la página web cargó pero vino vacía de productos
+                if not items:
+                    try: st.info(f"🔍 ML cargó pero no detectó tarjetas con los selectores estándar.")
+                    except: pass
+                    break
                 
                 for t in items:
                     try:
@@ -91,11 +103,13 @@ def escanear_tienda(url, limite):
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
                         
-                        # Extracción numérica directa para evitar errores de centavos en la web de ML
+                        # Extraer el texto numérico del precio principal
                         precio_el = t.select_one('.andes-money-amount__fraction, .poly-price__current .andes-money-amount__fraction')
                         if precio_el:
-                            precio = float(precio_el.text.replace('.', '').replace(',', '').strip())
+                            precio_limpio = precio_el.text.replace('.', '').replace(',', '').strip()
+                            precio = float(precio_limpio)
                         else:
+                            # Intento de rescate por texto general
                             numeros = re.findall(r'S/\s*(\d+)', t.text)
                             if numeros: precio = float(numeros[0])
                             else: continue
@@ -110,9 +124,13 @@ def escanear_tienda(url, limite):
                                 
                             if link_el and link_el['href'].startswith('http'):
                                 productos.append({"nombre": nombre_prod, "precio": precio, "link": link_el['href'], "img": img_final})
-                    except: continue
-                time.sleep(0.3)
-            except: break
+                    except Exception as e:
+                        continue
+                time.sleep(0.4)
+            except Exception as e:
+                try: st.error(f"❌ Fallo crítico de conexión con ML: {e}")
+                except: pass
+                break
 
     # =======================================================
     # MOTOR 3: PLATANITOS
@@ -170,7 +188,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "ROPA": "👕", "OTROS": "📦"}
     enviados_en_este_clic = set()
     
-    # Aseguramos limpieza absoluta de filtros en mayúsculas
     cat_filtro = str(categoria_filtro).strip().upper()
     sub_filtro = str(sub_ropa_filtro).strip().upper()
     
@@ -182,7 +199,6 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
         elif "ROPA" in ident: grupo = "ROPA"
         else: grupo = "OTROS"
         
-        # --- FILTRADO CRÍTICO E INMUNE ---
         if cat_filtro != "TODOS" and cat_filtro != grupo:
             continue
             
@@ -201,7 +217,7 @@ def revisar_ofertas(categoria_filtro="TODOS", sub_ropa_filtro="TODOS"):
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], 
                     "precio": p['precio'], 
-                    "fecha": date_hoy if 'date_hoy' in locals() else fecha_hoy
+                    "fecha": fecha_hoy
                 }).execute()
                 total += 1
                 
