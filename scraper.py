@@ -88,26 +88,56 @@ def escanear_tienda(url, limite):
         except: pass
 
     # -------------------------------------------------------
-    # MOTOR 2: CONECTA RETAIL (Efe y La Curacao Normalizado)
+    # MOTOR 2: CONECTA RETAIL (¡Efe y La Curacao via HTML Magento!)
     # -------------------------------------------------------
     elif "efe.com.pe" in url_low or "lacuracao.pe" in url_low:
         tienda_tag = "EFE" if "efe.com.pe" in url_low else "CURACAO"
-        base_domain = "www.efe.com.pe" if "efe.com.pe" in url_low else "www.lacuracao.pe"
-        
-        # Filtro de palabras clave adaptado a URL limpia o estructurada
-        if "soundbar" in url_low or "home-theater" in url_low or "barra" in url_low:
-            keyword = "soundbar"
-        elif "tv" in url_low or "televisores" in url_low:
-            keyword = "televisores"
-        elif any(x in url_low for x in ["celular", "movil", "telefono", "smartphones"]):
-            keyword = "celulares"
-        elif "cama" in url_low or "colchon" in url_low:
-            keyword = "combos-de-cama"
-        else:
-            keyword = "computo"
-            
-        api_url = f"https://{base_domain}/api/catalog_system/pub/products/search"
-        params = {"ft": keyword, "_from": 0, "_to": 24, "O": "OrderByPriceASC"}
+        try:
+            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                # Buscamos las tarjetas estándar de producto en Magento
+                items = soup.select('.product-item') or soup.select('.product-item-info')
+                
+                for t in items:
+                    try:
+                        # Extraer título y enlace
+                        tit_el = t.select_one('a.product-item-link') or t.select_one('.product-item-name a')
+                        if not tit_el: continue
+                        nombre_prod = tit_el.text.strip().upper()
+                        if len(nombre_prod) < 3: continue
+                        
+                        enlace_final = urljoin(url, tit_el['href'])
+                        
+                        # Extraer precios (Efe usa estructuras dinámicas de precio final y regular)
+                        oferta_el = t.select_one('[data-price-type="finalPrice"] .price') or t.select_one('.special-price .price') or t.select_one('.price-box .price')
+                        regular_el = t.select_one('[data-price-type="oldPrice"] .price') or t.select_one('.old-price .price')
+                        
+                        if not oferta_el: continue
+                        precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                        if not precio_oferta: continue
+                        
+                        precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                        if precio_regular < precio_oferta: precio_regular = precio_oferta
+                        
+                        # Extraer imagen
+                        img_el = t.select_one('.product-image-photo') or t.find('img')
+                        img_final = ""
+                        if img_el:
+                            img_final = img_el.get('data-src') or img_el.get('src') or ''
+                            if img_final.startswith('//'): img_final = 'https:' + img_final
+                        
+                        if 0 < precio_oferta <= limite:
+                            productos.append({
+                                "nombre": f"{tienda_tag} - {nombre_prod}",
+                                "precio": precio_oferta,
+                                "precio_regular": precio_regular,
+                                "link": enlace_final,
+                                "img": img_final
+                            })
+                    except: continue
+        except: pass
+
     # -------------------------------------------------------
     # MOTOR 3: JBL (API interna por HTML UpdateGrid)
     # -------------------------------------------------------
