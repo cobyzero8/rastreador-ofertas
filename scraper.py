@@ -36,19 +36,16 @@ def limpiar_precio_pnp(texto_precio):
     if not texto_precio: 
         return 0.0
     try:
-        # Quitamos todo lo que no sea número, coma o punto
         texto = re.sub(r'[^\d.,]', '', texto_precio).strip()
         if not texto: 
             return 0.0
         
-        # Si tiene puntos y comas combinados (ej: 3,300.00 o 3.300,00)
         if ',' in texto and '.' in texto:
             if texto.rfind('.') > texto.rfind(','): 
                 texto = texto.replace(',', '')
             else: 
                 texto = texto.replace('.', '').replace(',', '.')
         else:
-            # Si solo tiene comas de miles (ej: 3,300) o un punto que parece de miles (ej: 3.300)
             if ',' in texto and len(texto.split(',')[-1]) != 2:
                 texto = texto.replace(',', '')
             elif '.' in texto and len(texto.split('.')[-1]) != 2:
@@ -68,7 +65,9 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
+    # -------------------------------------------------------
     # MOTOR 1: BELCORP
+    # -------------------------------------------------------
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -87,38 +86,68 @@ def escanear_tienda(url, limite):
                     })
         except: pass
 
-    # MOTOR 2: JBL Y SAMSUNG
-    elif "jbl" in url.lower() or "samsung" in url.lower():
+    # -------------------------------------------------------
+    # MOTOR 2: SAMSUNG (¡Bypass Inteligente por API JSON!)
+    # -------------------------------------------------------
+    elif "samsung.com" in url.lower():
         try:
-            if "jbl.com.pe" in url:
-                keyword = "barra" if "barra" in url else "wireless" if "wireless" in url else "parlante" if "parlante" in url else "audio"
-                api_url = f"https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
-                params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
-                resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-            else:
-                resp = requests.get(url, headers=headers, timeout=15, verify=False)
-                
+            # 🧠 Hack: Detectamos qué familia buscar basándonos en tu URL configurada
+            keyword = "smartphones" if any(k in url.lower() for k in ["celular", "galaxy", "phone"]) else "tv"
+            
+            # API endpoint directo de Samsung Perú para listado de productos
+            api_url = "https://shop.samsung.com/pe/api/catalog_system/pub/products/search"
+            params = {"ft": keyword, "_from": 0, "_to": 24, "O": "OrderByPriceASC"}
+            
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            if resp.status_code == 200:
+                for item in resp.json():
+                    try:
+                        nombre_prod = item["productName"].upper()
+                        item_comercial = item["items"][0]["sellers"][0]["commertialOffer"]
+                        
+                        precio_oferta = float(item_comercial["Price"])
+                        precio_regular = float(item_comercial.get("ListPrice", precio_oferta))
+                        enlace = item["link"]
+                        imagen = item["items"][0]["images"][0]["imageUrl"]
+                        
+                        if 0 < precio_oferta <= limite:
+                            productos.append({
+                                "nombre": f"SAMSUNG - {nombre_prod}",
+                                "precio": precio_oferta,
+                                "precio_regular": precio_regular,
+                                "link": enlace,
+                                "img": imagen
+                            })
+                    except: continue
+        except: pass
+
+    # -------------------------------------------------------
+    # MOTOR 3: JBL (API interna por HTML UpdateGrid)
+    # -------------------------------------------------------
+    elif "jbl.com.pe" in url.lower():
+        try:
+            keyword = "barra" if "barra" in url.lower() else "wireless" if "wireless" in url.lower() else "parlante" if "parlante" in url.lower() else "audio"
+            api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
+            params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
+            
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('.product-grid-item')
-                if not items:
-                    items = soup.find_all(['div', 'article', 'li'], class_=re.compile(r'(product|card|item|tile|grid)', re.I))
+                items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
                 
                 for t in items:
                     try:
-                        tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name') or t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
+                        tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name')
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
-                        if len(nombre_prod) < 3: continue
                         
-                        reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('del')
-                        precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
+                        reg_el = t.select_one('.price .list .value') or t.select_one('del')
+                        precio_el = t.select_one('.price .sales .value') or t.select_one('.sales')
                         
                         txt_oferta = precio_el.text if precio_el else t.text
                         precio_oferta = limpiar_precio_pnp(txt_oferta)
                         if not precio_oferta: continue
                         
-                        # Corrección multiplicadora inteligente para miles mochados en tecnología pesada
                         if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
                             precio_oferta = precio_oferta * 1000
                             
@@ -145,7 +174,9 @@ def escanear_tienda(url, limite):
                     except: continue
         except: pass
 
-    # MOTOR 3: PLATANITOS Y TRADICIONALES
+    # -------------------------------------------------------
+    # MOTOR 4: PLATANITOS Y TRADICIONALES
+    # -------------------------------------------------------
     else:
         for pagina in range(1, 4):
             url_paginada = url
