@@ -42,6 +42,33 @@ def enviar_telegram(mensaje, url_compra, url_foto):
             }, timeout=10, verify=False)
     except: pass
 
+def limpiar_precio_vtex(texto_sucio):
+    """
+    Filtro avanzado para limpiar precios en el retail peruano.
+    Maneja formatos como S/. 1.499, S/.1,099.00, 1499, etc.
+    """
+    if not texto_sucio: return None
+    try:
+        # Extraer solo lo que huela a números, puntos y comas
+        limpio = re.sub(r'[^\d.,]', '', texto_sucio).strip()
+        if not limpio: return None
+        
+        # Si tiene puntos y comas (ej: 1,099.00), borramos las comas de miles y dejamos el punto decimal
+        if ',' in limpio and '.' in limpio:
+            limpio = limpio.replace(',', '')
+            return float(limpio)
+            
+        # Si tiene un solo separador y está a 3 dígitos del final (ej: 1.499 o 1,099), es separador de miles
+        if len(limpio) >= 5 and (limpio[-4] in ['.', ',']):
+            limpio = limpio.replace('.', '').replace(',', '')
+            return float(limpio)
+            
+        # Fallback estándar cambiando coma por punto
+        limpio = limpio.replace(',', '.')
+        return float(limpio)
+    except:
+        return None
+
 def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
@@ -71,7 +98,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: JBL Y SAMSUNG
+    # MOTOR 2: JBL Y SAMSUNG (Filtro de Precios Corregido)
     # =======================================================
     elif "jbl." in url or "samsung." in url:
         try:
@@ -89,38 +116,37 @@ def escanear_tienda(url, limite):
                         nombre_prod = tit_el.text.strip().upper()
                         if len(nombre_prod) < 5: continue
                         
-                        # Captura precio de lista viejo (regular) vs el de venta (oferta)
+                        # Ubicar etiquetas de precios en JBL
                         reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('del')
                         precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
                         
-                        raw_txt_oferta = precio_el.text if precio_el else t.text
-                        precios_oferta = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', raw_txt_oferta)
-                        if not precios_oferta: precios_oferta = re.findall(r'\b\d{2,4}\.\d{2}\b', raw_txt_oferta)
-                            
-                        if precios_oferta:
-                            p_of = precios_oferta[0].replace('.', '').replace(',', '.') if ',' in precios_oferta[0] and '.' in precios_oferta[0] else precios_oferta[0].replace(',', '.')
-                            precio_oferta = float(p_of)
-                            
-                            # Intentar sacar el regular, si no hay, es igual al de oferta
-                            precio_regular = precio_oferta
-                            if reg_el:
-                                precios_reg = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', reg_el.text)
-                                if precios_reg:
-                                    p_rg = precios_reg[0].replace('.', '').replace(',', '.') if ',' in precios_reg[0] and '.' in precios_reg[0] else precios_reg[0].replace(',', '.')
-                                    precio_regular = float(p_rg)
-                            
-                            if 0 < precio_oferta <= limite:
-                                link_el = t.find('a', href=True)
-                                enlace_final = urljoin(url, link_el['href']) if link_el else url
-                                img_el = t.find('img')
-                                img_final = ""
-                                if img_el:
-                                    img_final = img_el.get('data-src') or img_el.get('src') or ''
-                                    if img_final.startswith('//'): img_final = 'https:' + img_final
+                        txt_oferta = precio_el.text if precio_el else t.text
+                        precio_oferta = limpiar_precio_vtex(txt_oferta)
+                        if not precio_oferta: continue
+                        
+                        # Procesar precio de lista viejo
+                        precio_regular = precio_oferta
+                        if reg_el:
+                            p_reg_clean = limpiar_precio_vtex(reg_el.text)
+                            if p_reg_clean: precio_regular = p_reg_clean
+                        
+                        # ATENCIÓN: Evaluamos contra el tope real (S/. 1099 ahora sí es mayor que 1 sol)
+                        if 0 < precio_oferta <= limite:
+                            link_el = t.find('a', href=True)
+                            enlace_final = urljoin(url, link_el['href']) if link_el else url
+                            img_el = t.find('img')
+                            img_final = ""
+                            if img_el:
+                                img_final = img_el.get('data-src') or img_el.get('src') or ''
+                                if img_final.startswith('//'): img_final = 'https:' + img_final
                                 
-                                productos.append({
-                                    "nombre": f"JBL - {nombre_prod}", "precio": precio_oferta, "precio_regular": precio_regular, "link": enlace_final, "img": img_final
-                                })
+                            productos.append({
+                                "nombre": f"JBL - {nombre_prod}", 
+                                "precio": precio_oferta, 
+                                "precio_regular": precio_regular, 
+                                "link": enlace_final, 
+                                "img": img_final
+                            })
                     except: continue
         except: pass
 
@@ -145,7 +171,6 @@ def escanear_tienda(url, limite):
                         tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
                         if not tit or len(tit.text.strip()) < 3: continue
                         
-                        # Platanitos a veces mete el precio antiguo en etiquetas <del> o clases 'regular'
                         del_el = t.find(['del', 'span'], class_=re.compile(r'(regular|original|old)', re.I))
                         
                         precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
@@ -157,7 +182,6 @@ def escanear_tienda(url, limite):
                                 precios_del = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', del_el.text)
                                 if precios_del: precio_regular = float(precios_del[0].replace(',', '.'))
                             elif len(precios) > 1:
-                                # Si re.findall pescó más de un precio en el texto de la tarjeta, por lo general el mayor es el de lista
                                 precios_float = [float(pr.replace(',', '.')) for pr in precios]
                                 precio_regular = max(precios_float)
                                 precio_oferta = min(precios_float)
@@ -226,7 +250,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 lista_html_streamlit.append(p)
                 total += 1
                 
-                # Control anti-spam de Telegram
                 ya_alertado = False
                 try:
                     check = supabase.table("historial_precios")\
@@ -246,7 +269,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if ya_alertado:
                     continue
                 
-                # Telegram
                 emoji = mapa_emojis.get(grupo, "🔥")
                 text_alerta = f"{emoji} *PRODUCTO EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -259,7 +281,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 time.sleep(0.4)
             except: pass
             
-    # MOSTRAR EN STREAMLIT CON CÁLCULO DE DESCUENTOS EN TIEMPO REAL
     if len(lista_html_streamlit) > 0:
         try:
             import streamlit as st
@@ -276,7 +297,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         p_oferta = prod['precio']
                         p_regular = prod.get('precio_regular', p_oferta)
                         
-                        # Si el precio regular detectado es mayor al de oferta, calculamos la rebaja
                         if p_regular > p_oferta:
                             ahorro_soles = p_regular - p_oferta
                             porcentaje = (ahorro_soles / p_regular) * 100
