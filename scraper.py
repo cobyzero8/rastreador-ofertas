@@ -63,7 +63,7 @@ def escanear_tienda(url, limite):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
     # =======================================================
-    # MOTOR 1: BELCORP
+    # MOTOR 1: BELCORP (Esika, Cyzone, Lbel)
     # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
@@ -84,11 +84,10 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: JBL Y SAMSUNG (¡Filtro de URL y Cajas Corregido!)
+    # MOTOR 2: JBL Y SAMSUNG (Estructura ultra-flexible)
     # =======================================================
     elif "jbl" in url.lower() or "samsung" in url.lower():
         try:
-            # Cabeceras completas de navegador para evitar bloqueos informáticos
             headers_nav = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -98,10 +97,10 @@ def escanear_tienda(url, limite):
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Mapeo amplio y flexible de grillas en JBL y tiendas tecnológicas
+                # Buscador masivo de bloques de productos
                 items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('.product-grid-item') or soup.select('[class*="productCard"]')
                 if not items:
-                    items = soup.find_all(['div', 'article'], class_=re.compile(r'(product|card|item|tile)', re.I))
+                    items = soup.find_all(['div', 'article', 'li'], class_=re.compile(r'(product|card|item|tile|grid)', re.I))
                 
                 for t in items:
                     try:
@@ -222,15 +221,16 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     for item in res.data:
         ident = item['identificador'].upper()
         
+        # CLASIFICACIÓN DIRECTA Y LIMPIA POR PALABRAS CLAVE
         if "AUDIFONO" in ident or "AURICULAR" in ident: grupo = "AUDIFONOS"
-        elif "BARRA" in ident or "SOUNDBAR" in ident or "SB580" in ident: grupo = "BARRA DE SONIDO"
-        elif "PARLANTE" in ident or "ALTAVOZ" in ident or "BOOMBOX" in ident: grupo = "PARLANTE"
+        elif "BARRA" in ident or "SOUNDBAR" in ident: grupo = "BARRA DE SONIDO"
+        elif "PARLANTE" in ident or "ALTAVOZ" in ident: grupo = "PARLANTE"
         elif "TV" in ident or "TELEVISOR" in ident: grupo = "TV"
         elif "CELULAR" in ident or "TELEFONO" in ident: grupo = "CELULAR"
-        elif "PC" in ident or "LAPTOP" in ident or "COMPUTADORA" in ident: grupo = "PC"
+        elif "PC" in ident or "LAPTOP" in ident: grupo = "PC"
         elif "REFRIGERADORA" in ident or "NEVERA" in ident: grupo = "REFRIGERADORA"
         elif "LAVADORA" in ident: grupo = "LAVADORA"
-        elif "ELECTRO" in ident or "LICUADORA" in ident or "MICROONDAS" in ident: grupo = "ELECTRODOMESTICOS"
+        elif "ELECTRO" in ident or "LICUADORA" in ident: grupo = "ELECTRODOMESTICOS"
         elif "CAMA" in ident or "COLCHON" in ident: grupo = "CAMA"
         elif "PERFUME" in ident: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
