@@ -62,91 +62,53 @@ def escanear_tienda(url, limite):
         except: pass
 
     # =======================================================
-    # MOTOR 2: TRIATHLON (Inyección y Lectura de JSON Interno)
+    # MOTOR 2: NUEVO FRENTE TECNOLÓGICO (JBL y SAMSUNG)
     # =======================================================
-    elif "triathlon." in url:
+    elif "jbl." in url or "samsung." in url:
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscamos el script oculto de VTEX que contiene toda la base de datos de la página
-                script_vtex = soup.find('script', text=re.compile(r'__STATE__'))
-                if script_vtex:
-                    raw_json = re.search(r'__STATE__\s*=\s*({.+})', script_vtex.string)
-                    if raw_json:
-                        data = json.loads(raw_json.group(1))
-                        
-                        # Agrupamos los datos por productos
-                        productos_dict = {}
-                        precios_dict = {}
-                        
-                        for llave, valor in data.items():
-                            # 1. Extraer Nombres, Enlaces y Marcas
-                            if llave.startswith("Product:") and "productName" in valor:
-                                prod_id = llave.split(":")[1]
-                                productos_dict[prod_id] = {
-                                    "nombre": f"{valor.get('brand', '').upper()} - {valor.get('productName', '').upper()}",
-                                    "link": urljoin(url, valor.get('linkText', '') + "/p")
-                                }
-                            
-                            # 2. Extraer Precios de Oferta Reales
-                            if "Price" in llave and valor.get("Price") is not None:
-                                # Buscar a qué item pertenece
-                                parent_key = llave.split(".")[0]
-                                if parent_key in data:
-                                    # Caminar hacia arriba en el JSON para encontrar el ID del producto
-                                    precios_dict[parent_key] = float(valor["Price"])
-
-                        # Cruzar la información y filtrar por precio límite
-                        for llave, valor in data.items():
-                            if llave.startswith("Product:") and "items" in valor:
-                                prod_id = llave.split(":")[1]
-                                if prod_id in productos_dict:
-                                    for item_ref in valor.get("items", []):
-                                        item_id = item_ref.get("id")
-                                        # Buscar precio en los sellers de este item
-                                        for k, v in data.items():
-                                            if item_id in k and "commertialOffer" in k:
-                                                offer = data.get(k, {})
-                                                precio = float(offer.get("Price", 9999))
-                                                
-                                                if 0 < precio <= limite:
-                                                    # Buscar imagen
-                                                    img_url = ""
-                                                    images = offer.get("images", [])
-                                                    if images:
-                                                        img_obj = data.get(images[0]["id"])
-                                                        if img_obj: img_url = img_obj.get("imageUrl", "")
-                                                    
-                                                    prod_final = productos_dict[prod_id]
-                                                    productos.append({
-                                                        "nombre": prod_final["nombre"],
-                                                        "precio": precio,
-                                                        "link": prod_final["link"],
-                                                        "img": img_url
-                                                    })
+                # Buscador genérico inteligente para tarjetas de tecnología
+                # Apuntamos a clases comunes de productos en tiendas oficiales (VTEX / Shopify / Propias)
+                items = soup.select('[class*="product-item"], [class*="productCard"], [class*="product-card"], .product-info, [class*="product_tile"]')
+                if not items:
+                    items = soup.find_all(['div', 'article'], class_=re.compile(r'(product|card|item|tile)', re.I))
                 
-                # --- PLAN B: Si el script cambia, usamos un fallback clásico ---
-                if not productos:
-                    items = soup.select('.vtex-product-summary-2-x-container, [class*="productSummary"]')
-                    for t in items:
-                        try:
-                            tit_el = t.select_one('[class*="productName"], h2, h3')
-                            precio_el = t.select_one('[class*="sellingPriceValue"], [class*="price-value"]')
-                            if tit_el and precio_el:
-                                numeros = re.findall(r'\d+[\.,]\d{2}|\d+', precio_el.text)
-                                if numeros:
-                                    precio = float(numeros[0].replace(',', '.'))
-                                    if 0 < precio <= limite:
-                                        link_el = t.find('a', href=True)
-                                        productos.append({
-                                            "nombre": tit_el.text.strip().upper(),
-                                            "precio": precio,
-                                            "link": urljoin(url, link_el['href']) if link_el else url,
-                                            "img": ""
-                                        })
-                        except: pass
+                for t in items:
+                    try:
+                        tit_el = t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
+                        if not tit_el: continue
+                        nombre_prod = tit_el.text.strip().upper()
+                        if len(nombre_prod) < 5: continue
+                        
+                        # Buscamos el precio de oferta en el texto de la tarjeta
+                        # Captura formatos como S/. 199, S/.199.00 o simplemente números de tres cifras
+                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                        if not precios:
+                            # Intento secundario si el precio no tiene el "S/." explícito al lado
+                            precios = re.findall(r'\b\d{2,4}\.\d{2}\b', t.text)
+                            
+                        if precios:
+                            precio = float(precios[0].replace(',', '.'))
+                            if 0 < precio <= limite:
+                                link_el = t.find('a', href=True)
+                                enlace_final = urljoin(url, link_el['href']) if link_el else url
+                                
+                                img_el = t.find('img')
+                                img_final = ""
+                                if img_el:
+                                    img_final = img_el.get('data-src', img_el.get('src', ''))
+                                    if img_final.startswith('//'): img_final = 'https:' + img_final
+                                
+                                productos.append({
+                                    "nombre": f"TEC - {nombre_prod}",
+                                    "precio": precio,
+                                    "link": enlace_final,
+                                    "img": img_final
+                                })
+                    except: continue
         except: pass
 
     # =======================================================
@@ -212,7 +174,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         if "PERFUME" in ident: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
-        elif "TECNOLOGIA" in ident or "TV" in ident: grupo = "TECNOLOGIA"
+        elif "TECNOLOGIA" in ident or "TV" in ident or "JBL" in ident or "SAMSUNG" in ident: grupo = "TECNOLOGIA"
         elif "MEDIAS" in ident: grupo = "MEDIAS"
         elif "POLOS" in ident: grupo = "POLOS"
         elif "CASACAS" in ident: grupo = "CASACAS"
