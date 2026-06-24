@@ -28,4 +28,4 @@ jobs:
         env:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          python -c "import os; from scraper import revisar_ofertas; print(revisar_ofertas('TODOS', 'TODOS'))"
+          python -c "import os; from scraper import revisar_ofertas; print(revisar_ofertas('TODOS'))"
