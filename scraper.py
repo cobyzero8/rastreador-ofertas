@@ -43,27 +43,16 @@ def enviar_telegram(mensaje, url_compra, url_foto):
     except: pass
 
 def limpiar_precio_vtex(texto_sucio):
-    """
-    Filtro avanzado para limpiar precios en el retail peruano.
-    Maneja formatos como S/. 1.499, S/.1,099.00, 1499, etc.
-    """
     if not texto_sucio: return None
     try:
-        # Extraer solo lo que huela a números, puntos y comas
         limpio = re.sub(r'[^\d.,]', '', texto_sucio).strip()
         if not limpio: return None
-        
-        # Si tiene puntos y comas (ej: 1,099.00), borramos las comas de miles y dejamos el punto decimal
         if ',' in limpio and '.' in limpio:
             limpio = limpio.replace(',', '')
             return float(limpio)
-            
-        # Si tiene un solo separador y está a 3 dígitos del final (ej: 1.499 o 1,099), es separador de miles
         if len(limpio) >= 5 and (limpio[-4] in ['.', ',']):
             limpio = limpio.replace('.', '').replace(',', '')
             return float(limpio)
-            
-        # Fallback estándar cambiando coma por punto
         limpio = limpio.replace(',', '.')
         return float(limpio)
     except:
@@ -73,9 +62,6 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
-    # =======================================================
-    # MOTOR 1: BELCORP
-    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -86,20 +72,14 @@ def escanear_tienda(url, limite):
                 item_comercial = item["items"][0]["sellers"][0]["commertialOffer"]
                 precio_oferta = float(item_comercial["Price"])
                 precio_regular = float(item_comercial.get("ListPrice", precio_oferta))
-                
                 if 0 < precio_oferta <= limite:
                     productos.append({
                         "nombre": f"{marca.upper()} - {item['productName'].upper()}", 
-                        "precio": precio_oferta, 
-                        "precio_regular": precio_regular,
-                        "link": item["link"], 
-                        "img": item["items"][0]["images"][0]["imageUrl"]
+                        "precio": precio_oferta, "precio_regular": precio_regular,
+                        "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]
                     })
         except: pass
 
-    # =======================================================
-    # MOTOR 2: JBL Y SAMSUNG (Filtro de Precios Corregido)
-    # =======================================================
     elif "jbl." in url or "samsung." in url:
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -116,7 +96,6 @@ def escanear_tienda(url, limite):
                         nombre_prod = tit_el.text.strip().upper()
                         if len(nombre_prod) < 5: continue
                         
-                        # Ubicar etiquetas de precios en JBL
                         reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('del')
                         precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
                         
@@ -124,13 +103,11 @@ def escanear_tienda(url, limite):
                         precio_oferta = limpiar_precio_vtex(txt_oferta)
                         if not precio_oferta: continue
                         
-                        # Procesar precio de lista viejo
                         precio_regular = precio_oferta
                         if reg_el:
                             p_reg_clean = limpiar_precio_vtex(reg_el.text)
                             if p_reg_clean: precio_regular = p_reg_clean
                         
-                        # ATENCIÓN: Evaluamos contra el tope real (S/. 1099 ahora sí es mayor que 1 sol)
                         if 0 < precio_oferta <= limite:
                             link_el = t.find('a', href=True)
                             enlace_final = urljoin(url, link_el['href']) if link_el else url
@@ -142,17 +119,12 @@ def escanear_tienda(url, limite):
                                 
                             productos.append({
                                 "nombre": f"JBL - {nombre_prod}", 
-                                "precio": precio_oferta, 
-                                "precio_regular": precio_regular, 
-                                "link": enlace_final, 
-                                "img": img_final
+                                "precio": precio_oferta, "precio_regular": precio_regular, 
+                                "link": enlace_final, "img": img_final
                             })
                     except: continue
         except: pass
 
-    # =======================================================
-    # MOTOR 3: PLATANITOS Y TRADICIONALES
-    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -172,7 +144,6 @@ def escanear_tienda(url, limite):
                         if not tit or len(tit.text.strip()) < 3: continue
                         
                         del_el = t.find(['del', 'span'], class_=re.compile(r'(regular|original|old)', re.I))
-                        
                         precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
                         if precios:
                             precio_oferta = float(precios[0].replace(',', '.'))
@@ -219,7 +190,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     alertas_enviadas = 0
     lista_html_streamlit = []
     
-    # Nuevo mapa de emojis ampliado con tus categorías independientes
     mapa_emojis = {
         "PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", 
         "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", 
@@ -235,24 +205,24 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     for item in res.data:
         ident = item['identificador'].upper()
         
-        # Mapeo lógico por palabras clave en el identificador
-        if "PERFUME" in ident: grupo = "PERFUMES"
-        elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
-        elif "MEDIAS" in ident: grupo = "MEDIAS"
-        elif "POLO" in ident: grupo = "POLOS"
-        elif "CASACA" in ident: grupo = "CASACAS"
-        elif "SHORT" in ident: grupo = "SHORTS"
-        elif "BUZO" in ident: grupo = "BUZOS"
-        elif "AUDIFONO" in ident or "AURICULAR" in ident: grupo = "AUDIFONOS"
-        elif "TV" in ident or "TELEVISOR" in ident: grupo = "TV"
-        elif "PARLANTE" in ident or "ALTAVOZ" in ident: grupo = "PARLANTE"
+        # CAMBIO CRÍTICO: Primero evaluamos las subcategorías exactas para evitar que marcas como 'JBL' secuestren el flujo
+        if "AUDIFONO" in ident or "AURICULAR" in ident: grupo = "AUDIFONOS"
         elif "BARRA" in ident or "SOUNDBAR" in ident or "SB580" in ident: grupo = "BARRA DE SONIDO"
+        elif "PARLANTE" in ident or "ALTAVOZ" in ident or "BOOMBOX" in ident: grupo = "PARLANTE"
+        elif "TV" in ident or "TELEVISOR" in ident: grupo = "TV"
         elif "CELULAR" in ident or "TELEFONO" in ident: grupo = "CELULAR"
         elif "PC" in ident or "LAPTOP" in ident or "COMPUTADORA" in ident: grupo = "PC"
         elif "REFRIGERADORA" in ident or "NEVERA" in ident: grupo = "REFRIGERADORA"
         elif "LAVADORA" in ident: grupo = "LAVADORA"
         elif "ELECTRO" in ident or "LICUADORA" in ident or "MICROONDAS" in ident: grupo = "ELECTRODOMESTICOS"
         elif "CAMA" in ident or "COLCHON" in ident: grupo = "CAMA"
+        elif "PERFUME" in ident: grupo = "PERFUMES"
+        elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
+        elif "MEDIAS" in ident: grupo = "MEDIAS"
+        elif "POLO" in ident: grupo = "POLOS"
+        elif "CASACA" in ident: grupo = "CASACAS"
+        elif "SHORT" in ident: grupo = "SHORTS"
+        elif "BUZO" in ident: grupo = "BUZOS"
         else: grupo = "OTROS"
         
         if target != "TODOS" and target != grupo:
@@ -268,7 +238,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 lista_html_streamlit.append(p)
                 total += 1
                 
-                # Control anti-spam de Telegram
                 ya_alertado = False
                 try:
                     check = supabase.table("historial_precios")\
@@ -288,7 +257,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if ya_alertado:
                     continue
                 
-                # Enviar notificación limpia a Telegram
                 emoji = mapa_emojis.get(grupo, "🔥")
                 text_alerta = f"{emoji} *PRODUCTO EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -331,5 +299,4 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO EN LA TIENDA]({prod['link']})")
         except: pass
 
-    return f"Éxito. Modelos únicos: {total}. Alertas enviadas a Telegram: {alertas_enviadas}."
     return f"Éxito. Modelos únicos: {total}. Alertas enviadas a Telegram: {alertas_enviadas}."
