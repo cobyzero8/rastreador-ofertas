@@ -46,9 +46,6 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
-    # =======================================================
-    # MOTOR 1: BELCORP
-    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -61,51 +58,36 @@ def escanear_tienda(url, limite):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
 
-   # =======================================================
-    # MOTOR 2: NUEVO FRENTE TECNOLÓGICO (JBL y SAMSUNG)
-    # =======================================================
     elif "jbl." in url or "samsung." in url:
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                
-                # Ajuste quirúrgico para la grilla de productos de JBL Perú
                 items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('[class*="productCard"]')
                 if not items:
                     items = soup.find_all(['div', 'article'], class_=re.compile(r'(product|card|item|tile)', re.I))
                 
                 for t in items:
                     try:
-                        # JBL usa clases como 'pdp-link' para el título o etiquetas 'a' dentro de la estructura
                         tit_el = t.select_one('.pdp-link a') or t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
                         if len(nombre_prod) < 5: continue
                         
-                        # Extraemos los precios buscando la clase de precio de venta/oferta de JBL (.sales o .price)
-                        precio_texto = ""
+                        precio_texto = t.text
                         precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
-                        if precio_el:
-                            precio_texto = precio_el.text
-                        else:
-                            precio_texto = t.text
+                        if precio_el: precio_texto = precio_el.text
 
-                        # Captura formatos de moneda peruana (S/. 199, S/.199.00 o números limpios)
                         precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_texto)
-                        if not precios:
-                            precios = re.findall(r'\b\d{2,4}\.\d{2}\b', precio_texto)
+                        if not precios: precios = re.findall(r'\b\d{2,4}\.\d{2}\b', precio_texto)
                             
                         if precios:
-                            # Limpiamos el formato para convertirlo a número flotante ejecutable
                             raw_precio = precios[0].replace('.', '').replace(',', '.') if ',' in precios[0] and '.' in precios[0] else precios[0].replace(',', '.')
                             precio = float(raw_precio)
                             
                             if 0 < precio <= limite:
                                 link_el = t.find('a', href=True)
                                 enlace_final = urljoin(url, link_el['href']) if link_el else url
-                                
-                                # Captura de imágenes para la notificación de Telegram
                                 img_el = t.find('img')
                                 img_final = ""
                                 if img_el:
@@ -113,17 +95,11 @@ def escanear_tienda(url, limite):
                                     if img_final.startswith('//'): img_final = 'https:' + img_final
                                 
                                 productos.append({
-                                    "nombre": f"JBL - {nombre_prod}",
-                                    "precio": precio,
-                                    "link": enlace_final,
-                                    "img": img_final
+                                    "nombre": f"JBL - {nombre_prod}", "precio": precio, "link": enlace_final, "img": img_final
                                 })
                     except: continue
         except: pass
 
-    # =======================================================
-    # MOTOR 3: PLATANITOS
-    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -174,11 +150,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     
     total = 0
     alertas_enviadas = 0
+    lista_html_streamlit = [] # Nueva lista para pintar en la interfaz
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "OTROS": "📦"}
     enviados_en_este_clic = set()
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
     target = str(filtro_objetivo).strip().upper()
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
     for item in res.data:
         ident = item['identificador'].upper()
@@ -203,12 +180,13 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if nombre_unico in enviados_en_este_clic: continue
                 enviados_en_este_clic.add(nombre_unico)
                 
-                # -----------------------------------------------------------
-                # BLINDAJE ANTI-SPAM: Validar si ya enviamos esta alerta HOY
-                # -----------------------------------------------------------
+                # JALAMOS LOS PRODUCTOS DIRECTO A LA PANTALLA (SIN IMPORTAR EL ANTI-SPAM)
+                lista_html_streamlit.append(p)
+                total += 1
+                
+                # Evaluamos el anti-spam EXCLUSIVAMENTE para las alertas ruidosas de Telegram
                 ya_alertado = False
                 try:
-                    # Buscamos en el historial si este mismo radar ya registró este precio exacto hoy
                     check = supabase.table("historial_precios")\
                         .select("id")\
                         .eq("identificador", item['identificador'])\
@@ -219,34 +197,42 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         ya_alertado = True
                 except: pass
                 
-                # Guardamos siempre en el historial para mantener las métricas al día
+                # Guardamos siempre el historial en la BD
                 supabase.table("historial_precios").insert({
-                    "identificador": item['identificador'], 
-                    "precio": p['precio'], 
-                    "fecha": fecha_hoy
+                    "identificador": item['identificador'], "precio": p['precio'], "fecha": fecha_hoy
                 }).execute()
-                total += 1
                 
-                # SI YA TE AVISÓ HOY DE ESTE PRECIO, CONTINÚA CON EL SIGUIENTE SIN MANDAR TELEGRAM
                 if ya_alertado:
                     continue
                 
-                # -----------------------------------------------------------
-                # Construcción y envío de la Alerta (Solo si es nueva)
-                # -----------------------------------------------------------
+                # Envío a Telegram (Solo si es un cambio real o producto nuevo)
                 emoji = mapa_emojis.get(grupo, "🔥")
-                text_alerta = f"{emoji} *NUEVA OFERTA ENCONTRADA* {emoji}\n"
+                text_alerta = f"{emoji} *PRODUCTO EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
                 text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
-                text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
                 text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
-                text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
-                text_alerta += f"🚨 _¡Aprovecha antes de que cambie el stock!_"
-                
+                text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n"
                 enviar_telegram(text_alerta, p['link'], p.get('img', ''))
                 alertas_enviadas += 1
                 time.sleep(0.4)
             except: pass
             
-    return f"Éxito. Modelos únicos: {total}. Alertas enviadas: {alertas_enviadas}."
+    # Si estamos en Streamlit, pintamos los resultados en vivo en recuadros interactivos
+    if len(lista_html_streamlit) > 0:
+        try:
+            import streamlit as st
+            st.write(f"### 🎯 Modelos encontrados en este instante ({len(lista_html_streamlit)}):")
+            for prod in lista_html_streamlit:
+                with st.container(border=True):
+                    col1, col2 = st.columns([2, 8])
+                    with col1:
+                        if prod.get('img'): st.image(prod['img'], width=110)
+                        else: st.write("📷 _Sin Foto_")
+                    with col2:
+                        st.markdown(f"#### `{prod['nombre']}`")
+                        st.markdown(f"💰 **Precio de catálogo:** `S/. {prod['precio']:.2f}`")
+                        st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO EN LA TIENDA]({prod['link']})")
+        except: pass
+
+    return f"Éxito. Modelos únicos: {total}. Alertas enviadas a Telegram: {alertas_enviadas}."
