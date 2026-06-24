@@ -38,51 +38,86 @@ if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 if "filtro_activo" not in st.session_state: st.session_state.filtro_activo = "TODOS"
 
 def botonera_independiente():
-    st.write("### 🎛️ Filtro de Selección Directa")
+    st.write("### 🔍 Filtrar Patrullaje por Categoría:")
     
-    # Fila 1: Especialidades generales
+    # Inicializar el estado si no existe
+    if "filtro_activo" not in st.session_state:
+        st.session_state.filtro_activo = "TODOS"
+        
+    # Fila 1: Generales y Calzado
+    st.write("**Básicos:**")
     c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        if st.button("🧪 Perfumes", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PERFUMES" else "secondary"): 
-            st.session_state.filtro_activo = "PERFUMES"
-            st.rerun()
-    with c2:
-        if st.button("👟 Zapatillas", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ZAPATILLAS" else "secondary"): 
-            st.session_state.filtro_activo = "ZAPATILLAS"
-            st.rerun()
-    with c3:
-        if st.button("📺 Tecnología", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TECNOLOGIA" else "secondary"): 
-            st.session_state.filtro_activo = "TECNOLOGIA"
-            st.rerun()
-    with c4:
-        if st.button("🌐 Ver Todo", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TODOS" else "secondary"): 
+    with c1: 
+        if st.button("🌐 TODOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TODOS" else "secondary"): 
             st.session_state.filtro_activo = "TODOS"
-            st.rerun()
-
-    # Fila 2: Desglose textil al mismo nivel
-    st.write("▼ **Categorías de Ropa Directas:**")
-    c5, c6, c7, c8, c9 = st.columns(5)
-    with c5:
-        if st.button("🧦 Medias", use_container_width=True, type="primary" if st.session_state.filtro_activo == "MEDIAS" else "secondary"): 
-            st.session_state.filtro_activo = "MEDIAS"
-            st.rerun()
-    with c6:
-        if st.button("👕 Polos", use_container_width=True, type="primary" if st.session_state.filtro_activo == "POLOS" else "secondary"): 
+    with c2: 
+        if st.button("🧪 PERFUMES", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PERFUMES" else "secondary"): 
+            st.session_state.filtro_activo = "PERFUMES"
+    with c3: 
+        if st.button("👟 ZAPATILLAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ZAPATILLAS" else "secondary"): 
+            st.session_state.filtro_activo = "ZAPATILLAS"
+    with c4: 
+        if st.button("📦 OTROS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "OTROS" else "secondary"): 
+            st.session_state.filtro_activo = "OTROS"
+            
+    # Fila 2: Ropa
+    st.write("**Ropa:**")
+    r1, r2, r3, r4, r5 = st.columns(5)
+    with r1:
+        if st.button("👕 POLOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "POLOS" else "secondary"): 
             st.session_state.filtro_activo = "POLOS"
-            st.rerun()
-    with c7:
-        if st.button("🧥 Casacas/Poleras", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CASACAS" else "secondary"): 
+    with r2:
+        if st.button("🧥 CASACAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CASACAS" else "secondary"): 
             st.session_state.filtro_activo = "CASACAS"
-            st.rerun()
-    with c8:
-        if st.button("🩳 Shorts", use_container_width=True, type="primary" if st.session_state.filtro_activo == "SHORTS" else "secondary"): 
+    with r3:
+        if st.button("🩳 SHORTS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "SHORTS" else "secondary"): 
             st.session_state.filtro_activo = "SHORTS"
-            st.rerun()
-    with c9:
-        if st.button("👖 Buzos", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BUZOS" else "secondary"): 
+    with r4:
+        if st.button("👖 BUZOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BUZOS" else "secondary"): 
             st.session_state.filtro_activo = "BUZOS"
-            st.rerun()
+    with r5:
+        if st.button("🧦 MEDIAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "MEDIAS" else "secondary"): 
+            st.session_state.filtro_activo = "MEDIAS"
 
+    # Fila 3: Electrónica y Sonido
+    st.write("**Audio, Video y Gadgets:**")
+    t1, t2, t3, t4, t5 = st.columns(5)
+    with t1:
+        if st.button("🎧 AUDÍFONOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "AUDIFONOS" else "secondary"): 
+            st.session_state.filtro_activo = "AUDIFONOS"
+    with t2:
+        if st.button("📺 TV", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TV" else "secondary"): 
+            st.session_state.filtro_activo = "TV"
+    with t3:
+        if st.button("🔊 PARLANTE", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PARLANTE" else "secondary"): 
+            st.session_state.filtro_activo = "PARLANTE"
+    with t4:
+        if st.button("🎵 B. SONIDO", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BARRA DE SONIDO" else "secondary"): 
+            st.session_state.filtro_activo = "BARRA DE SONIDO"
+    with t5:
+        if st.button("📱 CELULAR", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CELULAR" else "secondary"): 
+            st.session_state.filtro_activo = "CELULAR"
+
+    # Fila 4: Hogar y Línea Blanca
+    st.write("**Hogar y Electrodomésticos:**")
+    h1, h2, h3, h4, h5 = st.columns(5)
+    with h1:
+        if st.button("💻 PC / LAPTOP", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PC" else "secondary"): 
+            st.session_state.filtro_activo = "PC"
+    with h2:
+        if st.button("❄️ REFRIGERADORA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "REFRIGERADORA" else "secondary"): 
+            st.session_state.filtro_activo = "REFRIGERADORA"
+    with h3:
+        if st.button("🧺 LAVADORA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "LAVADORA" else "secondary"): 
+            st.session_state.filtro_activo = "LAVADORA"
+    with h4:
+        if st.button("🔌 ELECTRODOM.", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ELECTRODOMESTICOS" else "secondary"): 
+            st.session_state.filtro_activo = "ELECTRODOMESTICOS"
+    with h5:
+        if st.button("🛏️ CAMA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CAMA" else "secondary"): 
+            st.session_state.filtro_activo = "CAMA"
+
+    st.info(f"📍 **Filtro seleccionado actualmente:** `{st.session_state.filtro_activo}`")
 # ==========================================
 # 📈 DASHBOARD INTERACTIVO
 # ==========================================
