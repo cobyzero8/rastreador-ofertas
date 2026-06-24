@@ -46,6 +46,9 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
+    # =======================================================
+    # MOTOR 1: BELCORP
+    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -53,11 +56,23 @@ def escanear_tienda(url, limite):
         try:
             resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
             for item in resp.json():
-                precio = float(item["items"][0]["sellers"][0]["commertialOffer"]["Price"])
-                if 0 < precio <= limite:
-                    productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
+                item_comercial = item["items"][0]["sellers"][0]["commertialOffer"]
+                precio_oferta = float(item_comercial["Price"])
+                precio_regular = float(item_comercial.get("ListPrice", precio_oferta))
+                
+                if 0 < precio_oferta <= limite:
+                    productos.append({
+                        "nombre": f"{marca.upper()} - {item['productName'].upper()}", 
+                        "precio": precio_oferta, 
+                        "precio_regular": precio_regular,
+                        "link": item["link"], 
+                        "img": item["items"][0]["images"][0]["imageUrl"]
+                    })
         except: pass
 
+    # =======================================================
+    # MOTOR 2: JBL Y SAMSUNG
+    # =======================================================
     elif "jbl." in url or "samsung." in url:
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
@@ -74,18 +89,27 @@ def escanear_tienda(url, limite):
                         nombre_prod = tit_el.text.strip().upper()
                         if len(nombre_prod) < 5: continue
                         
-                        precio_texto = t.text
+                        # Captura precio de lista viejo (regular) vs el de venta (oferta)
+                        reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('del')
                         precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
-                        if precio_el: precio_texto = precio_el.text
-
-                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_texto)
-                        if not precios: precios = re.findall(r'\b\d{2,4}\.\d{2}\b', precio_texto)
+                        
+                        raw_txt_oferta = precio_el.text if precio_el else t.text
+                        precios_oferta = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', raw_txt_oferta)
+                        if not precios_oferta: precios_oferta = re.findall(r'\b\d{2,4}\.\d{2}\b', raw_txt_oferta)
                             
-                        if precios:
-                            raw_precio = precios[0].replace('.', '').replace(',', '.') if ',' in precios[0] and '.' in precios[0] else precios[0].replace(',', '.')
-                            precio = float(raw_precio)
+                        if precios_oferta:
+                            p_of = precios_oferta[0].replace('.', '').replace(',', '.') if ',' in precios_oferta[0] and '.' in precios_oferta[0] else precios_oferta[0].replace(',', '.')
+                            precio_oferta = float(p_of)
                             
-                            if 0 < precio <= limite:
+                            # Intentar sacar el regular, si no hay, es igual al de oferta
+                            precio_regular = precio_oferta
+                            if reg_el:
+                                precios_reg = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', reg_el.text)
+                                if precios_reg:
+                                    p_rg = precios_reg[0].replace('.', '').replace(',', '.') if ',' in precios_reg[0] and '.' in precios_reg[0] else precios_reg[0].replace(',', '.')
+                                    precio_regular = float(p_rg)
+                            
+                            if 0 < precio_oferta <= limite:
                                 link_el = t.find('a', href=True)
                                 enlace_final = urljoin(url, link_el['href']) if link_el else url
                                 img_el = t.find('img')
@@ -95,11 +119,14 @@ def escanear_tienda(url, limite):
                                     if img_final.startswith('//'): img_final = 'https:' + img_final
                                 
                                 productos.append({
-                                    "nombre": f"JBL - {nombre_prod}", "precio": precio, "link": enlace_final, "img": img_final
+                                    "nombre": f"JBL - {nombre_prod}", "precio": precio_oferta, "precio_regular": precio_regular, "link": enlace_final, "img": img_final
                                 })
                     except: continue
         except: pass
 
+    # =======================================================
+    # MOTOR 3: PLATANITOS Y TRADICIONALES
+    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -118,10 +145,24 @@ def escanear_tienda(url, limite):
                         tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
                         if not tit or len(tit.text.strip()) < 3: continue
                         
+                        # Platanitos a veces mete el precio antiguo en etiquetas <del> o clases 'regular'
+                        del_el = t.find(['del', 'span'], class_=re.compile(r'(regular|original|old)', re.I))
+                        
                         precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
                         if precios:
-                            precio = float(precios[0].replace(',', '.'))
-                            if precio <= limite:
+                            precio_oferta = float(precios[0].replace(',', '.'))
+                            precio_regular = precio_oferta
+                            
+                            if del_el:
+                                precios_del = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', del_el.text)
+                                if precios_del: precio_regular = float(precios_del[0].replace(',', '.'))
+                            elif len(precios) > 1:
+                                # Si re.findall pescó más de un precio en el texto de la tarjeta, por lo general el mayor es el de lista
+                                precios_float = [float(pr.replace(',', '.')) for pr in precios]
+                                precio_regular = max(precios_float)
+                                precio_oferta = min(precios_float)
+                            
+                            if precio_oferta <= limite:
                                 a_href = None
                                 enlaces_internos = t.find_all('a', href=True)
                                 for enlace in enlaces_internos:
@@ -138,7 +179,9 @@ def escanear_tienda(url, limite):
                                     
                                 enlace_final = urljoin(url, a_href) if a_href else url
                                 img = t.find('img', src=True)
-                                productos.append({"nombre": tit.text.strip().upper(), "precio": precio, "link": enlace_final, "img": img['src'] if img else ""})
+                                productos.append({
+                                    "nombre": tit.text.strip().upper(), "precio": precio_oferta, "precio_regular": precio_regular, "link": enlace_final, "img": img['src'] if img else ""
+                                })
                     except: continue
                 time.sleep(0.3)
             except: break
@@ -150,7 +193,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     
     total = 0
     alertas_enviadas = 0
-    lista_html_streamlit = [] # Nueva lista para pintar en la interfaz
+    lista_html_streamlit = []
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "OTROS": "📦"}
     enviados_en_este_clic = set()
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
@@ -180,11 +223,10 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if nombre_unico in enviados_en_este_clic: continue
                 enviados_en_este_clic.add(nombre_unico)
                 
-                # JALAMOS LOS PRODUCTOS DIRECTO A LA PANTALLA (SIN IMPORTAR EL ANTI-SPAM)
                 lista_html_streamlit.append(p)
                 total += 1
                 
-                # Evaluamos el anti-spam EXCLUSIVAMENTE para las alertas ruidosas de Telegram
+                # Control anti-spam de Telegram
                 ya_alertado = False
                 try:
                     check = supabase.table("historial_precios")\
@@ -197,7 +239,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         ya_alertado = True
                 except: pass
                 
-                # Guardamos siempre el historial en la BD
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], "precio": p['precio'], "fecha": fecha_hoy
                 }).execute()
@@ -205,7 +246,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if ya_alertado:
                     continue
                 
-                # Envío a Telegram (Solo si es un cambio real o producto nuevo)
+                # Telegram
                 emoji = mapa_emojis.get(grupo, "🔥")
                 text_alerta = f"{emoji} *PRODUCTO EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -218,7 +259,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 time.sleep(0.4)
             except: pass
             
-    # Si estamos en Streamlit, pintamos los resultados en vivo en recuadros interactivos
+    # MOSTRAR EN STREAMLIT CON CÁLCULO DE DESCUENTOS EN TIEMPO REAL
     if len(lista_html_streamlit) > 0:
         try:
             import streamlit as st
@@ -227,11 +268,26 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 with st.container(border=True):
                     col1, col2 = st.columns([2, 8])
                     with col1:
-                        if prod.get('img'): st.image(prod['img'], width=110)
+                        if prod.get('img'): st.image(prod['img'], width=120)
                         else: st.write("📷 _Sin Foto_")
                     with col2:
                         st.markdown(f"#### `{prod['nombre']}`")
-                        st.markdown(f"💰 **Precio de catálogo:** `S/. {prod['precio']:.2f}`")
+                        
+                        p_oferta = prod['precio']
+                        p_regular = prod.get('precio_regular', p_oferta)
+                        
+                        # Si el precio regular detectado es mayor al de oferta, calculamos la rebaja
+                        if p_regular > p_oferta:
+                            ahorro_soles = p_regular - p_oferta
+                            porcentaje = (ahorro_soles / p_regular) * 100
+                            
+                            st.markdown(f"❌ ~~Precio Regular: S/. {p_regular:.2f}~~")
+                            st.markdown(f"💰 **Precio Oferta: S/. {p_oferta:.2f}**")
+                            st.markdown(f"🔥 **¡Ahorraste S/. {ahorro_soles:.2f}! ({porcentaje:.0f}% de Descuento)**")
+                        else:
+                            st.markdown(f"💰 **Precio Actual: S/. {p_oferta:.2f}**")
+                            st.caption("ℹ️ _La tienda no reporta precio regular anterior, o se encuentra a precio de etiqueta original._")
+                            
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO EN LA TIENDA]({prod['link']})")
         except: pass
 
