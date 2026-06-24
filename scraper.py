@@ -61,7 +61,7 @@ def escanear_tienda(url, limite):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": precio, "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: pass
 
-    # =======================================================
+   # =======================================================
     # MOTOR 2: NUEVO FRENTE TECNOLÓGICO (JBL y SAMSUNG)
     # =======================================================
     elif "jbl." in url or "samsung." in url:
@@ -70,40 +70,50 @@ def escanear_tienda(url, limite):
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Buscador genérico inteligente para tarjetas de tecnología
-                # Apuntamos a clases comunes de productos en tiendas oficiales (VTEX / Shopify / Propias)
-                items = soup.select('[class*="product-item"], [class*="productCard"], [class*="product-card"], .product-info, [class*="product_tile"]')
+                # Ajuste quirúrgico para la grilla de productos de JBL Perú
+                items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('[class*="productCard"]')
                 if not items:
                     items = soup.find_all(['div', 'article'], class_=re.compile(r'(product|card|item|tile)', re.I))
                 
                 for t in items:
                     try:
-                        tit_el = t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
+                        # JBL usa clases como 'pdp-link' para el título o etiquetas 'a' dentro de la estructura
+                        tit_el = t.select_one('.pdp-link a') or t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
                         if len(nombre_prod) < 5: continue
                         
-                        # Buscamos el precio de oferta en el texto de la tarjeta
-                        # Captura formatos como S/. 199, S/.199.00 o simplemente números de tres cifras
-                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                        # Extraemos los precios buscando la clase de precio de venta/oferta de JBL (.sales o .price)
+                        precio_texto = ""
+                        precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
+                        if precio_el:
+                            precio_texto = precio_el.text
+                        else:
+                            precio_texto = t.text
+
+                        # Captura formatos de moneda peruana (S/. 199, S/.199.00 o números limpios)
+                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', precio_texto)
                         if not precios:
-                            # Intento secundario si el precio no tiene el "S/." explícito al lado
-                            precios = re.findall(r'\b\d{2,4}\.\d{2}\b', t.text)
+                            precios = re.findall(r'\b\d{2,4}\.\d{2}\b', precio_texto)
                             
                         if precios:
-                            precio = float(precios[0].replace(',', '.'))
+                            # Limpiamos el formato para convertirlo a número flotante ejecutable
+                            raw_precio = precios[0].replace('.', '').replace(',', '.') if ',' in precios[0] and '.' in precios[0] else precios[0].replace(',', '.')
+                            precio = float(raw_precio)
+                            
                             if 0 < precio <= limite:
                                 link_el = t.find('a', href=True)
                                 enlace_final = urljoin(url, link_el['href']) if link_el else url
                                 
+                                # Captura de imágenes para la notificación de Telegram
                                 img_el = t.find('img')
                                 img_final = ""
                                 if img_el:
-                                    img_final = img_el.get('data-src', img_el.get('src', ''))
+                                    img_final = img_el.get('data-src') or img_el.get('src') or ''
                                     if img_final.startswith('//'): img_final = 'https:' + img_final
                                 
                                 productos.append({
-                                    "nombre": f"TEC - {nombre_prod}",
+                                    "nombre": f"JBL - {nombre_prod}",
                                     "precio": precio,
                                     "link": enlace_final,
                                     "img": img_final
