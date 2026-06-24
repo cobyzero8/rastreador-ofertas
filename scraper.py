@@ -218,7 +218,15 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     total = 0
     alertas_enviadas = 0
     lista_html_streamlit = []
-    mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "TECNOLOGIA": "📺", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "OTROS": "📦"}
+    
+    # Nuevo mapa de emojis ampliado con tus categorías independientes
+    mapa_emojis = {
+        "PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", 
+        "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", 
+        "TV": "📺", "PARLANTE": "🔊", "BARRA DE SONIDO": "🎵", "CELULAR": "📱", 
+        "PC": "💻", "REFRIGERADORA": "❄️", "LAVADORA": "🧺", 
+        "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"
+    }
     enviados_en_este_clic = set()
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
@@ -227,14 +235,24 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     for item in res.data:
         ident = item['identificador'].upper()
         
+        # Mapeo lógico por palabras clave en el identificador
         if "PERFUME" in ident: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident: grupo = "ZAPATILLAS"
-        elif "TECNOLOGIA" in ident or "TV" in ident or "JBL" in ident or "SAMSUNG" in ident: grupo = "TECNOLOGIA"
         elif "MEDIAS" in ident: grupo = "MEDIAS"
-        elif "POLOS" in ident: grupo = "POLOS"
-        elif "CASACAS" in ident: grupo = "CASACAS"
-        elif "SHORTS" in ident: grupo = "SHORTS"
-        elif "BUZOS" in ident: grupo = "BUZOS"
+        elif "POLO" in ident: grupo = "POLOS"
+        elif "CASACA" in ident: grupo = "CASACAS"
+        elif "SHORT" in ident: grupo = "SHORTS"
+        elif "BUZO" in ident: grupo = "BUZOS"
+        elif "AUDIFONO" in ident or "AURICULAR" in ident: grupo = "AUDIFONOS"
+        elif "TV" in ident or "TELEVISOR" in ident: grupo = "TV"
+        elif "PARLANTE" in ident or "ALTAVOZ" in ident: grupo = "PARLANTE"
+        elif "BARRA" in ident or "SOUNDBAR" in ident or "SB580" in ident: grupo = "BARRA DE SONIDO"
+        elif "CELULAR" in ident or "TELEFONO" in ident: grupo = "CELULAR"
+        elif "PC" in ident or "LAPTOP" in ident or "COMPUTADORA" in ident: grupo = "PC"
+        elif "REFRIGERADORA" in ident or "NEVERA" in ident: grupo = "REFRIGERADORA"
+        elif "LAVADORA" in ident: grupo = "LAVADORA"
+        elif "ELECTRO" in ident or "LICUADORA" in ident or "MICROONDAS" in ident: grupo = "ELECTRODOMESTICOS"
+        elif "CAMA" in ident or "COLCHON" in ident: grupo = "CAMA"
         else: grupo = "OTROS"
         
         if target != "TODOS" and target != grupo:
@@ -250,6 +268,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 lista_html_streamlit.append(p)
                 total += 1
                 
+                # Control anti-spam de Telegram
                 ya_alertado = False
                 try:
                     check = supabase.table("historial_precios")\
@@ -269,11 +288,13 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if ya_alertado:
                     continue
                 
+                # Enviar notificación limpia a Telegram
                 emoji = mapa_emojis.get(grupo, "🔥")
                 text_alerta = f"{emoji} *PRODUCTO EN TU RANGO* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
                 text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
+                text_alerta += f"🏷️ *Categoría:* `{grupo}`\n"
                 text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
                 text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n"
                 enviar_telegram(text_alerta, p['link'], p.get('img', ''))
@@ -300,15 +321,15 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         if p_regular > p_oferta:
                             ahorro_soles = p_regular - p_oferta
                             porcentaje = (ahorro_soles / p_regular) * 100
-                            
                             st.markdown(f"❌ ~~Precio Regular: S/. {p_regular:.2f}~~")
                             st.markdown(f"💰 **Precio Oferta: S/. {p_oferta:.2f}**")
                             st.markdown(f"🔥 **¡Ahorraste S/. {ahorro_soles:.2f}! ({porcentaje:.0f}% de Descuento)**")
                         else:
                             st.markdown(f"💰 **Precio Actual: S/. {p_oferta:.2f}**")
-                            st.caption("ℹ️ _La tienda no reporta precio regular anterior, o se encuentra a precio de etiqueta original._")
+                            st.caption("ℹ️ _Precio de etiqueta original o sin descuento de lista reportado._")
                             
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO EN LA TIENDA]({prod['link']})")
         except: pass
 
+    return f"Éxito. Modelos únicos: {total}. Alertas enviadas a Telegram: {alertas_enviadas}."
     return f"Éxito. Modelos únicos: {total}. Alertas enviadas a Telegram: {alertas_enviadas}."
