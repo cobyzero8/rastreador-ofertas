@@ -178,6 +178,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     enviados_en_este_clic = set()
     
     target = str(filtro_objetivo).strip().upper()
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
     for item in res.data:
         ident = item['identificador'].upper()
@@ -202,7 +203,23 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 if nombre_unico in enviados_en_este_clic: continue
                 enviados_en_este_clic.add(nombre_unico)
                 
-                fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+                # -----------------------------------------------------------
+                # BLINDAJE ANTI-SPAM: Validar si ya enviamos esta alerta HOY
+                # -----------------------------------------------------------
+                ya_alertado = False
+                try:
+                    # Buscamos en el historial si este mismo radar ya registró este precio exacto hoy
+                    check = supabase.table("historial_precios")\
+                        .select("id")\
+                        .eq("identificador", item['identificador'])\
+                        .eq("precio", p['precio'])\
+                        .eq("fecha", fecha_hoy)\
+                        .execute()
+                    if check.data and len(check.data) > 0:
+                        ya_alertado = True
+                except: pass
+                
+                # Guardamos siempre en el historial para mantener las métricas al día
                 supabase.table("historial_precios").insert({
                     "identificador": item['identificador'], 
                     "precio": p['precio'], 
@@ -210,15 +227,22 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 }).execute()
                 total += 1
                 
+                # SI YA TE AVISÓ HOY DE ESTE PRECIO, CONTINÚA CON EL SIGUIENTE SIN MANDAR TELEGRAM
+                if ya_alertado:
+                    continue
+                
+                # -----------------------------------------------------------
+                # Construcción y envío de la Alerta (Solo si es nueva)
+                # -----------------------------------------------------------
                 emoji = mapa_emojis.get(grupo, "🔥")
-                text_alerta = f"{emoji} *PRODUCTO DISPONIBLE EN TU RANGO* {emoji}\n"
+                text_alerta = f"{emoji} *NUEVA OFERTA ENCONTRADA* {emoji}\n"
                 text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
                 text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
                 text_alerta += f"🏷️ *Categoría:* `{grupo}`\n\n"
                 text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
                 text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n\n"
-                text_alerta += f"🚨 _¡Revisa si te gusta el modelo!_"
+                text_alerta += f"🚨 _¡Aprovecha antes de que cambie el stock!_"
                 
                 enviar_telegram(text_alerta, p['link'], p.get('img', ''))
                 alertas_enviadas += 1
