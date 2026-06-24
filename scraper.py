@@ -64,12 +64,13 @@ def limpiar_precio_pnp(texto_precio):
 def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
+    url_low = url.lower()
 
     # -------------------------------------------------------
-    # MOTOR 1: BELCORP
+    # MOTOR 1: BELCORP (Cyzone, L'Bel, Ésika)
     # -------------------------------------------------------
-    if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
-        marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
+    if any(k in url_low for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
+        marca = "cyzone" if "cyzone" in url_low else "lbel" if "lbel" in url_low else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         try:
@@ -87,17 +88,18 @@ def escanear_tienda(url, limite):
         except: pass
 
     # -------------------------------------------------------
-    # MOTOR 2: SAMSUNG (¡Bypass Inteligente por API JSON!)
+    # MOTOR 2: CONECTA RETAIL (¡Efe y La Curacao por API VTEX!)
     # -------------------------------------------------------
-    elif "samsung.com" in url.lower():
+    elif "efe.com.pe" in url_low or "lacuracao.pe" in url_low:
+        tienda_tag = "EFE" if "efe.com.pe" in url_low else "CURACAO"
+        base_domain = "www.efe.com.pe" if "efe.com.pe" in url_low else "www.lacuracao.pe"
+        
+        # Extraemos dinámicamente el término de búsqueda de la URL o usamos uno genérico
+        keyword = "televisores" if "tv" in url_low else "celulares" if any(x in url_low for x in ["celular", "movil", "telefono"]) else "combos-de-cama" if "cama" in url_low else "computo"
+        api_url = f"https://{base_domain}/api/catalog_system/pub/products/search"
+        params = {"ft": keyword, "_from": 0, "_to": 24, "O": "OrderByPriceASC"}
+        
         try:
-            # 🧠 Hack: Detectamos qué familia buscar basándonos en tu URL configurada
-            keyword = "smartphones" if any(k in url.lower() for k in ["celular", "galaxy", "phone"]) else "tv"
-            
-            # API endpoint directo de Samsung Perú para listado de productos
-            api_url = "https://shop.samsung.com/pe/api/catalog_system/pub/products/search"
-            params = {"ft": keyword, "_from": 0, "_to": 24, "O": "OrderByPriceASC"}
-            
             resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
             if resp.status_code == 200:
                 for item in resp.json():
@@ -112,7 +114,7 @@ def escanear_tienda(url, limite):
                         
                         if 0 < precio_oferta <= limite:
                             productos.append({
-                                "nombre": f"SAMSUNG - {nombre_prod}",
+                                "nombre": f"{tienda_tag} - {nombre_prod}",
                                 "precio": precio_oferta,
                                 "precio_regular": precio_regular,
                                 "link": enlace,
@@ -124,9 +126,9 @@ def escanear_tienda(url, limite):
     # -------------------------------------------------------
     # MOTOR 3: JBL (API interna por HTML UpdateGrid)
     # -------------------------------------------------------
-    elif "jbl.com.pe" in url.lower():
+    elif "jbl.com.pe" in url_low:
         try:
-            keyword = "barra" if "barra" in url.lower() else "wireless" if "wireless" in url.lower() else "parlante" if "parlante" in url.lower() else "audio"
+            keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
             api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
             params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
             
@@ -175,12 +177,12 @@ def escanear_tienda(url, limite):
         except: pass
 
     # -------------------------------------------------------
-    # MOTOR 4: PLATANITOS Y TRADICIONALES
+    # MOTOR 4: PLATANITOS Y TRADICIONALES CON HTML
     # -------------------------------------------------------
     else:
         for pagina in range(1, 4):
             url_paginada = url
-            if "platanitos.com" in url:
+            if "platanitos.com" in url_low:
                 conector = "&" if "?" in url else "?"
                 url_paginada = f"{url}{conector}page={pagina}"
             try:
@@ -267,9 +269,9 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             grupo = "BARRA DE SONIDO"
         elif "PARLANTE" in ident or "ALTAVOZ" in ident or "parlante" in url_low: 
             grupo = "PARLANTE"
-        elif "TV" in ident or "TELEVISOR" in ident or "smart-tv" in url_low: 
+        elif "TV" in ident or "TELEVISOR" in ident or "smart-tv" in url_low or "televisores" in url_low: 
             grupo = "TV"
-        elif "CELULAR" in ident or "TELEFONO" in ident or "smartphone" in url_low: 
+        elif "CELULAR" in ident or "TELEFONO" in ident or "smartphone" in url_low or "celulares" in url_low: 
             grupo = "CELULAR"
         elif "PC" in ident or "LAPTOP" in ident: 
             grupo = "PC"
@@ -279,7 +281,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             grupo = "LAVADORA"
         elif "ELECTRO" in ident or "LICUADORA" in ident: 
             grupo = "ELECTRODOMESTICOS"
-        elif "CAMA" in ident or "COLCHON" in ident: 
+        elif "CAMA" in ident or "COLCHON" in ident or "cama" in url_low: 
             grupo = "CAMA"
         elif "PERFUME" in ident: 
             grupo = "PERFUMES"
