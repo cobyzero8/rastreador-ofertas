@@ -11,44 +11,64 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# =======================================================
+# INICIALIZACIÓN GLOBAL BLINDADA DE SUPABASE
+# =======================================================
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
 try:
     import streamlit as st
-    if "SUPABASE_KEY" in st.secrets: SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-except: pass
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    if "SUPABASE_KEY" in st.secrets: 
+        SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except: 
+    pass
 
-def enviar_telegram(mensaje, url_compra, url_foto):
-    TOKEN_TELEGRAM = "8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI"
-    CHAT_ID_TELEGRAM = "8019752668"
-    url_api = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendPhoto"
-    
-    payload = {
-        "chat_id": CHAT_ID_TELEGRAM,
-        "photo": url_foto if url_foto else "https://via.placeholder.com/150",
-        "caption": mensaje,
-        "parse_mode": "Markdown",
-        "reply_markup": json.dumps({"inline_keyboard": [[{"text": "🛒 IR A LA OFERTA", "url": url_compra}]]})
-    }
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    raise ValueError("Error crítico: No se encontró la SUPABASE_KEY en el entorno ni en Secrets.")
+
+# =======================================================
+# FUNCIÓN GLOBAL DE LIMPIEZA DE PRECIOS PERUANOS (BLINDADA)
+# =======================================================
+def limpiar_precio_pnp(texto_precio):
+    if not texto_precio: 
+        return 0.0
     try:
-        r = requests.post(url_api, json=payload, timeout=12, verify=False)
-        if r.status_code != 200:
-            url_text = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-            requests.post(url_text, json={
-                "chat_id": CHAT_ID_TELEGRAM,
-                "text": mensaje + f"\n\n🛒 [Ir a la Tienda]({url_compra})",
-                "parse_mode": "Markdown"
-            }, timeout=10, verify=False)
-    except: pass
+        # Quitamos todo lo que no sea número, coma o punto
+        texto = re.sub(r'[^\d.,]', '', texto_precio).strip()
+        if not texto: 
+            return 0.0
+        
+        # Si tiene puntos y comas combinados (ej: 3,300.00 o 3.300,00)
+        if ',' in texto and '.' in texto:
+            if texto.rfind('.') > texto.rfind(','): 
+                texto = texto.replace(',', '')
+            else: 
+                texto = texto.replace('.', '').replace(',', '.')
+        else:
+            # Si solo tiene comas de miles (ej: 3,300) o un punto que parece de miles (ej: 3.300)
+            if ',' in texto and len(texto.split(',')[-1]) != 2:
+                texto = texto.replace(',', '')
+            elif '.' in texto and len(texto.split('.')[-1]) != 2:
+                texto = texto.replace('.', '')
+            elif ',' in texto: 
+                texto = texto.replace(',', '.')
+        
+        match = re.findall(r'\d+\.\d+|\d+', texto)
+        return float(match[0]) if match else 0.0
+    except:
+        return 0.0
 
+# =======================================================
+# NÚCLEO DE EXTRACCIÓN DE TIENDAS
+# =======================================================
 def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
-    # =======================================================
     # MOTOR 1: BELCORP
-    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -67,7 +87,25 @@ def escanear_tienda(url, limite):
                     })
         except: pass
 
-   try:
+    # MOTOR 2: JBL Y SAMSUNG
+    elif "jbl" in url.lower() or "samsung" in url.lower():
+        try:
+            if "jbl.com.pe" in url:
+                keyword = "barra" if "barra" in url else "wireless" if "wireless" in url else "parlante" if "parlante" in url else "audio"
+                api_url = f"https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
+                params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
+                resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            else:
+                resp = requests.get(url, headers=headers, timeout=15, verify=False)
+                
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('.product-grid-item')
+                if not items:
+                    items = soup.find_all(['div', 'article', 'li'], class_=re.compile(r'(product|card|item|tile|grid)', re.I))
+                
+                for t in items:
+                    try:
                         tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name') or t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
@@ -76,43 +114,19 @@ def escanear_tienda(url, limite):
                         reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('del')
                         precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
                         
-                        # --- NUEVA LÓGICA DE LIMPIEZA DE PRECIOS MEJORADA ---
-                        def limpiar_precio_pnp(texto_precio):
-                            if not texto_precio: return 0.0
-                            # Quitamos todo lo que no sea número, coma o punto
-                            texto = re.sub(r'[^\d.,]', '', texto_precio).strip()
-                            if not texto: return 0.0
-                            
-                            # Si tiene puntos y comas (ej: 3,300.00 o 3.300,00)
-                            if ',' in texto and '.' in texto:
-                                if texto.rfind('.') > texto.rfind(','): # Formato normal: 3,300.00
-                                    texto = texto.replace(',', '')
-                                else: # Formato invertido: 3.300,00
-                                    texto = texto.replace('.', '').replace(',', '.')
-                            else:
-                                # Si solo tiene comas (ej: 3,300) o un punto que parece de miles (ej: 3.300)
-                                if ',' in texto and len(texto.split(',')[-1]) != 2:
-                                    texto = texto.replace(',', '')
-                                elif '.' in texto and len(texto.split('.')[-1]) != 2:
-                                    texto = texto.replace('.', '')
-                                elif ',' in texto: # Caso decimal con coma: 2700,00
-                                    texto = texto.replace(',', '.')
-                            
-                            match = re.findall(r'\d+\.\d+|\d+', texto)
-                            return float(match[0]) if match else 0.0
-
-                        precio_oferta = limpiar_precio_pnp(precio_el.text if precio_el else t.text)
+                        txt_oferta = precio_el.text if precio_el else t.text
+                        precio_oferta = limpiar_precio_pnp(txt_oferta)
+                        if not precio_oferta: continue
                         
-                        # Si el bot extrajo un número absurdamente bajo (menor a 10) para tecnología pesada, probablemente omitió los miles
-                        if precio_oferta > 0 and precio_oferta < 10.0 and ("BARRA" in nombre_prod or "TV" in nombre_prod or "PARLANTE" in nombre_prod):
+                        # Corrección multiplicadora inteligente para miles mochados en tecnología pesada
+                        if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
                             precio_oferta = precio_oferta * 1000
                             
                         precio_regular = precio_oferta
                         if reg_el:
                             precio_regular = limpiar_precio_pnp(reg_el.text)
-                            if precio_regular > 0 and precio_regular < 10.0 and ("BARRA" in nombre_prod or "TV" in nombre_prod or "PARLANTE" in nombre_prod):
+                            if 0 < precio_regular < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
                                 precio_regular = precio_regular * 1000
-                        # -----------------------------------------------------
                         
                         if 0 < precio_oferta <= limite:
                             link_el = t.find('a', href=True)
@@ -129,10 +143,9 @@ def escanear_tienda(url, limite):
                                 "link": enlace_final, "img": img_final
                             })
                     except: continue
+        except: pass
 
-    # =======================================================
     # MOTOR 3: PLATANITOS Y TRADICIONALES
-    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -190,6 +203,9 @@ def escanear_tienda(url, limite):
             except: break
     return productos
 
+# =======================================================
+# SISTEMA DE PATRULLAJE DE OFERTAS
+# =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
     res = supabase.table("radares").select("*").execute()
     if not res or not res.data: return "Sin radares activos."
@@ -214,7 +230,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         ident = item['identificador'].upper()
         url_low = item['url'].lower()
         
-        # 🧠 DICCIONARIO EXPANDIDO: Captura audífonos, auriculares o enlaces 'wireless/tws'
         if any(k in ident for k in ["AUDIFONO", "AURICULAR", "FONO"]) or any(k in url_low for k in ["wireless", "tws", "headphone", "audio-oars"]): 
             grupo = "AUDIFONOS"
         elif "BARRA" in ident or "SOUNDBAR" in ident or "barra" in url_low: 
