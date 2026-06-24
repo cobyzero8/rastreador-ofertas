@@ -180,13 +180,20 @@ if menu == "📈 Ver Dashboard / Ofertas":
         st.data_editor(pd.DataFrame(lista_dashboard), column_config={"Enlace": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
     else: st.info("No hay ofertas registradas en este rango.")
 
-# ==========================================
-# 🛠️ GESTIÓN DE RADARES
-# ==========================================
+# =======================================================
+# 🛠️ GESTIÓN DE RADARES (REDISEÑADO CON NUEVAS CATEGORÍAS)
+# =======================================================
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
-    cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Tecnologia", "Otros"]
+    
+    # 🎯 NUEVA LISTA DE CATEGORÍAS DE ELECTRÓNICA Y HOGAR DIRECTAS
+    cats_form = [
+        "Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", 
+        "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", 
+        "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", 
+        "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"
+    ]
     
     with st.container(border=True):
         if st.session_state.mod_id is not None: st.markdown("### ✏️ Modificando Radar")
@@ -213,7 +220,8 @@ elif menu == "🛠️ Configurar Radares y URLs":
         with c_b1:
             txt_b = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
             if st.button(txt_b, type="primary", use_container_width=True):
-                if cat_man: cat_final = cat_man.replace(" ", "_").upper()
+                if cat_man: 
+                    cat_final = cat_man.replace(" ", "_").upper()
                 else:
                     cl = cat_menu.lower()
                     if "medias" in cl: cat_final = "ROPA_MEDIAS"
@@ -223,7 +231,16 @@ elif menu == "🛠️ Configurar Radares y URLs":
                     elif "buzos" in cl: cat_final = "ROPA_BUZOS"
                     elif "perfume" in cl: cat_final = "PERFUMES"
                     elif "zapatilla" in cl: cat_final = "ZAPATILLAS"
-                    elif "tecno" in cl or "tv" in cl: cat_final = "TECNOLOGIA"
+                    elif "audifono" in cl: cat_final = "AUDIFONOS"
+                    elif "tv" in cl: cat_final = "TV"
+                    elif "parlante" in cl: cat_final = "PARLANTE"
+                    elif "barra" in cl: cat_final = "BARRA_DE_SONIDO"
+                    elif "celular" in cl: cat_final = "CELULAR"
+                    elif "pc" in cl or "laptop" in cl: cat_final = "PC"
+                    elif "refrigeradora" in cl: cat_final = "REFRIGERADORA"
+                    elif "lavadora" in cl: cat_final = "LAVADORA"
+                    elif "electro" in cl: cat_final = "ELECTRODOMESTICOS"
+                    elif "cama" in cl or "colchon" in cl: cat_final = "CAMA"
                     else: cat_final = "OTROS"
                 
                 nuevo_id = f"{t_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
@@ -262,17 +279,21 @@ elif menu == "🛠️ Configurar Radares y URLs":
                 with st.container(border=True):
                     col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
                     with col_info:
-                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('ROPA_', 'ROPA ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
+                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('_', ' ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
                         st.caption(f"🔗 **URL:** [{item['url']}]({item['url']})")
                     with col_mod:
                         st.write("")
                         if st.button(f"📝 Modificar", key=f"mod_btn_{item['id']}", use_container_width=True):
                             st.session_state.mod_id = item["id"]
                             st.session_state.mod_tienda = tienda_p
+                            
                             rev_mapa = {
-                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "TECNOLOGIA": "Tecnologia", "OTROS": "Otros",
+                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "OTROS": "Otros",
                                 "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
-                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)"
+                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)",
+                                "AUDIFONOS": "Audifonos", "TV": "TV", "PARLANTE": "Parlante", 
+                                "BARRA_DE_SONIDO": "Barra de sonido", "CELULAR": "Celular", "PC": "PC / Laptop",
+                                "REFRIGERADORA": "Refrigeradora", "LAVADORA": "Lavadora", "ELECTRODOMESTICOS": "Electrodomesticos", "CAMA": "Cama"
                             }
                             st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
                             st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
