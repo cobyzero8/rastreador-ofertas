@@ -256,26 +256,21 @@ elif menu == "🛠️ Configurar Radares y URLs":
         else: st.info("No hay radares registrados.")
     except Exception as e: st.error(f"Error al conectar: {e}")
 
-# =======================================================
-# 💥 ESCANEO QUIRÚRGICO (PROTEGIDO)
-# =======================================================
+# ==========================================
+# 💥 ESCANEO QUIRÚRGICO (VISTA INTEGRAL)
+# ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje")
     botonera_independiente()
         
     st.write("---")
-    
-    # Creamos un contenedor limpio para mitigar ejecuciones fantasma
     if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
         target = st.session_state.filtro_activo
+        st.toast(f"🕵️‍♂️ Buscando {target}...")
         
-        with st.spinner(f"⏳ Lanzando escuadrón directo para el objetivo: {target}..."):
-            try:
-                # Importación segura dentro del contexto del botón
-                import scraper
-                
-                # Forzamos que solo se ejecute la función si el botón fue presionado en este instante
-                msg = scraper.revisar_ofertas(target)
-                st.success(f"✅ {msg}")
-            except Exception as e: 
-                st.error(f"❌ Error en el motor de raspado: {e}")
+        try:
+            from scraper import revisar_ofertas
+            msg = revisar_ofertas(target)
+            st.success(f"📊 Resumen del patrullaje: {msg}")
+        except Exception as e: 
+            st.error(f"❌ Error en el motor: {e}")
