@@ -88,41 +88,26 @@ def escanear_tienda(url, limite):
         except: pass
 
     # -------------------------------------------------------
-    # MOTOR 2: CONECTA RETAIL (¡Efe y La Curacao por API VTEX!)
+    # MOTOR 2: CONECTA RETAIL (Efe y La Curacao Normalizado)
     # -------------------------------------------------------
     elif "efe.com.pe" in url_low or "lacuracao.pe" in url_low:
         tienda_tag = "EFE" if "efe.com.pe" in url_low else "CURACAO"
         base_domain = "www.efe.com.pe" if "efe.com.pe" in url_low else "www.lacuracao.pe"
         
-        # Extraemos dinámicamente el término de búsqueda de la URL o usamos uno genérico
-        keyword = "televisores" if "tv" in url_low else "celulares" if any(x in url_low for x in ["celular", "movil", "telefono"]) else "combos-de-cama" if "cama" in url_low else "computo"
+        # Filtro de palabras clave adaptado a URL limpia o estructurada
+        if "soundbar" in url_low or "home-theater" in url_low or "barra" in url_low:
+            keyword = "soundbar"
+        elif "tv" in url_low or "televisores" in url_low:
+            keyword = "televisores"
+        elif any(x in url_low for x in ["celular", "movil", "telefono", "smartphones"]):
+            keyword = "celulares"
+        elif "cama" in url_low or "colchon" in url_low:
+            keyword = "combos-de-cama"
+        else:
+            keyword = "computo"
+            
         api_url = f"https://{base_domain}/api/catalog_system/pub/products/search"
         params = {"ft": keyword, "_from": 0, "_to": 24, "O": "OrderByPriceASC"}
-        
-        try:
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
-            if resp.status_code == 200:
-                for item in resp.json():
-                    try:
-                        nombre_prod = item["productName"].upper()
-                        item_comercial = item["items"][0]["sellers"][0]["commertialOffer"]
-                        
-                        precio_oferta = float(item_comercial["Price"])
-                        precio_regular = float(item_comercial.get("ListPrice", precio_oferta))
-                        enlace = item["link"]
-                        imagen = item["items"][0]["images"][0]["imageUrl"]
-                        
-                        if 0 < precio_oferta <= limite:
-                            productos.append({
-                                "nombre": f"{tienda_tag} - {nombre_prod}",
-                                "precio": precio_oferta,
-                                "precio_regular": precio_regular,
-                                "link": enlace,
-                                "img": imagen
-                            })
-                    except: continue
-        except: pass
-
     # -------------------------------------------------------
     # MOTOR 3: JBL (API interna por HTML UpdateGrid)
     # -------------------------------------------------------
