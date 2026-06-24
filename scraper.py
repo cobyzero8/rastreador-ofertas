@@ -62,6 +62,9 @@ def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
 
+    # =======================================================
+    # MOTOR 1: BELCORP
+    # =======================================================
     if any(k in url for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
         marca = "cyzone" if "cyzone" in url else "lbel" if "lbel" in url else "esika"
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
@@ -80,24 +83,35 @@ def escanear_tienda(url, limite):
                     })
         except: pass
 
-    elif "jbl." in url or "samsung." in url:
+    # =======================================================
+    # MOTOR 2: JBL Y SAMSUNG (¡Filtro de URL y Cajas Corregido!)
+    # =======================================================
+    elif "jbl" in url.lower() or "samsung" in url.lower():
         try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            # Cabeceras completas de navegador para evitar bloqueos informáticos
+            headers_nav = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "es-PE,es;q=0.9,en;q=0.8"
+            }
+            resp = requests.get(url, headers=headers_nav, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('[class*="productCard"]')
+                
+                # Mapeo amplio y flexible de grillas en JBL y tiendas tecnológicas
+                items = soup.select('.product-tile') or soup.select('[class*="product-item"]') or soup.select('.product-grid-item') or soup.select('[class*="productCard"]')
                 if not items:
                     items = soup.find_all(['div', 'article'], class_=re.compile(r'(product|card|item|tile)', re.I))
                 
                 for t in items:
                     try:
-                        tit_el = t.select_one('.pdp-link a') or t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
+                        tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name') or t.find(['h2', 'h3', 'h1', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
-                        if len(nombre_prod) < 5: continue
+                        if len(nombre_prod) < 3: continue
                         
-                        reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('del')
-                        precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('[class*="price"]')
+                        reg_el = t.select_one('.price .list .value') or t.select_one('[class*="list-price"]') or t.select_one('.strike-through') or t.select_one('del')
+                        precio_el = t.select_one('.price .sales .value') or t.select_one('.sales') or t.select_one('.product-price') or t.select_one('[class*="price"]')
                         
                         txt_oferta = precio_el.text if precio_el else t.text
                         precio_oferta = limpiar_precio_vtex(txt_oferta)
@@ -114,7 +128,7 @@ def escanear_tienda(url, limite):
                             img_el = t.find('img')
                             img_final = ""
                             if img_el:
-                                img_final = img_el.get('data-src') or img_el.get('src') or ''
+                                img_final = img_el.get('data-src') or img_el.get('src') or img_el.get('data-original') or ''
                                 if img_final.startswith('//'): img_final = 'https:' + img_final
                                 
                             productos.append({
@@ -125,6 +139,9 @@ def escanear_tienda(url, limite):
                     except: continue
         except: pass
 
+    # =======================================================
+    # MOTOR 3: PLATANITOS Y TRADICIONALES
+    # =======================================================
     else:
         for pagina in range(1, 4):
             url_paginada = url
@@ -205,7 +222,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     for item in res.data:
         ident = item['identificador'].upper()
         
-        # CAMBIO CRÍTICO: Primero evaluamos las subcategorías exactas para evitar que marcas como 'JBL' secuestren el flujo
         if "AUDIFONO" in ident or "AURICULAR" in ident: grupo = "AUDIFONOS"
         elif "BARRA" in ident or "SOUNDBAR" in ident or "SB580" in ident: grupo = "BARRA DE SONIDO"
         elif "PARLANTE" in ident or "ALTAVOZ" in ident or "BOOMBOX" in ident: grupo = "PARLANTE"
