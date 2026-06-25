@@ -329,6 +329,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 total += 1
                 
                 ya_alertado = False
+              # -- VERIFICACIÓN DE DUPLICADOS --
                 try:
                     check = supabase.table("historial_precios")\
                         .select("id")\
@@ -338,13 +339,20 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         .execute()
                     if check.data and len(check.data) > 0:
                         ya_alertado = True
-                except: pass
-                
-                supabase.table("historial_precios").insert({
-                    "identificador": item['identificador'], 
-                    "precio": p['precio'], 
-                    "fecha": fecha_hoy  # Ahora enviará "2026-06-24 03:15:21" por ejemplo
-                }).execute()
+                except Exception as e:
+                    import streamlit as st
+                    st.error(f"Error en check: {e}")
+
+                # -- INSERCIÓN CON AVISO DE ERROR --
+                try:
+                    supabase.table("historial_precios").insert({
+                        "identificador": item['identificador'], 
+                        "precio": p['precio'], 
+                        "fecha": fecha_hoy
+                    }).execute()
+                except Exception as e:
+                    import streamlit as st
+                    st.error(f"Error al guardar: {e}") # <--- ESTO NOS DIRÁ LA VERDAD
                 
                 if ya_alertado:
                     continue
