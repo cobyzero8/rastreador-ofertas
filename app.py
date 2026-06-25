@@ -168,12 +168,11 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 f_activo = st.session_state.filtro_activo
                 mostrar = False
                 if f_activo == "TODOS": mostrar = True
-                if f_activo == group or f_activo == grupo: mostrar = True
+                if f_activo == grupo: mostrar = True
                 
                 if mostrar:
                     precio_regular = float(reg.get('precio_regular', precio_venta))
                     
-                    # Estructura limpia solicitada: tienda, nombre del producto, precio real, precio de venta y la link
                     lista_dashboard.append({
                         "Tienda": tnd_txt, 
                         "Nombre del Producto": prd_txt, 
@@ -319,7 +318,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                             try:
                                 supabase.table("radares").delete().eq("id", item["id"]).execute()
                                 st.toast(f"🗑️ Radar {tienda_p} eliminado.")
-                                'st.rerun()'
+                                st.rerun()
                             except Exception as err: st.error(f"Error: {err}")
         else: st.info("No hay radares registrados.")
     except Exception as e: st.error(f"Error al conectar: {e}")
