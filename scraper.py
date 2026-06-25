@@ -320,39 +320,31 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
+            nombre_unico = p['nombre'].strip().upper()
+            if nombre_unico in enviados_en_este_clic: continue
+            enviados_en_este_clic.add(nombre_unico)
+            
+            lista_html_streamlit.append(p)
+            total += 1
+            
+            # --- DEBUGGING: Vamos a ver qué estamos enviando ---
+            payload = {
+                "identificador": item['identificador'], 
+                "precio": float(p['precio']), 
+                "fecha": fecha_hoy
+            }
+            print(f"DEBUG: Intentando insertar: {payload}")
+            
+            # --- INSERCIÓN SIN CENSURA ---
             try:
-                nombre_unico = p['nombre'].strip().upper()
-                if nombre_unico in enviados_en_este_clic: continue
-                enviados_en_este_clic.add(nombre_unico)
-                
-                lista_html_streamlit.append(p)
-                total += 1
-                
-                ya_alertado = False
-              # -- VERIFICACIÓN DE DUPLICADOS --
-                try:
-                    check = supabase.table("historial_precios")\
-                        .select("id")\
-                        .eq("identificador", item['identificador'])\
-                        .eq("precio", p['precio'])\
-                        .eq("fecha", fecha_hoy)\
-                        .execute()
-                    if check.data and len(check.data) > 0:
-                        ya_alertado = True
-                except Exception as e:
-                    import streamlit as st
-                    st.error(f"Error en check: {e}")
-
-                # -- INSERCIÓN CON AVISO DE ERROR --
-                try:
-                    supabase.table("historial_precios").insert({
-                        "identificador": item['identificador'], 
-                        "precio": p['precio'], 
-                        "fecha": fecha_hoy
-                    }).execute()
-                except Exception as e:
-                    import streamlit as st
-                    st.error(f"Error al guardar: {e}") # <--- ESTO NOS DIRÁ LA VERDAD
+                # Usamos upsert para evitar errores de duplicados (Primary Key)
+                response = supabase.table("historial_precios").upsert(payload).execute()
+                print("DEBUG: Respuesta de Supabase:", response)
+            except Exception as e:
+                # Esto SI se mostrará en pantalla si falla
+                import streamlit as st
+                st.error(f"FALLO CRÍTICO AL INSERTAR: {e}")
+                print(f"ERROR REAL: {e}")
                 
                 if ya_alertado:
                     continue
