@@ -11,15 +11,15 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def obtener_tiendas_dinamicas():
-    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
-    try:
-        res = supabase.table("radares").select("identificador").execute()
-        if res.data:
-            for item in res.data:
-                tnd = item["identificador"].split("-")[0].upper().strip()
-                if tnd and tnd not in tiendas_base: tiendas_base.append(tnd)
-    except Exception: pass
-    return sorted(tiendas_base)
+    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
+    try:
+        res = supabase.table("radares").select("identificador").execute()
+        if res.data:
+            for item in res.data:
+                tnd = item["identificador"].split("-")[0].upper().strip()
+                if tnd and tnd not in tiendas_base: tiendas_base.append(tnd)
+    except Exception: pass
+    return sorted(tiendas_base)
 
 st.sidebar.markdown("## 🧠 COBY & GEMINI")
 st.sidebar.caption("🚀 _Central de Ofertas Automatizada_")
@@ -38,295 +38,295 @@ if "mod_precio" not in st.session_state: st.session_state.mod_precio = 100
 if "filtro_activo" not in st.session_state: st.session_state.filtro_activo = "TODOS"
 
 def botonera_independiente():
-    st.write("### 🔍 Filtrar Patrullaje por Categoría:")
-    
-    # Inicializar el estado si no existe
-    if "filtro_activo" not in st.session_state:
-        st.session_state.filtro_activo = "TODOS"
-        
-    # Fila 1: Generales y Calzado
-    st.write("**Básicos:**")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: 
-        if st.button("🌐 TODOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TODOS" else "secondary"): 
-            st.session_state.filtro_activo = "TODOS"
-    with c2: 
-        if st.button("🧪 PERFUMES", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PERFUMES" else "secondary"): 
-            st.session_state.filtro_activo = "PERFUMES"
-    with c3: 
-        if st.button("👟 ZAPATILLAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ZAPATILLAS" else "secondary"): 
-            st.session_state.filtro_activo = "ZAPATILLAS"
-    with c4: 
-        if st.button("📦 OTROS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "OTROS" else "secondary"): 
-            st.session_state.filtro_activo = "OTROS"
-            
-    # Fila 2: Ropa
-    st.write("**Ropa:**")
-    r1, r2, r3, r4, r5 = st.columns(5)
-    with r1:
-        if st.button("👕 POLOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "POLOS" else "secondary"): 
-            st.session_state.filtro_activo = "POLOS"
-    with r2:
-        if st.button("🧥 CASACAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CASACAS" else "secondary"): 
-            st.session_state.filtro_activo = "CASACAS"
-    with r3:
-        if st.button("🩳 SHORTS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "SHORTS" else "secondary"): 
-            st.session_state.filtro_activo = "SHORTS"
-    with r4:
-        if st.button("👖 BUZOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BUZOS" else "secondary"): 
-            st.session_state.filtro_activo = "BUZOS"
-    with r5:
-        if st.button("🧦 MEDIAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "MEDIAS" else "secondary"): 
-            st.session_state.filtro_activo = "MEDIAS"
+    st.write("### 🔍 Filtrar Patrullaje por Categoría:")
+    
+    # Inicializar el estado si no existe
+    if "filtro_activo" not in st.session_state:
+        st.session_state.filtro_activo = "TODOS"
+        
+    # Fila 1: Generales y Calzado
+    st.write("**Básicos:**")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: 
+        if st.button("🌐 TODOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TODOS" else "secondary"): 
+            st.session_state.filtro_activo = "TODOS"
+    with c2: 
+        if st.button("🧪 PERFUMES", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PERFUMES" else "secondary"): 
+            st.session_state.filtro_activo = "PERFUMES"
+    with c3: 
+        if st.button("👟 ZAPATILLAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ZAPATILLAS" else "secondary"): 
+            st.session_state.filtro_activo = "ZAPATILLAS"
+    with c4: 
+        if st.button("📦 OTROS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "OTROS" else "secondary"): 
+            st.session_state.filtro_activo = "OTROS"
+            
+    # Fila 2: Ropa
+    st.write("**Ropa:**")
+    r1, r2, r3, r4, r5 = st.columns(5)
+    with r1:
+        if st.button("👕 POLOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "POLOS" else "secondary"): 
+            st.session_state.filtro_activo = "POLOS"
+    with r2:
+        if st.button("🧥 CASACAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CASACAS" else "secondary"): 
+            st.session_state.filtro_activo = "CASACAS"
+    with r3:
+        if st.button("🩳 SHORTS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "SHORTS" else "secondary"): 
+            st.session_state.filtro_activo = "SHORTS"
+    with r4:
+        if st.button("👖 BUZOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BUZOS" else "secondary"): 
+            st.session_state.filtro_activo = "BUZOS"
+    with r5:
+        if st.button("🧦 MEDIAS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "MEDIAS" else "secondary"): 
+            st.session_state.filtro_activo = "MEDIAS"
 
-    # Fila 3: Electrónica y Sonido
-    st.write("**Audio, Video y Gadgets:**")
-    t1, t2, t3, t4, t5 = st.columns(5)
-    with t1:
-        if st.button("🎧 AUDÍFONOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "AUDIFONOS" else "secondary"): 
-            st.session_state.filtro_activo = "AUDIFONOS"
-    with t2:
-        if st.button("📺 TV", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TV" else "secondary"): 
-            st.session_state.filtro_activo = "TV"
-    with t3:
-        if st.button("🔊 PARLANTE", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PARLANTE" else "secondary"): 
-            st.session_state.filtro_activo = "PARLANTE"
-    with t4:
-        if st.button("🎵 B. SONIDO", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BARRA DE SONIDO" else "secondary"): 
-            st.session_state.filtro_activo = "BARRA DE SONIDO"
-    with t5:
-        if st.button("📱 CELULAR", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CELULAR" else "secondary"): 
-            st.session_state.filtro_activo = "CELULAR"
+    # Fila 3: Electrónica y Sonido
+    st.write("**Audio, Video y Gadgets:**")
+    t1, t2, t3, t4, t5 = st.columns(5)
+    with t1:
+        if st.button("🎧 AUDÍFONOS", use_container_width=True, type="primary" if st.session_state.filtro_activo == "AUDIFONOS" else "secondary"): 
+            st.session_state.filtro_activo = "AUDIFONOS"
+    with t2:
+        if st.button("📺 TV", use_container_width=True, type="primary" if st.session_state.filtro_activo == "TV" else "secondary"): 
+            st.session_state.filtro_activo = "TV"
+    with t3:
+        if st.button("🔊 PARLANTE", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PARLANTE" else "secondary"): 
+            st.session_state.filtro_activo = "PARLANTE"
+    with t4:
+        if st.button("🎵 B. SONIDO", use_container_width=True, type="primary" if st.session_state.filtro_activo == "BARRA DE SONIDO" else "secondary"): 
+            st.session_state.filtro_activo = "BARRA DE SONIDO"
+    with t5:
+        if st.button("📱 CELULAR", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CELULAR" else "secondary"): 
+            st.session_state.filtro_activo = "CELULAR"
 
-    # Fila 4: Hogar y Línea Blanca
-    st.write("**Hogar y Electrodomésticos:**")
-    h1, h2, h3, h4, h5 = st.columns(5)
-    with h1:
-        if st.button("💻 PC / LAPTOP", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PC" else "secondary"): 
-            st.session_state.filtro_activo = "PC"
-    with h2:
-        if st.button("❄️ REFRIGERADORA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "REFRIGERADORA" else "secondary"): 
-            st.session_state.filtro_activo = "REFRIGERADORA"
-    with h3:
-        if st.button("🧺 LAVADORA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "LAVADORA" else "secondary"): 
-            st.session_state.filtro_activo = "LAVADORA"
-    with h4:
-        if st.button("🔌 ELECTRODOM.", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ELECTRODOMESTICOS" else "secondary"): 
-            st.session_state.filtro_activo = "ELECTRODOMESTICOS"
-    with h5:
-        if st.button("🛏️ CAMA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CAMA" else "secondary"): 
-            st.session_state.filtro_activo = "CAMA"
+    # Fila 4: Hogar y Línea Blanca
+    st.write("**Hogar y Electrodomésticos:**")
+    h1, h2, h3, h4, h5 = st.columns(5)
+    with h1:
+        if st.button("💻 PC / LAPTOP", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PC" else "secondary"): 
+            st.session_state.filtro_activo = "PC"
+    with h2:
+        if st.button("❄️ REFRIGERADORA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "REFRIGERADORA" else "secondary"): 
+            st.session_state.filtro_activo = "REFRIGERADORA"
+    with h3:
+        if st.button("🧺 LAVADORA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "LAVADORA" else "secondary"): 
+            st.session_state.filtro_activo = "LAVADORA"
+    with h4:
+        if st.button("🔌 ELECTRODOM.", use_container_width=True, type="primary" if st.session_state.filtro_activo == "ELECTRODOMESTICOS" else "secondary"): 
+            st.session_state.filtro_activo = "ELECTRODOMESTICOS"
+    with h5:
+        if st.button("🛏️ CAMA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CAMA" else "secondary"): 
+            st.session_state.filtro_activo = "CAMA"
 
-    st.info(f"📍 **Filtro seleccionado actualmente:** `{st.session_state.filtro_activo}`")
+    st.info(f"📍 **Filtro seleccionado actualmente:** `{st.session_state.filtro_activo}`")
 # ==========================================
 # 📈 DASHBOARD INTERACTIVO
 # ==========================================
 if menu == "📈 Ver Dashboard / Ofertas":
-    st.title("🕵️‍♂️ Central de Ofertas Activas")
-    botonera_independiente()
+    st.title("🕵️‍♂️ Central de Ofertas Activas")
+    botonera_independiente()
 
-    st.write("---")
-    st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
-    
-    lista_dashboard = []
-    try:
-        res_r = supabase.table("radares").select("*").execute()
-        mapa_urls, mapa_topes = {}, {}
-        if res_r.data:
-            for r in res_r.data:
-                id_u = str(r["identificador"]).upper().strip()
-                mapa_urls[id_u] = r["url"]
-                mapa_topes[id_u] = r["precio_max"]
+    st.write("---")
+    st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
+    
+    lista_dashboard = []
+    try:
+        res_r = supabase.table("radares").select("*").execute()
+        mapa_urls, mapa_topes = {}, {}
+        if res_r.data:
+            for r in res_r.data:
+                id_u = str(r["identificador"]).upper().strip()
+                mapa_urls[id_u] = r["url"]
+                mapa_topes[id_u] = r["precio_max"]
 
-        res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
-        if res_h.data:
-            proc = set()
-            for reg in res_h.data:
-                precio = float(reg.get('precio', 0))
-                if precio <= 0: continue
+        res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
+        if res_h.data:
+            proc = set()
+            for reg in res_h.data:
+                precio = float(reg.get('precio', 0))
+                if precio <= 0: continue
 
-                id_p = str(reg["identificador"]).strip()
-                if id_p.upper() in proc: continue
-                proc.add(id_p.upper())
-                
-                parts = id_p.split("-")
-                tnd_txt = parts[0].upper() if len(parts) > 0 else "N/A"
-                cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
-                prd_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
-                tll_txt = parts[3] if len(parts) > 3 else "Todas"
-                
-                grupo = "OTROS"
-                if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
-                elif "PERFUME" in cat_txt: grupo = "PERFUMES"
-                elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo = "TECNOLOGIA"
-                elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
-                elif "POLOS" in cat_txt: grupo = "POLOS"
-                elif "CASACAS" in cat_txt: grupo = "CASACAS"
-                elif "SHORTS" in cat_txt: grupo = "SHORTS"
-                elif "BUZOS" in cat_txt: grupo = "BUZOS"
+                id_p = str(reg["identificador"]).strip()
+                if id_p.upper() in proc: continue
+                proc.add(id_p.upper())
+                
+                parts = id_p.split("-")
+                tnd_txt = parts[0].upper() if len(parts) > 0 else "N/A"
+                cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
+                prd_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
+                tll_txt = parts[3] if len(parts) > 3 else "Todas"
+                
+                grupo = "OTROS"
+                if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
+                elif "PERFUME" in cat_txt: grupo = "PERFUMES"
+                elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo = "TECNOLOGIA"
+                elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
+                elif "POLOS" in cat_txt: grupo = "POLOS"
+                elif "CASACAS" in cat_txt: grupo = "CASACAS"
+                elif "SHORTS" in cat_txt: grupo = "SHORTS"
+                elif "BUZOS" in cat_txt: grupo = "BUZOS"
 
-                f_activo = st.session_state.filtro_activo
-                mostrar = False
-                if f_activo == "TODOS": mostrar = True
-                if f_activo == grupo: mostrar = True
-                
-                if mostrar:
-                    lista_dashboard.append({
-                        "Tienda": tnd_txt, "Categoría": cat_txt.replace("ROPA_", ""), "Producto": prd_txt, "Detalle": tll_txt, "Precio Actual": f"S/. {precio:.2f}", "Tu Tope": f"S/. {mapa_topes.get(id_p.upper(), 0):.2f}", "Enlace": mapa_urls.get(id_p.upper(), "#")
-                    })
-    except Exception as e: st.warning(f"Sincronizando: {e}")
+                f_activo = st.session_state.filtro_activo
+                mostrar = False
+                if f_activo == "TODOS": mostrar = True
+                if f_activo == grupo: mostrar = True
+                
+                if mostrar:
+                    lista_dashboard.append({
+                        "Tienda": tnd_txt, "Categoría": cat_txt.replace("ROPA_", ""), "Producto": prd_txt, "Detalle": tll_txt, "Precio Actual": f"S/. {precio:.2f}", "Tu Tope": f"S/. {mapa_topes.get(id_p.upper(), 0):.2f}", "Enlace": mapa_urls.get(id_p.upper(), "#")
+                    })
+    except Exception as e: st.warning(f"Sincronizando: {e}")
 
-    if lista_dashboard: 
-        st.data_editor(pd.DataFrame(lista_dashboard), column_config={"Enlace": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
-    else: st.info("No hay ofertas registradas en este rango.")
+    if lista_dashboard: 
+        st.data_editor(pd.DataFrame(lista_dashboard), column_config={"Enlace": st.column_config.LinkColumn("🛒 Ir a la Tienda")}, hide_index=True, use_container_width=True)
+    else: st.info("No hay ofertas registradas en este rango.")
 
 # =======================================================
 # 🛠️ GESTIÓN DE RADARES (REDISEÑADO CON NUEVAS CATEGORÍAS)
 # =======================================================
 elif menu == "🛠️ Configurar Radares y URLs":
-    st.title("🛠️ Panel de Gestión de Enlaces")
-    lista_tiendas = obtener_tiendas_dinamicas()
-    
-    # 🎯 NUEVA LISTA DE CATEGORÍAS DE ELECTRÓNICA Y HOGAR DIRECTAS
-    cats_form = [
-        "Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", 
-        "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", 
-        "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", 
-        "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"
-    ]
-    
-    with st.container(border=True):
-        if st.session_state.mod_id is not None: st.markdown("### ✏️ Modificando Radar")
-        else: st.markdown("### 📝 Registrar Nuevo Radar Activo")
-            
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            idx_t = lista_tiendas.index(st.session_state.mod_tienda) if st.session_state.mod_tienda in lista_tiendas else 0
-            tienda_sel = st.selectbox("Tienda Sugerida", lista_tiendas, index=idx_t)
-            tienda_man = st.text_input("✍️ O Nueva Tienda", "").strip().upper()
-            t_final = tienda_man if tienda_man else tienda_sel
-            
-            idx_c = cats_form.index(st.session_state.mod_cat) if st.session_state.mod_cat in cats_form else 0
-            cat_menu = st.selectbox("Categoría Sugerida", cats_form, index=idx_c)
-            cat_man = st.text_input("✍️ O Nueva Categoría", "").strip().upper()
-        with c2:
-            nombre = st.text_input("Nombre descriptivo", value=st.session_state.mod_nombre)
-            url = st.text_input("URL completa", value=st.session_state.mod_url)
-        with c3:
-            talla = st.text_input("Talla / Detalle", value=st.session_state.mod_talla)
-            precio_max = st.number_input("Precio máximo (S/.)", value=int(st.session_state.mod_precio), min_value=1)
-        
-        c_b1, c_b2 = st.columns([8, 2])
-        with c_b1:
-            txt_b = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
-            if st.button(txt_b, type="primary", use_container_width=True):
-                if cat_man: 
-                    cat_final = cat_man.replace(" ", "_").upper()
-                else:
-                    cl = cat_menu.lower()
-                    if "medias" in cl: cat_final = "ROPA_MEDIAS"
-                    elif "polos" in cl: cat_final = "ROPA_POLOS"
-                    elif "casacas" in cl or "poleras" in cl: cat_final = "ROPA_CASACAS"
-                    elif "shorts" in cl: cat_final = "ROPA_SHORTS"
-                    elif "buzos" in cl: cat_final = "ROPA_BUZOS"
-                    elif "perfume" in cl: cat_final = "PERFUMES"
-                    elif "zapatilla" in cl: cat_final = "ZAPATILLAS"
-                    elif "audifono" in cl: cat_final = "AUDIFONOS"
-                    elif "tv" in cl: cat_final = "TV"
-                    elif "parlante" in cl: cat_final = "PARLANTE"
-                    elif "barra" in cl: cat_final = "BARRA_DE_SONIDO"
-                    elif "celular" in cl: cat_final = "CELULAR"
-                    elif "pc" in cl or "laptop" in cl: cat_final = "PC"
-                    elif "refrigeradora" in cl: cat_final = "REFRIGERADORA"
-                    elif "lavadora" in cl: cat_final = "LAVADORA"
-                    elif "electro" in cl: cat_final = "ELECTRODOMESTICOS"
-                    elif "cama" in cl or "colchon" in cl: cat_final = "CAMA"
-                    else: cat_final = "OTROS"
-                
-                nuevo_id = f"{t_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
-                try:
-                    if st.session_state.mod_id is not None:
-                        supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
-                        st.toast("✅ ¡Radar modificado!")
-                    else:
-                        supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
-                        st.toast("✅ ¡Radar guardado!")
-                    st.session_state.mod_id = None
-                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
-                    st.session_state.mod_precio = 100
-                    st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
-        with c_b2:
-            if st.session_state.mod_id is not None:
-                if st.button("❌ Cancelar", use_container_width=True):
-                    st.session_state.mod_id = None
-                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
-                    st.session_state.mod_precio = 100
-                    st.rerun()
+    st.title("🛠️ Panel de Gestión de Enlaces")
+    lista_tiendas = obtener_tiendas_dinamicas()
+    
+    # 🎯 NUEVA LISTA DE CATEGORÍAS DE ELECTRÓNICA Y HOGAR DIRECTAS
+    cats_form = [
+        "Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", 
+        "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", 
+        "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", 
+        "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"
+    ]
+    
+    with st.container(border=True):
+        if st.session_state.mod_id is not None: st.markdown("### ✏️ Modificando Radar")
+        else: st.markdown("### 📝 Registrar Nuevo Radar Activo")
+            
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            idx_t = lista_tiendas.index(st.session_state.mod_tienda) if st.session_state.mod_tienda in lista_tiendas else 0
+            tienda_sel = st.selectbox("Tienda Sugerida", lista_tiendas, index=idx_t)
+            tienda_man = st.text_input("✍️ O Nueva Tienda", "").strip().upper()
+            t_final = tienda_man if tienda_man else tienda_sel
+            
+            idx_c = cats_form.index(st.session_state.mod_cat) if st.session_state.mod_cat in cats_form else 0
+            cat_menu = st.selectbox("Categoría Sugerida", cats_form, index=idx_c)
+            cat_man = st.text_input("✍️ O Nueva Categoría", "").strip().upper()
+        with c2:
+            nombre = st.text_input("Nombre descriptivo", value=st.session_state.mod_nombre)
+            url = st.text_input("URL completa", value=st.session_state.mod_url)
+        with c3:
+            talla = st.text_input("Talla / Detalle", value=st.session_state.mod_talla)
+            precio_max = st.number_input("Precio máximo (S/.)", value=int(st.session_state.mod_precio), min_value=1)
+        
+        c_b1, c_b2 = st.columns([8, 2])
+        with c_b1:
+            txt_b = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
+            if st.button(txt_b, type="primary", use_container_width=True):
+                if cat_man: 
+                    cat_final = cat_man.replace(" ", "_").upper()
+                else:
+                    cl = cat_menu.lower()
+                    if "medias" in cl: cat_final = "ROPA_MEDIAS"
+                    elif "polos" in cl: cat_final = "ROPA_POLOS"
+                    elif "casacas" in cl or "poleras" in cl: cat_final = "ROPA_CASACAS"
+                    elif "shorts" in cl: cat_final = "ROPA_SHORTS"
+                    elif "buzos" in cl: cat_final = "ROPA_BUZOS"
+                    elif "perfume" in cl: cat_final = "PERFUMES"
+                    elif "zapatilla" in cl: cat_final = "ZAPATILLAS"
+                    elif "audifono" in cl: cat_final = "AUDIFONOS"
+                    elif "tv" in cl: cat_final = "TV"
+                    elif "parlante" in cl: cat_final = "PARLANTE"
+                    elif "barra" in cl: cat_final = "BARRA_DE_SONIDO"
+                    elif "celular" in cl: cat_final = "CELULAR"
+                    elif "pc" in cl or "laptop" in cl: cat_final = "PC"
+                    elif "refrigeradora" in cl: cat_final = "REFRIGERADORA"
+                    elif "lavadora" in cl: cat_final = "LAVADORA"
+                    elif "electro" in cl: cat_final = "ELECTRODOMESTICOS"
+                    elif "cama" in cl or "colchon" in cl: cat_final = "CAMA"
+                    else: cat_final = "OTROS"
+                
+                nuevo_id = f"{t_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
+                try:
+                    if st.session_state.mod_id is not None:
+                        supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
+                        st.toast("✅ ¡Radar modificado!")
+                    else:
+                        supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                        st.toast("✅ ¡Radar guardado!")
+                    st.session_state.mod_id = None
+                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
+                    st.session_state.mod_precio = 100
+                    st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
+        with c_b2:
+            if st.session_state.mod_id is not None:
+                if st.button("❌ Cancelar", use_container_width=True):
+                    st.session_state.mod_id = None
+                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
+                    st.session_state.mod_precio = 100
+                    st.rerun()
 
-    st.write("---")
-    st.markdown("### 📋 Registro Actual de Radares Activos")
-    try:
-        res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
-        if res_radares.data:
-            for index, item in enumerate(res_radares.data):
-                parts = item["identificador"].split("-")
-                tienda_p = parts[0].upper()
-                cat_p = parts[1].upper()
-                nombre_p = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
-                talla_p = parts[3].replace("_", " ") if len(parts) > 3 else "Todas"
-                
-                with st.container(border=True):
-                    col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
-                    with col_info:
-                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('_', ' ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
-                        st.caption(f"🔗 **URL:** [{item['url']}]({item['url']})")
-                    with col_mod:
-                        st.write("")
-                        if st.button(f"📝 Modificar", key=f"mod_btn_{item['id']}", use_container_width=True):
-                            st.session_state.mod_id = item["id"]
-                            st.session_state.mod_tienda = tienda_p
-                            
-                            rev_mapa = {
-                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "OTROS": "Otros",
-                                "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
-                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)",
-                                "AUDIFONOS": "Audifonos", "TV": "TV", "PARLANTE": "Parlante", 
-                                "BARRA_DE_SONIDO": "Barra de sonido", "CELULAR": "Celular", "PC": "PC / Laptop",
-                                "REFRIGERADORA": "Refrigeradora", "LAVADORA": "Lavadora", "ELECTRODOMESTICOS": "Electrodomesticos", "CAMA": "Cama"
-                            }
-                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
-                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
-                            st.session_state.mod_url = item["url"]
-                            st.session_state.mod_talla = talla_p
-                            st.session_state.mod_precio = item["precio_max"]
-                            st.rerun()
-                    with col_del:
-                        st.write("")
-                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
-                            try:
-                                supabase.table("radares").delete().eq("id", item["id"]).execute()
-                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
-                                st.rerun()
-                            except Exception as err: st.error(f"Error: {err}")
-        else: st.info("No hay radares registrados.")
-    except Exception as e: st.error(f"Error al conectar: {e}")
+    st.write("---")
+    st.markdown("### 📋 Registro Actual de Radares Activos")
+    try:
+        res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
+        if res_radares.data:
+            for index, item in enumerate(res_radares.data):
+                parts = item["identificador"].split("-")
+                tienda_p = parts[0].upper()
+                cat_p = parts[1].upper()
+                nombre_p = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
+                talla_p = parts[3].replace("_", " ") if len(parts) > 3 else "Todas"
+                
+                with st.container(border=True):
+                    col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
+                    with col_info:
+                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('_', ' ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
+                        st.caption(f"🔗 **URL:** [{item['url']}]({item['url']})")
+                    with col_mod:
+                        st.write("")
+                        if st.button(f"📝 Modificar", key=f"mod_btn_{item['id']}", use_container_width=True):
+                            st.session_state.mod_id = item["id"]
+                            st.session_state.mod_tienda = tienda_p
+                            
+                            rev_mapa = {
+                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "OTROS": "Otros",
+                                "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
+                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)",
+                                "AUDIFONOS": "Audifonos", "TV": "TV", "PARLANTE": "Parlante", 
+                                "BARRA_DE_SONIDO": "Barra de sonido", "CELULAR": "Celular", "PC": "PC / Laptop",
+                                "REFRIGERADORA": "Refrigeradora", "LAVADORA": "Lavadora", "ELECTRODOMESTICOS": "Electrodomesticos", "CAMA": "Cama"
+                            }
+                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
+                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
+                            st.session_state.mod_url = item["url"]
+                            st.session_state.mod_talla = talla_p
+                            st.session_state.mod_precio = item["precio_max"]
+                            st.rerun()
+                    with col_del:
+                        st.write("")
+                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
+                            try:
+                                supabase.table("radares").delete().eq("id", item["id"]).execute()
+                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
+                                st.rerun()
+                            except Exception as err: st.error(f"Error: {err}")
+        else: st.info("No hay radares registrados.")
+    except Exception as e: st.error(f"Error al conectar: {e}")
 
 # ==========================================
 # 💥 ESCANEO QUIRÚRGICO (VISTA INTEGRAL)
 # ==========================================
 elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje")
-    botonera_independiente()
-        
-    st.write("---")
-    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
-        target = st.session_state.filtro_activo
-        st.toast(f"🕵️‍♂️ Buscando {target}...")
-        
-        try:
-            from scraper import revisar_ofertas
-            msg = revisar_ofertas(target)
-            st.success(f"📊 Resumen del patrullaje: {msg}")
-        except Exception as e: 
-            st.error(f"❌ Error en el motor: {e}")
+    st.title("💥 Módulo de Patrullaje")
+    botonera_independiente()
+        
+    st.write("---")
+    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
+        target = st.session_state.filtro_activo
+        st.toast(f"🕵️‍♂️ Buscando {target}...")
+        
+        try:
+            from scraper import revisar_ofertas
+            msg = revisar_ofertas(target)
+            st.success(f"📊 Resumen del patrullaje: {msg}")
+        except Exception as e: 
+            st.error(f"❌ Error en el motor: {e}")
