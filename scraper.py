@@ -270,7 +270,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"
     }
     enviados_en_este_clic = set()
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     target = str(filtro_objetivo).strip().upper()
     
@@ -341,7 +341,9 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 except: pass
                 
                 supabase.table("historial_precios").insert({
-                    "identificador": item['identificador'], "precio": p['precio'], "fecha": fecha_hoy
+                    "identificador": item['identificador'], 
+                    "precio": p['precio'], 
+                    "fecha": fecha_hoy  # Ahora enviará "2026-06-24 03:15:21" por ejemplo
                 }).execute()
                 
                 if ya_alertado:
