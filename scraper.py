@@ -16,30 +16,19 @@ SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def limpiar_precio_pnp(texto_precio):
-    try:
-        texto = re.sub(r'[^\d.,]', '', str(texto_precio))
-        if ',' in texto and '.' in texto:
-            if texto.rfind('.') > texto.rfind(','): texto = texto.replace(',', '')
-            else: texto = texto.replace('.', '').replace(',', '.')
-        elif ',' in texto: texto = texto.replace(',', '.')
-        match = re.findall(r'\d+\.\d+|\d+', texto)
-        return float(match[0]) if match else 0.0
-    except: return 0.0
-
-def escanear_tienda(url, limite):
-    # (Este motor se mantiene igual, tu lógica de scraping funciona)
-    # [Copia y pega aquí tu lógica actual de escanear_tienda intacta]
-    return [] # Solo para que el código no dé error si lo pruebas ahora
+# [AQUÍ VA TU FUNCIÓN escanear_tienda TAL CUAL LA TENÍAS]
+# (La que hace el scraping de las webs, esa no la toques)
 
 def revisar_ofertas(filtro_objetivo="TODOS"):
-    print("DEBUG: Iniciando revisión...")
     res = supabase.table("radares").select("*").execute()
     if not res.data: return "Sin radares."
     
     fecha_hoy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total_guardados = 0
+    
     for item in res.data:
-        # Aquí va tu lógica de patrullaje
+        # [AQUÍ VA TU LÓGICA DE GRUPOS, NO LA BORRES]
+        
         prods = escanear_tienda(item['url'], item['precio_max'])
         
         for p in prods:
@@ -48,13 +37,11 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 "precio": float(p['precio']), 
                 "fecha": fecha_hoy
             }
-            # INSERCIÓN BLINDADA
             try:
-                response = supabase.table("historial_precios").upsert(payload).execute()
-                print(f"DEBUG: Guardado exitoso: {item['identificador']}")
+                # Guardamos directamente
+                supabase.table("historial_precios").upsert(payload).execute()
+                total_guardados += 1
             except Exception as e:
-                error_msg = f"ERROR DB: {e}"
-                print(error_msg)
-                st.error(error_msg) # Esto se verá en pantalla
-    
-    return "Barrido finalizado."
+                print(f"Error al guardar {item['identificador']}: {e}")
+                
+    return f"Barrido completo. Se guardaron {total_guardados} registros nuevos."
