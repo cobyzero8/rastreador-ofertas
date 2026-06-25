@@ -122,7 +122,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
     st.write("---")
     st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
     
-    lista_dashboard = []
+    hay_ofertas = False
     try:
         res_r = supabase.table("radares").select("*").execute()
         map_topes = {}
@@ -146,20 +146,20 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
                 
-                # Reconstrucción limpia del nombre del producto a partir del ID único slugificado
-                prd_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
+                # Reconstruir el nombre limpio del producto
+                prd_txt = "N/A"
+                if len(parts) > 2:
+                    prd_txt = parts[2].replace("_", " ").title()
                 if len(parts) > 4:
                     prd_txt = "-".join(parts[4:]).replace("_", " ").title()
-
-                tll_txt = parts[3] if len(parts) > 3 else "Todas"
                 
                 grupo = "OTROS"
                 if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
                 elif "PERFUME" in cat_txt: grupo = "PERFUMES"
                 elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
                 elif "POLOS" in cat_txt: grupo = "POLOS"
-                elif "CASACAS" in cat_txt: grupo = "CASACAS"
-                elif "SHORTS" in cat_txt: group = "SHORTS"
+                elif "CASACAS" in cat_txt: group = "CASACAS"
+                elif "SHORTS" in cat_txt: grupo = "SHORTS"
                 elif "BUZOS" in cat_txt: grupo = "BUZOS"
                 elif "AUDIFONOS" in cat_txt: grupo = "AUDIFONOS"
                 elif "TV" in cat_txt: grupo = "TV"
@@ -178,41 +178,46 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 if f_activo == grupo: mostrar = True
                 
                 if mostrar:
-                    # Cálculo matemático explícito para el renderizado del descuento
+                    hay_ofertas = True
                     precio_regular = float(reg.get('precio_regular', precio_venta))
-                    if precio_regular <= 0: precio_regular = precio_venta
-                    
                     descuento_soles = precio_regular - precio_venta
                     porcentaje_desc = (descuento_soles / precio_regular * 100) if precio_regular > 0 else 0
                     
                     id_radar_padre = "-".join(parts[:4]).upper()
+                    tope_alerta = map_topes.get(id_radar_padre, 0)
                     
-                    lista_dashboard.append({
-                        "📷 Imagen": reg.get('imagen_producto', ''),
-                        "🏪 Tienda": tnd_txt, 
-                        "📦 Producto": prd_txt, 
-                        "❌ Pre. Regular": f"S/. {precio_regular:.2f}",
-                        "💰 Pre. Venta": f"S/. {precio_venta:.2f}", 
-                        "📉 Descuento": f"{porcentaje_desc:.0f}% OFF" if porcentaje_desc > 0 else "0%",
-                        "🎯 Tu Tope": f"S/. {map_topes.get(id_radar_padre, 0):.2f}", 
-                        "🛒 Enlace Directo": reg.get('link_producto', '#')
-                    })
+                    # ========================================================
+                    # DISEÑO DE TARJETAS CORREGIDO PARA VERIFICACIÓN RÁPIDA
+                    # ========================================================
+                    with st.container(border=True):
+                        col_img, col_detalles = st.columns([2, 8])
+                        with col_img:
+                            if reg.get('imagen_producto'): 
+                                st.image(reg['imagen_producto'], use_container_width=True)
+                            else: 
+                                st.markdown("\n\n🤖 *Sin Imagen*")
+                        with col_detalles:
+                            st.markdown(f"### 🏪 [{tnd_txt}] - {prd_txt}")
+                            st.caption(f"📅 *Cazado el:* {reg.get('fecha', 'N/A')} | 🎯 *Tu Tope Configurado:* S/. {tope_alerta:.2f}")
+                            
+                            # Bloque estético de Precios y Descuentos
+                            if precio_regular > precio_venta:
+                                st.markdown(f"❌ **Precio Regular:** ~~S/. {precio_regular:.2f}~~")
+                                st.markdown(f"💰 **Precio Oferta:** S/. {precio_venta:.2f}")
+                                st.markdown(f"🔥 **¡Ahorraste S/. {descuento_soles:.2f}! ({porcentaje_desc:.0f}% de Descuento)**")
+                            else:
+                                st.markdown(f"💰 **Precio Actual:** S/. {precio_venta:.2f}")
+                                st.caption("ℹ️ _Precio base de etiqueta (Sin descuento de lista reportado en web)._")
+                            
+                            st.write("")
+                            # Enlace grande e independiente de compra
+                            st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO EN LA TIENDA]({reg.get('link_producto', '#')})")
+                            
     except Exception as e: 
         st.warning(f"Sincronizando: {e}")
 
-    if lista_dashboard: 
-        # Forzar la configuración de las columnas multimedia para links e imágenes en el editor
-        st.data_editor(
-            pd.DataFrame(lista_dashboard), 
-            column_config={
-                "🛒 Enlace Directo": st.column_config.LinkColumn("🛒 Ir al Producto"),
-                "📷 Imagen": st.column_config.ImageColumn("📷 Vista")
-            }, 
-            hide_index=True, 
-            use_container_width=True
-        )
-    else: 
-        st.info("No hay ofertas registradas en este rango.")
+    if not hay_ofertas: 
+        st.info("No hay ofertas registradas en este rango para mostrar en tarjetas.")
 
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
