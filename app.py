@@ -122,15 +122,8 @@ if menu == "📈 Ver Dashboard / Ofertas":
     st.write("---")
     st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
     
-    hay_ofertas = False
+    lista_dashboard = []
     try:
-        res_r = supabase.table("radares").select("*").execute()
-        map_topes = {}
-        if res_r.data:
-            for r in res_r.data:
-                id_u = str(r["identificador"]).upper().strip()
-                map_topes[id_u] = r["precio_max"]
-
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
         if res_h.data:
             proc = set()
@@ -146,7 +139,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
                 
-                # Reconstruir el nombre limpio del producto
+                # Reconstruir el nombre limpio del producto real
                 prd_txt = "N/A"
                 if len(parts) > 2:
                     prd_txt = parts[2].replace("_", " ").title()
@@ -158,7 +151,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 elif "PERFUME" in cat_txt: grupo = "PERFUMES"
                 elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
                 elif "POLOS" in cat_txt: grupo = "POLOS"
-                elif "CASACAS" in cat_txt: group = "CASACAS"
+                elif "CASACAS" in cat_txt: grupo = "CASACAS"
                 elif "SHORTS" in cat_txt: grupo = "SHORTS"
                 elif "BUZOS" in cat_txt: grupo = "BUZOS"
                 elif "AUDIFONOS" in cat_txt: grupo = "AUDIFONOS"
@@ -175,49 +168,33 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 f_activo = st.session_state.filtro_activo
                 mostrar = False
                 if f_activo == "TODOS": mostrar = True
-                if f_activo == grupo: mostrar = True
+                if f_activo == group or f_activo == grupo: mostrar = True
                 
                 if mostrar:
-                    hay_ofertas = True
                     precio_regular = float(reg.get('precio_regular', precio_venta))
-                    descuento_soles = precio_regular - precio_venta
-                    porcentaje_desc = (descuento_soles / precio_regular * 100) if precio_regular > 0 else 0
                     
-                    id_radar_padre = "-".join(parts[:4]).upper()
-                    tope_alerta = map_topes.get(id_radar_padre, 0)
-                    
-                    # ========================================================
-                    # DISEÑO DE TARJETAS CORREGIDO PARA VERIFICACIÓN RÁPIDA
-                    # ========================================================
-                    with st.container(border=True):
-                        col_img, col_detalles = st.columns([2, 8])
-                        with col_img:
-                            if reg.get('imagen_producto'): 
-                                st.image(reg['imagen_producto'], use_container_width=True)
-                            else: 
-                                st.markdown("\n\n🤖 *Sin Imagen*")
-                        with col_detalles:
-                            st.markdown(f"### 🏪 [{tnd_txt}] - {prd_txt}")
-                            st.caption(f"📅 *Cazado el:* {reg.get('fecha', 'N/A')} | 🎯 *Tu Tope Configurado:* S/. {tope_alerta:.2f}")
-                            
-                            # Bloque estético de Precios y Descuentos
-                            if precio_regular > precio_venta:
-                                st.markdown(f"❌ **Precio Regular:** ~~S/. {precio_regular:.2f}~~")
-                                st.markdown(f"💰 **Precio Oferta:** S/. {precio_venta:.2f}")
-                                st.markdown(f"🔥 **¡Ahorraste S/. {descuento_soles:.2f}! ({porcentaje_desc:.0f}% de Descuento)**")
-                            else:
-                                st.markdown(f"💰 **Precio Actual:** S/. {precio_venta:.2f}")
-                                st.caption("ℹ️ _Precio base de etiqueta (Sin descuento de lista reportado en web)._")
-                            
-                            st.write("")
-                            # Enlace grande e independiente de compra
-                            st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO EN LA TIENDA]({reg.get('link_producto', '#')})")
-                            
+                    # Estructura limpia solicitada: tienda, nombre del producto, precio real, precio de venta y la link
+                    lista_dashboard.append({
+                        "Tienda": tnd_txt, 
+                        "Nombre del Producto": prd_txt, 
+                        "Precio Real": f"S/. {precio_regular:.2f}",
+                        "Precio de Venta": f"S/. {precio_venta:.2f}", 
+                        "Link": reg.get('link_producto', '#')
+                    })
     except Exception as e: 
         st.warning(f"Sincronizando: {e}")
 
-    if not hay_ofertas: 
-        st.info("No hay ofertas registradas en este rango para mostrar en tarjetas.")
+    if lista_dashboard: 
+        st.dataframe(
+            pd.DataFrame(lista_dashboard), 
+            column_config={
+                "Link": st.column_config.LinkColumn("🛒 Ir a la Tienda", display_text="Ver Producto")
+            }, 
+            hide_index=True, 
+            use_container_width=True
+        )
+    else: 
+        st.info("No hay ofertas registradas en este rango.")
 
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
@@ -341,8 +318,8 @@ elif menu == "🛠️ Configurar Radares y URLs":
                         if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
                             try:
                                 supabase.table("radares").delete().eq("id", item["id"]).execute()
-                                st.toast(f"🗑️ Radar {tienda_p} deleted.")
-                                st.rerun()
+                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
+                                'st.rerun()'
                             except Exception as err: st.error(f"Error: {err}")
         else: st.info("No hay radares registrados.")
     except Exception as e: st.error(f"Error al conectar: {e}")
