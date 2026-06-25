@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 from supabase import create_client, Client
 import urllib3
@@ -270,7 +270,9 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"
     }
     enviados_en_este_clic = set()
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    # Forzar que use la zona horaria de Perú (UTC-5)
+    zona_peru = timezone(timedelta(hours=-5))
+    fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     
     target = str(filtro_objetivo).strip().upper()
     
