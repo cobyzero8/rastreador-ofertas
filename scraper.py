@@ -82,8 +82,10 @@ def escanear_tienda(url, limite):
                 if 0 < precio_oferta <= limite:
                     productos.append({
                         "nombre": f"{marca.upper()} - {item['productName'].upper()}", 
-                        "precio": precio_oferta, "precio_regular": precio_regular,
-                        "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]
+                        "precio": precio_oferta, 
+                        "precio_regular": precio_regular,
+                        "link": item["link"], 
+                        "img": item["items"][0]["images"][0]["imageUrl"]
                     })
         except: pass
 
@@ -181,8 +183,10 @@ def escanear_tienda(url, limite):
                                 
                             productos.append({
                                 "nombre": f"JBL - {nombre_prod}", 
-                                "precio": precio_oferta, "precio_regular": precio_regular, 
-                                "link": enlace_final, "img": img_final
+                                "precio": precio_oferta, 
+                                "precio_regular": precio_regular, 
+                                "link": enlace_final, 
+                                "img": img_final
                             })
                     except: continue
         except: pass
@@ -218,9 +222,9 @@ def escanear_tienda(url, limite):
                                 precios_del = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', del_el.text)
                                 if precios_del: precio_regular = float(precios_del[0].replace(',', '.'))
                             elif len(precios) > 1:
-                                precios_float = [float(pr.replace(',', '.')) for pr in precios]
-                                precio_regular = max(precios_float)
-                                precio_oferta = min(precios_float)
+                                prices_extracted = [float(pr.replace(',', '.')) for pr in precios]
+                                precio_regular = max(prices_extracted)
+                                precio_oferta = min(prices_extracted)
                             
                             if precio_oferta <= limite:
                                 a_href = None
@@ -240,7 +244,11 @@ def escanear_tienda(url, limite):
                                 enlace_final = urljoin(url, a_href) if a_href else url
                                 img = t.find('img', src=True)
                                 productos.append({
-                                    "nombre": tit.text.strip().upper(), "precio": precio_oferta, "precio_regular": precio_regular, "link": enlace_final, "img": img['src'] if img else ""
+                                    "nombre": tit.text.strip().upper(), 
+                                    "precio": precio_oferta, 
+                                    "precio_regular": precio_regular, 
+                                    "link": enlace_final, 
+                                    "img": img['src'] if img else ""
                                 })
                     except: continue
                 time.sleep(0.3)
@@ -334,17 +342,25 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 lista_html_streamlit.append(p)
                 total += 1
                 
-                # Identificador ÚNICO por producto para que no se pisen en el Dashboard
                 nombre_slug = nombre_unico.replace(" ", "_").replace("-", "_")
                 id_producto_unico = f"{item['identificador']}-{nombre_slug}"
                 
+                # --- SISTEMA MEJORADO DE EXTRACCIÓN DE PRECIOS EN LÍNEA ---
+                p_venta = float(p['precio'])
+                p_real = float(p.get('precio_regular', p_venta))
+                
+                if p_real < p_venta:
+                    p_real = p_venta
+                
                 payload = {
                     "identificador": id_producto_unico,
-                    "precio": float(p['precio']), 
+                    "precio": p_venta, 
+                    "precio_regular": p_real, 
+                    "link_producto": p['link'],
+                    "imagen_producto": p.get('img', ''),
                     "fecha": fecha_hoy
                 }
                 
-                # Guardamos/Actualizamos en la base de datos
                 supabase.table("historial_precios").upsert(payload).execute()
                 
                 # --- SISTEMA DE ALERTAS (TELEGRAM) ---
