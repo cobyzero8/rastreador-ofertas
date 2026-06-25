@@ -205,4 +205,117 @@ elif menu == "🛠️ Configurar Radares y URLs":
             nombre = st.text_input("Nombre descriptivo", value=st.session_state.mod_nombre)
             url = st.text_input("URL completa", value=st.session_state.mod_url)
         with c3:
-            talla = st.text_input("Talla / Detalle", value=st.session_state.mod_
+            talla = st.text_input("Talla / Detalle", value=st.session_state.mod_talla)
+            precio_max = st.number_input("Precio máximo (S/.)", value=int(st.session_state.mod_precio), min_value=1)
+        
+        c_b1, c_b2 = st.columns([8, 2])
+        with c_b1:
+            txt_b = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
+            if st.button(txt_b, type="primary", use_container_width=True):
+                if cat_man: 
+                    cat_final = cat_man.replace(" ", "_").upper()
+                else:
+                    cl = cat_menu.lower()
+                    if "medias" in cl: cat_final = "ROPA_MEDIAS"
+                    elif "polos" in cl: cat_final = "ROPA_POLOS"
+                    elif "casacas" in cl or "poleras" in cl: cat_final = "ROPA_CASACAS"
+                    elif "shorts" in cl: cat_final = "ROPA_SHORTS"
+                    elif "buzos" in cl: cat_final = "ROPA_BUZOS"
+                    elif "perfume" in cl: cat_final = "PERFUMES"
+                    elif "zapatilla" in cl: cat_final = "ZAPATILLAS"
+                    elif "audifono" in cl: cat_final = "AUDIFONOS"
+                    elif "tv" in cl: cat_final = "TV"
+                    elif "parlante" in cl: cat_final = "PARLANTE"
+                    elif "barra" in cl: cat_final = "BARRA_DE_SONIDO"
+                    elif "celular" in cl: cat_final = "CELULAR"
+                    elif "pc" in cl or "laptop" in cl: cat_final = "PC"
+                    elif "refrigeradora" in cl: cat_final = "REFRIGERADORA"
+                    elif "lavadora" in cl: cat_final = "LAVADORA"
+                    elif "electro" in cl: cat_final = "ELECTRODOMESTICOS"
+                    elif "cama" in cl or "colchon" in cl: cat_final = "CAMA"
+                    else: cat_final = "OTROS"
+                
+                nuevo_id = f"{t_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
+                try:
+                    if st.session_state.mod_id is not None:
+                        supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
+                        st.toast("✅ ¡Radar modificado!")
+                    else:
+                        supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                        st.toast("✅ ¡Radar guardado!")
+                    st.session_state.mod_id = None
+                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
+                    st.session_state.mod_precio = 100
+                    st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
+        with c_b2:
+            if st.session_state.mod_id is not None:
+                if st.button("❌ Cancelar", use_container_width=True):
+                    st.session_state.mod_id = None
+                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
+                    st.session_state.mod_precio = 100
+                    st.rerun()
+
+    st.write("---")
+    st.markdown("### 📋 Registro Actual de Radares Activos")
+    try:
+        res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
+        if res_radares.data:
+            for index, item in enumerate(res_radares.data):
+                parts = item["identificador"].split("-")
+                tienda_p = parts[0].upper()
+                cat_p = parts[1].upper()
+                nombre_p = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
+                talla_p = parts[3].replace("_", " ") if len(parts) > 3 else "Todas"
+                
+                with st.container(border=True):
+                    col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
+                    with col_info:
+                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('_', ' ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
+                        st.caption(f"🔗 **URL:** [{item['url']}]({item['url']})")
+                    with col_mod:
+                        st.write("")
+                        if st.button(f"📝 Modificar", key=f"mod_btn_{item['id']}", use_container_width=True):
+                            st.session_state.mod_id = item["id"]
+                            st.session_state.mod_tienda = tienda_p
+                            
+                            rev_mapa = {
+                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "OTROS": "Otros",
+                                "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
+                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)",
+                                "AUDIFONOS": "Audifonos", "TV": "TV", "PARLANTE": "Parlante", 
+                                "BARRA_DE_SONIDO": "Barra de sonido", "CELULAR": "Celular", "PC": "PC / Laptop",
+                                "REFRIGERADORA": "Refrigeradora", "LAVADORA": "Lavadora", "ELECTRODOMESTICOS": "Electrodomesticos", "CAMA": "Cama"
+                            }
+                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
+                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
+                            st.session_state.mod_url = item["url"]
+                            st.session_state.mod_talla = talla_p
+                            st.session_state.mod_precio = item["precio_max"]
+                            st.rerun()
+                    with col_del:
+                        st.write("")
+                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
+                            try:
+                                supabase.table("radares").delete().eq("id", item["id"]).execute()
+                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
+                                st.rerun()
+                            except Exception as err: st.error(f"Error: {err}")
+        else: st.info("No hay radares registrados.")
+    except Exception as e: st.error(f"Error al conectar: {e}")
+
+elif menu == "💥 Forzar Escaneo Intensivo":
+    st.title("💥 Módulo de Patrullaje")
+    botonera_independiente()
+        
+    st.write("---")
+    if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
+        target = st.session_state.filtro_activo
+        st.toast(f"🕵️‍♂️ Buscando {target}...")
+        
+        try:
+            from scraper import revisar_ofertas
+            msg = revisar_ofertas(target)
+            st.success(f"📊 Resumen del patrullaje: {msg}")
+        except Exception as e: 
+            st.error(f"❌ Error en el motor: {e}")
