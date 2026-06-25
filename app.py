@@ -149,15 +149,27 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 prd_txt = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
                 tll_txt = parts[3] if len(parts) > 3 else "Todas"
                 
+                # ==========================================
+                # CLASIFICACIÓN CORREGIDA CON LAS NUEVAS CATEGORÍAS
+                # ==========================================
                 grupo = "OTROS"
                 if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
                 elif "PERFUME" in cat_txt: grupo = "PERFUMES"
-                elif "TECNOLOGIA" in cat_txt or "TV" in cat_txt: grupo = "TECNOLOGIA"
                 elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
                 elif "POLOS" in cat_txt: grupo = "POLOS"
                 elif "CASACAS" in cat_txt: grupo = "CASACAS"
                 elif "SHORTS" in cat_txt: grupo = "SHORTS"
                 elif "BUZOS" in cat_txt: grupo = "BUZOS"
+                elif "AUDIFONOS" in cat_txt: grupo = "AUDIFONOS"
+                elif "TV" in cat_txt: grupo = "TV"
+                elif "PARLANTE" in cat_txt: grupo = "PARLANTE"
+                elif "BARRA" in cat_txt: grupo = "BARRA DE SONIDO"
+                elif "CELULAR" in cat_txt: grupo = "CELULAR"
+                elif "PC" in cat_txt or "LAPTOP" in cat_txt: grupo = "PC"
+                elif "REFRIGERADORA" in cat_txt: grupo = "REFRIGERADORA"
+                elif "LAVADORA" in cat_txt: grupo = "LAVADORA"
+                elif "ELECTRO" in cat_txt: grupo = "ELECTRODOMESTICOS"
+                elif "CAMA" in cat_txt or "COLCHON" in cat_txt: grupo = "CAMA"
 
                 f_activo = st.session_state.filtro_activo
                 mostrar = False
