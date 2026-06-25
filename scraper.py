@@ -256,6 +256,21 @@ def escanear_tienda(url, limite):
 # =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
     res = supabase.table("radares").select("*").execute()
+
+    
+   # --- PRUEBA DE FUEGO ---
+    try:
+        print("DEBUG: Iniciando prueba de inserción bruta...")
+        response = supabase.table("historial_precios").insert({
+            "identificador": "PRUEBA_BRUTA",
+            "precio": 99.99,
+            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }).execute()
+        print("DEBUG: Respuesta de Supabase:", response)
+    except Exception as e:
+        print(f"DEBUG: ERROR CRÍTICO EN LA PRUEBA: {e}")
+
+    
     if not res or not res.data: return "Sin radares activos."
     
     total = 0
