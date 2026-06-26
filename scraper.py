@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
+import random
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 from supabase import create_client, Client
@@ -22,6 +23,19 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     raise ValueError("Error crítico: No se encontró la SUPABASE_KEY en el entorno ni en Secrets.")
+
+# =======================================================
+# RUTA 3: POOL GLOBAL DE USER-AGENTS PARA ROTACIÓN ACTIVA
+# =======================================================
+LISTA_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0"
+]
 
 # =======================================================
 # FUNCIÓN GLOBAL DE LIMPIEZA DE PRECIOS PERUANOS (BLINDADA)
@@ -62,7 +76,6 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     if not token or not chat_id:
         return False
 
-    # Enlace de compra en formato HTML limpio
     mensaje_html = f"{mensaje}\n\n👉 <a href='{link_producto}'><b>¡COMPRAR AQUÍ!</b></a>"
 
     if url_imagen:
@@ -92,7 +105,12 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
 # =======================================================
 def escanear_tienda(url, limite):
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
+    # 🛡️ Aplicamos la rotación inicial de User-Agent seleccionando uno al azar
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3"
+    }
     url_low = url.lower()
 
     # -------------------------------------------------------
@@ -103,6 +121,7 @@ def escanear_tienda(url, limite):
         api_url = f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search"
         params = {"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}
         try:
+            headers["User-Agent"] = random.choice(LISTA_USER_AGENTS)
             resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
             for item in resp.json():
                 item_comercial = item["items"][0]["sellers"][0]["commertialOffer"]
@@ -124,6 +143,7 @@ def escanear_tienda(url, limite):
     elif "efe.com.pe" in url_low or "lacuracao.pe" in url_low:
         tienda_tag = "EFE" if "efe.com.pe" in url_low else "CURACAO"
         try:
+            headers["User-Agent"] = random.choice(LISTA_USER_AGENTS)
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -174,6 +194,7 @@ def escanear_tienda(url, limite):
             api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
             params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
             
+            headers["User-Agent"] = random.choice(LISTA_USER_AGENTS)
             resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -221,6 +242,90 @@ def escanear_tienda(url, limite):
         except: pass
 
     # -------------------------------------------------------
+    # RUTA 2: MOTOR 5: ADIDAS PERÚ (Doble capa: JSON-LD + HTML)
+    # -------------------------------------------------------
+    elif "adidas" in url_low:
+        try:
+            headers["User-Agent"] = random.choice(LISTA_USER_AGENTS)
+            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                # Capa A: Extracción desde Metadatos Estructurados (JSON-LD)
+                json_scripts = soup.find_all('script', type='application/ld+json')
+                for script in json_scripts:
+                    try:
+                        js_data = json.loads(script.string)
+                        if isinstance(js_data, dict) and (js_data.get("@type") == "ItemList" or "itemListElement" in js_data):
+                            for element in js_data.get("itemListElement", []):
+                                item = element.get("item", {})
+                                if not item: continue
+                                nombre_prod = item.get("name", "").upper()
+                                if len(nombre_prod) < 3: continue
+                                
+                                enlace_final = item.get("url", url)
+                                offers = item.get("offers", {})
+                                
+                                precio_oferta = 0.0
+                                precio_regular = 0.0
+                                if offers.get("@type") == "AggregateOffer":
+                                    precio_oferta = float(offers.get("lowPrice", 0))
+                                    precio_regular = float(offers.get("highPrice", precio_oferta))
+                                elif offers.get("@type") == "Offer":
+                                    precio_oferta = float(offers.get("price", 0))
+                                    precio_regular = precio_oferta
+                                    
+                                if 0 < precio_oferta <= limite:
+                                    productos.append({
+                                        "nombre": f"ADIDAS - {nombre_prod}",
+                                        "precio": precio_oferta,
+                                        "precio_regular": precio_regular,
+                                        "link": enlace_final,
+                                        "img": item.get("image", "")
+                                    })
+                            if productos: break
+                    except: continue
+
+                # Capa B: Fallback Clásico por Selectores HTML de Rejilla si falló el JSON-LD
+                if not productos:
+                    items = soup.select('.glass-product-card') or soup.select('[class*="product-card"]') or soup.select('.grid-item')
+                    for t in items:
+                        try:
+                            tit_el = t.select_one('[class*="title"]') or t.select_one('[class*="name"]') or t.find('a')
+                            if not tit_el: continue
+                            nombre_prod = tit_el.text.strip().upper()
+                            if len(nombre_prod) < 3: continue
+                            
+                            enlace_el = t.find('a', href=True)
+                            enlace_final = urljoin(url, enlace_el['href']) if enlace_el else url
+                            
+                            oferta_el = t.select_one('[class*="sale-price"]') or t.select_one('[class*="price___"]') or t.select_one('.price')
+                            regular_el = t.select_one('[class*="original-price"]') or t.select_one('del')
+                            
+                            if not oferta_el: continue
+                            precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                            if not precio_oferta: continue
+                            
+                            precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                            
+                            img_el = t.find('img')
+                            img_final = ""
+                            if img_el:
+                                img_final = img_el.get('data-src') or img_el.get('src') or ''
+                                if img_final.startswith('//'): img_final = 'https:' + img_final
+                            
+                            if 0 < precio_oferta <= limite:
+                                productos.append({
+                                    "nombre": f"ADIDAS - {nombre_prod}",
+                                    "precio": precio_oferta,
+                                    "precio_regular": precio_regular,
+                                    "link": enlace_final,
+                                    "img": img_final
+                                })
+                        except: continue
+        except: pass
+
+    # -------------------------------------------------------
     # MOTOR 4: PLATANITOS Y TRADICIONALES
     # -------------------------------------------------------
     else:
@@ -230,6 +335,7 @@ def escanear_tienda(url, limite):
                 conector = "&" if "?" in url else "?"
                 url_paginada = f"{url}{conector}page={pagina}"
             try:
+                headers["User-Agent"] = random.choice(LISTA_USER_AGENTS)
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
                 if resp.status_code not in [200, 206]: break
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -389,7 +495,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 
                 supabase.table("historial_precios").upsert(payload).execute()
                 
-                # 🎯 ESTRATEGIA INTELIGENTE: Solo dispara a Telegram si hay un descuento real detectable en línea
+                # 🎯 ESTRATEGIA INTELIGENTE: Solo dispara a Telegram si el precio actual tiene descuento vs el regular
                 if p_venta < p_real:
                     emoji = mapa_emojis.get(grupo, "🔥")
                     text_alerta = f"{emoji} <b>¡BAJÓ DE PRECIO! REMATE</b> {emoji}\n"
