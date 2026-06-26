@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import os
 import pandas as pd
+import requests
 from supabase import create_client, Client
 
 st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
@@ -118,6 +119,30 @@ def botonera_independiente():
 
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Central de Ofertas Activas")
+    
+    # 🧪 INYECTOR EXPANDER DE PRUEBA EXCLUSIVA PARA EL BOT
+    with st.sidebar.expander("🧪 Verificar Bot de Telegram"):
+        if st.button("🔔 Ejecutar Alerta de Prueba"):
+            t_tok = st.secrets.get("TELEGRAM_TOKEN")
+            t_cid = st.secrets.get("TELEGRAM_CHAT_ID")
+            if not t_tok or not t_cid:
+                st.error("Faltan credenciales en Secrets.")
+            else:
+                test_body = "<b>🤖 COMPROBACIÓN CENTRAL DE CAZA:</b>\n\nEl Bot de Telegram se ha enlazado al Dashboard exitosamente."
+                img_demo = "https://images.unsplash.com/photo-1542291026-7eec264c27ff"
+                test_url = f"https://api.telegram.org/bot{t_tok}/sendPhoto"
+                payload_test = {
+                    "chat_id": t_cid,
+                    "photo": img_demo,
+                    "caption": f"{test_body}\n\n👉 <a href='https://google.com.pe'><b>¡ENLACE DE PRUEBA!</b></a>",
+                    "parse_mode": "HTML"
+                }
+                try:
+                    r_test = requests.post(test_url, json=payload_test, timeout=10)
+                    if r_test.status_code == 200: st.success("¡Mensaje enviado con éxito!")
+                    else: st.error(f"Error HTTP Telegram: {r_test.status_code}")
+                except Exception as ex_t: st.error(f"Fallo de conexión: {ex_t}")
+
     botonera_independiente()
     st.write("---")
     st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
@@ -128,7 +153,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
         if res_h.data:
             proc = set()
             for reg in res_h.data:
-                # 🛡️ CONTROL BLINDADO PARA EVITAR NONETYPE EN PRECIO DE VENTA
                 raw_precio = reg.get('precio')
                 precio_venta = float(raw_precio) if raw_precio is not None else 0.0
                 if precio_venta <= 0: continue
@@ -141,7 +165,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "N/A"
                 cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
                 
-                # Reconstruir el nombre limpio del producto real
                 prd_txt = "N/A"
                 if len(parts) > 2:
                     prd_txt = parts[2].replace("_", " ").title()
@@ -160,7 +183,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 elif "TV" in cat_txt: grupo = "TV"
                 elif "PARLANTE" in cat_txt: grupo = "PARLANTE"
                 elif "BARRA" in cat_txt: grupo = "BARRA DE SONIDO"
-                elif "CELULAR" in cat_txt: grupo = "CELULAR"
+                elif "CELULAR" in cat_txt: group = "CELULAR"
                 elif "PC" in cat_txt or "LAPTOP" in cat_txt: grupo = "PC"
                 elif "REFRIGERADORA" in cat_txt: grupo = "REFRIGERADORA"
                 elif "LAVADORA" in cat_txt: grupo = "LAVADORA"
@@ -173,11 +196,8 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 if f_activo == grupo: mostrar = True
                 
                 if mostrar:
-                    # 🛡️ CONTROL BLINDADO PARA EVITAR NONETYPE EN PRECIO REGULAR
                     raw_regular = reg.get('precio_regular')
                     precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
-                    
-                    # Cálculo seguro del Descuento Neto
                     descuento_neto = precio_regular - precio_venta
                     
                     lista_dashboard.append({
@@ -194,8 +214,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
 
     if lista_dashboard: 
         df_dash = pd.DataFrame(lista_dashboard)
-        
-        # Ordenamiento descendente por descuento (los mayores remates primero)
         df_dash = df_dash.sort_values(by="Descuento", ascending=False)
         
         st.dataframe(
