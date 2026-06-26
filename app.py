@@ -128,7 +128,9 @@ if menu == "📈 Ver Dashboard / Ofertas":
         if res_h.data:
             proc = set()
             for reg in res_h.data:
-                precio_venta = float(reg.get('precio', 0))
+                # 🛡️ CONTROL BLINDADO PARA EVITAR NONETYPE EN PRECIO DE VENTA
+                raw_precio = reg.get('precio')
+                precio_venta = float(raw_precio) if raw_precio is not None else 0.0
                 if precio_venta <= 0: continue
 
                 id_p = str(reg["identificador"]).strip()
@@ -171,12 +173,13 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 if f_activo == grupo: mostrar = True
                 
                 if mostrar:
-                    precio_regular = float(reg.get('precio_regular', precio_venta))
+                    # 🛡️ CONTROL BLINDADO PARA EVITAR NONETYPE EN PRECIO REGULAR
+                    raw_regular = reg.get('precio_regular')
+                    precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
                     
-                    # Cálculo del Descuento Puro (Resta de Precio Real menos Venta Actual)
+                    # Cálculo seguro del Descuento Neto
                     descuento_neto = precio_regular - precio_venta
                     
-                    # Guardamos datos crudos (numéricos) para permitir ordenamientos reales
                     lista_dashboard.append({
                         "Tienda": tnd_txt, 
                         "Nombre del Producto": prd_txt, 
@@ -192,19 +195,18 @@ if menu == "📈 Ver Dashboard / Ofertas":
     if lista_dashboard: 
         df_dash = pd.DataFrame(lista_dashboard)
         
-        # 🔥 ORDENAMIENTO CRÍTICO SOLICITADO: De Mayor a Menor Descuento (Descendente)
+        # Ordenamiento descendente por descuento (los mayores remates primero)
         df_dash = df_dash.sort_values(by="Descuento", ascending=False)
         
-        # Configuración visual enriquecida de las columnas de la tabla compacta
         st.dataframe(
             df_dash, 
             column_config={
                 "Tienda": st.column_config.TextColumn("🏪 Tienda"),
                 "Nombre del Producto": st.column_config.TextColumn("📦 Nombre del Producto"),
-                "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista", help="Miniatura del artículo"),
+                "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista"),
                 "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"),
                 "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"),
-                "Descuento": st.column_config.NumberColumn("📉 Descuento (Ahorro)", format="S/. %.2f", help="Dinero ahorrado en la compra"),
+                "Descuento": st.column_config.NumberColumn("📉 Descuento (Ahorro)", format="S/. %.2f"),
                 "Link": st.column_config.LinkColumn("🛒 Ir a la Tienda", display_text="Ver Producto")
             }, 
             hide_index=True, 
