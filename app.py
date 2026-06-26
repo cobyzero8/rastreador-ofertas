@@ -173,20 +173,38 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 if mostrar:
                     precio_regular = float(reg.get('precio_regular', precio_venta))
                     
+                    # Cálculo del Descuento Puro (Resta de Precio Real menos Venta Actual)
+                    descuento_neto = precio_regular - precio_venta
+                    
+                    # Guardamos datos crudos (numéricos) para permitir ordenamientos reales
                     lista_dashboard.append({
                         "Tienda": tnd_txt, 
                         "Nombre del Producto": prd_txt, 
-                        "Precio Real": f"S/. {precio_regular:.2f}",
-                        "Precio de Venta": f"S/. {precio_venta:.2f}", 
+                        "Imagen del Producto": reg.get('imagen_producto', ''),
+                        "Precio Real": precio_regular,
+                        "Precio de Venta": precio_venta, 
+                        "Descuento": descuento_neto,
                         "Link": reg.get('link_producto', '#')
                     })
     except Exception as e: 
         st.warning(f"Sincronizando: {e}")
 
     if lista_dashboard: 
+        df_dash = pd.DataFrame(lista_dashboard)
+        
+        # 🔥 ORDENAMIENTO CRÍTICO SOLICITADO: De Mayor a Menor Descuento (Descendente)
+        df_dash = df_dash.sort_values(by="Descuento", ascending=False)
+        
+        # Configuración visual enriquecida de las columnas de la tabla compacta
         st.dataframe(
-            pd.DataFrame(lista_dashboard), 
+            df_dash, 
             column_config={
+                "Tienda": st.column_config.TextColumn("🏪 Tienda"),
+                "Nombre del Producto": st.column_config.TextColumn("📦 Nombre del Producto"),
+                "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista", help="Miniatura del artículo"),
+                "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"),
+                "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"),
+                "Descuento": st.column_config.NumberColumn("📉 Descuento (Ahorro)", format="S/. %.2f", help="Dinero ahorrado en la compra"),
                 "Link": st.column_config.LinkColumn("🛒 Ir a la Tienda", display_text="Ver Producto")
             }, 
             hide_index=True, 
