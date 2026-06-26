@@ -251,7 +251,7 @@ def escanear_tienda(url, limite):
         except: pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (JSON-LD + HTML)
+    # MOTOR 5: ADIDAS PERÚ (SÚPER HÍBRIDO CON TRES CAPAS)
     # -------------------------------------------------------
     elif "adidas" in url_low:
         try:
@@ -260,6 +260,7 @@ def escanear_tienda(url, limite):
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
+                # Capa A: Extracción desde Metadatos Estructurados (JSON-LD)
                 json_scripts = soup.find_all('script', type='application/ld+json')
                 for script in json_scripts:
                     try:
@@ -294,6 +295,7 @@ def escanear_tienda(url, limite):
                             if productos: break
                     except: continue
 
+                # Capa B: Fallback de Estructura de Calzado (Selectores específicos)
                 if not productos:
                     items = soup.select('.glass-product-card') or soup.select('[class*="product-card"]') or soup.select('.grid-item')
                     for t in items:
@@ -330,10 +332,51 @@ def escanear_tienda(url, limite):
                                     "img": img_final
                                 })
                         except: continue
+
+                # 🎯 CAPA C: ¡EL SALVAVIDAS ANTERIOR! (Motor Regex Genérico aplicado a Adidas Ropa)
+                # Si las capas A y B fallan por el diseño dinámico de la sección de ropa, lee el texto plano directamente de las tarjetas
+                if not productos:
+                    items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element']))
+                    for t in items:
+                        try:
+                            tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
+                            if not tit or len(tit.text.strip()) < 3: continue
+                            
+                            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                            if precios:
+                                precio_oferta = float(precios[0].replace(',', '.'))
+                                precio_regular = precio_oferta
+                                
+                                del_el = t.find(['del', 'span'], class_=re.compile(r'(regular|original|old)', re.I))
+                                if del_el:
+                                    precios_del = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', del_el.text)
+                                    if precios_del: precio_regular = float(precios_del[0].replace(',', '.'))
+                                elif len(precios) > 1:
+                                    prices_extracted = [float(pr.replace(',', '.')) for pr in precios]
+                                    precio_regular = max(prices_extracted)
+                                    precio_oferta = min(prices_extracted)
+                                
+                                if precio_oferta <= limite:
+                                    a_href = t.find('a', href=True)['href'] if t.find('a', href=True) else url
+                                    enlace_final = urljoin(url, a_href)
+                                    img = t.find('img')
+                                    img_src = ""
+                                    if img:
+                                        img_src = img.get('data-src') or img.get('src') or ""
+                                        if img_src.startswith('//'): img_src = 'https:' + img_src
+                                    
+                                    productos.append({
+                                        "nombre": f"ADIDAS - {tit.text.strip().upper()}", 
+                                        "precio": precio_oferta, 
+                                        "precio_regular": precio_regular, 
+                                        "link": enlace_final, 
+                                        "img": img_src
+                                    })
+                        except: continue
         except: pass
 
     # -------------------------------------------------------
-    # MOTOR 4: PLATANITOS Y TRADICIONALES
+    # MOTOR 4: PLATANITOS Y TRADICIONALES GENÉRICOS
     # -------------------------------------------------------
     else:
         for pagina in range(1, 4):
@@ -470,7 +513,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         if target != "TODOS" and target != grupo:
             continue
         
-        # 🎯 REPORTE DE TIENDA EN TIEMPO REAL:
         parts_ident = ident.split("-")
         tienda_actual = parts_ident[0] if len(parts_ident) > 0 else "TIENDA"
         st.write(f"🔄 Patrullando Tienda: **{tienda_actual}** | Categoría: *{grupo}*...")
