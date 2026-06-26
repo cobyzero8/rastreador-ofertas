@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin
 from supabase import create_client, Client
 import urllib3
+import streamlit as st
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -15,14 +16,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # INICIALIZACIÓN GLOBAL BLINDADA DE SUPABASE
 # =======================================================
 SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-try:
-    import streamlit as st
-    if "SUPABASE_KEY" in st.secrets: 
-        SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-except: 
-    pass
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"] if "SUPABASE_KEY" in st.secrets else os.environ.get("SUPABASE_KEY")
 
 if SUPABASE_URL and SUPABASE_KEY:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -57,6 +51,41 @@ def limpiar_precio_pnp(texto_precio):
         return float(match[0]) if match else 0.0
     except:
         return 0.0
+
+# =======================================================
+# FUNCIÓN DE ENVÍO REAL A TELEGRAM (FORMATO HTML)
+# =======================================================
+def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
+    token = st.secrets.get("TELEGRAM_TOKEN")
+    chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        return False
+
+    # Enlace de compra en formato HTML limpio
+    mensaje_html = f"{mensaje}\n\n👉 <a href='{link_producto}'><b>¡COMPRAR AQUÍ!</b></a>"
+
+    if url_imagen:
+        url_api = f"https://api.telegram.org/bot{token}/sendPhoto"
+        payload = {
+            "chat_id": chat_id,
+            "photo": url_imagen,
+            "caption": mensaje_html,
+            "parse_mode": "HTML"
+        }
+    else:
+        url_api = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": mensaje_html,
+            "parse_mode": "HTML"
+        }
+
+    try:
+        res = requests.post(url_api, json=payload, timeout=10)
+        return res.status_code == 200
+    except:
+        return False
 
 # =======================================================
 # NÚCLEO DE EXTRACCIÓN DE TIENDAS
@@ -262,7 +291,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     try:
         res = supabase.table("radares").select("*").execute()
     except Exception as e:
-        import streamlit as st
         st.error(f"Error de conexión con Supabase: {e}")
         return "Fallo en lectura de radares."
 
@@ -282,7 +310,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     }
     enviados_en_este_clic = set()
     
-    # Zona horaria de Perú (UTC-5)
     zona_peru = timezone(timedelta(hours=-5))
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
@@ -345,7 +372,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 nombre_slug = nombre_unico.replace(" ", "_").replace("-", "_")
                 id_producto_unico = f"{item['identificador']}-{nombre_slug}"
                 
-                # --- SISTEMA MEJORADO DE EXTRACCIÓN DE PRECIOS EN LÍNEA ---
                 p_venta = float(p['precio'])
                 p_real = float(p.get('precio_regular', p_venta))
                 
@@ -363,35 +389,27 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 
                 supabase.table("historial_precios").upsert(payload).execute()
                 
-                # --- SISTEMA DE ALERTAS (TELEGRAM) ---
-                try:
-                    from scraper import enviar_telegram
-                except:
-                    def enviar_telegram(msg, link, img): pass
-                
-                emoji = mapa_emojis.get(grupo, "🔥")
-                text_alerta = f"{emoji} *PRODUCTO EN TU RANGO* {emoji}\n"
-                text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                text_alerta += f"📦 *Producto:* `{p['nombre']}`\n"
-                text_alerta += f"🏪 *Tienda:* `{ident.split('-')[0]}`\n"
-                text_alerta += f"🏷️ *Categoría:* `{grupo}`\n"
-                text_alerta += f"💵 *Precio Actual:* `S/. {p['precio']:.2f}`\n"
-                text_alerta += f"🎯 *Tu Tope:* `S/. {item['precio_max']:.2f}`\n"
-                
-                try:
-                    enviar_telegram(text_alerta, p['link'], p.get('img', ''))
-                    alertas_enviadas += 1
-                    time.sleep(0.4)
-                except:
-                    pass
+                # 🎯 ESTRATEGIA INTELIGENTE: Solo dispara a Telegram si hay un descuento real detectable en línea
+                if p_venta < p_real:
+                    emoji = mapa_emojis.get(grupo, "🔥")
+                    text_alerta = f"{emoji} <b>¡BAJÓ DE PRECIO! REMATE</b> {emoji}\n"
+                    text_alerta += f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    text_alerta += f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                    text_alerta += f"🏪 <b>Tienda:</b> <code>{ident.split('-')[0]}</code>\n"
+                    text_alerta += f"❌ <b>Precio Regular:</b> S/. {p_real:.2f}\n"
+                    text_alerta += f"💰 <b>Precio Oferta:</b> S/. {p_venta:.2f}\n"
+                    text_alerta += f"📉 <b>Ahorro Neto:</b> S/. {(p_real - p_venta):.2f}\n"
+                    text_alerta += f"🎯 <b>Tu Tope:</b> S/. {item['precio_max']:.2f}\n"
                     
+                    if enviar_telegram_real(text_alerta, p['link'], p.get('img', '')):
+                        alertas_enviadas += 1
+                        time.sleep(0.4)
+                        
             except Exception as e:
-                import streamlit as st
                 st.error(f"Error procesando ítem: {e}")
                 
     if len(lista_html_streamlit) > 0:
         try:
-            import streamlit as st
             st.write(f"### 🎯 Modelos encontrados en este instante ({len(lista_html_streamlit)}):")
             for prod in lista_html_streamlit:
                 with st.container(border=True):
