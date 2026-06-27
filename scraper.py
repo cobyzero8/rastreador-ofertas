@@ -93,13 +93,15 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
 def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
-    url_low = url.lower()
+    
+    # 🎯 SEPARACIÓN FILTRADA POR DOMINIO REAL (Previene secuestros de algoritmos)
+    dominio = urlparse(url).netloc.lower()
 
     # -------------------------------------------------------
-    # MOTOR BELCORP
+    # MOTOR 1: BELCORP
     # -------------------------------------------------------
-    if any(k in url_low for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
-        marca = "cyzone" if "cyzone" in url_low else "lbel" if "lbel" in url_low else "esika"
+    if any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
+        marca = "cyzone" if "cyzone" in dominio else "lbel" if "lbel" in dominio else "esika"
         try:
             resp = requests.get(f"https://{marca}.tiendabelcorp.com.pe/api/catalog_system/pub/products/search", headers=headers, params={"ft": "perfume", "_from": 0, "_to": 20, "O": "OrderByPriceASC"}, timeout=15, verify=False)
             for item in resp.json():
@@ -110,10 +112,10 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR CONECTA RETAIL (Efe / La Curacao)
+    # MOTOR 2: CONECTA RETAIL (Efe / La Curacao)
     # -------------------------------------------------------
-    elif "efe.com.pe" in url_low or "lacuracao.pe" in url_low:
-        tag = "EFE" if "efe.com.pe" in url_low else "CURACAO"
+    elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio:
+        tag = "EFE" if "efe.com.pe" in dominio else "CURACAO"
         try:
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
             if resp.status_code == 200:
@@ -140,18 +142,17 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (SÚPER CONECTOR CON AUTO-REINTENTO)
+    # MOTOR 3: ADIDAS PERÚ STRICTO
     # -------------------------------------------------------
-    elif "adidas" in url_low:
+    elif "adidas" in dominio:
         try:
             texto_html = ""
             status_code = 0
             
-            # 🔥 BUCLE INTELIGENTE ANTI-CHALLENGE: Reintenta hasta 3 veces si cae en el cascarón de Akamai
             for intento in range(1, 4):
                 try:
                     from curl_cffi import requests as crequests
-                    st.caption(f"🚀 [Intento {intento}/3] Conectando a Adidas con firma limpia HTTP/2...")
+                    st.caption(f"🚀 [Adidas - Intento {intento}/3] Abriendo túnel cifrado HTTP/2...")
                     resp = crequests.get(url, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
                     texto_html = resp.text
                     status_code = resp.status_code
@@ -160,29 +161,26 @@ def escanear_tienda(url, limite):
                     texto_html = resp.text
                     status_code = resp.status_code
                 
-                # Si recibimos la página real (más de 5000 letras), rompemos el bucle de reintentos
                 if status_code == 200 and len(texto_html) > 5000:
                     break
                 else:
-                    st.warning(f"⚠️ Intento {intento} retenido por desafío Akamai ({len(texto_html)} letras). Reorientando IP...")
-                    time.sleep(random.uniform(2.5, 4.0))
+                    time.sleep(random.uniform(2.0, 3.5))
             
-            st.info(f"ℹ️ Diagnóstico Adidas: HTML recibido de forma limpia ({len(texto_html)} letras). Analizando estructura...")
+            st.info(f"ℹ️ Diagnóstico Adidas Real: HTML recibido ({len(texto_html)} letras). Analizando estructura...")
             
             if len(texto_html) <= 5000:
-                st.error("🚨 Todos los intentos cayeron en el muro de Akamai. Ejecuta el botón nuevamente para forzar otra IP.")
+                st.error("🚨 Adidas bloqueado por Akamai. Ejecuta nuevamente para rotar la IP del servidor.")
                 return []
                 
             texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
             total_detectados_tienda = 0
             
-            # 🎯 ESTRATEGIA ALTA VELOCIDAD: Minería del bloque Next.js de Adidas (__NEXT_DATA__)
+            # Intento por datos estructurados Next.js de Adidas
             next_script = soup.find('script', id='__NEXT_DATA__')
             if next_script:
                 try:
                     json_data = json.loads(next_script.text)
-                    # Búsqueda recursiva automatizada de productos dentro del árbol JSON de Next.js
                     def buscar_productos_next(nodo):
                         if isinstance(nodo, dict):
                             for k in ['products', 'results', 'items', 'itemListElement']:
@@ -206,7 +204,6 @@ def escanear_tienda(url, limite):
                                 nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
                                 nombre = str(nombre).upper()
                                 if len(nombre) < 3: continue
-                                
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
@@ -222,7 +219,7 @@ def escanear_tienda(url, limite):
                             except: continue
                 except: pass
 
-            # Capa B: Rastreador por Atributos Fijos (data-testid) del HTML Visible
+            # Fallback por selectores data-testid oficiales
             if not productos:
                 titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
                 for tit_el in titulos_testid:
@@ -231,7 +228,6 @@ def escanear_tienda(url, limite):
                         nombre_prod = tit_el.text.strip().upper()
                         ancestor = tit_el
                         oferta_el, regular_el, enlace_el, img_el = None, None, None, None
-                        
                         for _ in range(5):
                             ancestor = ancestor.parent
                             if not ancestor: break
@@ -243,7 +239,6 @@ def escanear_tienda(url, limite):
                         if oferta_el:
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
-                            
                             if 0 < precio_oferta <= limite:
                                 productos.append({
                                     "nombre": f"ADIDAS - {nombre_prod}",
@@ -254,21 +249,17 @@ def escanear_tienda(url, limite):
                                 })
                     except: continue
 
-            # 💡 INFORME DE DIAGNÓSTICO EN VIVO
             if total_detectados_tienda > 0:
-                st.info(f"📊 Se escanearon {total_detectados_tienda} shorts en la web de Adidas. (Filtro actual: Menores a S/. {limite:.2f}).")
-                if not productos:
-                    st.warning(f"ℹ️ Los {total_detectados_tienda} shorts de Adidas superan los S/. {limite:.2f}. Sube el precio regular en tu panel de Radares para indexarlos.")
-            
+                st.info(f"📊 Adidas Real: Encontrados {total_detectados_tienda} shorts en catálogo web.")
         except Exception as e:
             st.error(f"Fallo en comunicación con Adidas: {e}")
 
     # -------------------------------------------------------
-    # MOTOR PLATANITOS Y TRADICIONALES
+    # MOTOR 4: PLATANITOS Y TRADICIONALES EN GENERAL
     # -------------------------------------------------------
     else:
         for pagina in range(1, 4):
-            url_paginada = f"{url}{'&' if '?' in url else '?'}page={pagina}" if "platanitos.com" in url_low else url
+            url_paginada = f"{url}{'&' if '?' in url else '?'}page={pagina}" if "platanitos.com" in dominio else url
             try:
                 resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
                 if resp.status_code not in [200, 206]: 
