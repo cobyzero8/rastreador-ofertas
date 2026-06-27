@@ -141,7 +141,6 @@ def escanear_tienda(url, limite):
             texto_html = ""
             status_code = 0
             
-            # 🔥 CONEXIÓN MAESTRA: Se solicita el URL directo sin transformaciones artificiales
             try:
                 from curl_cffi import requests as crequests
                 st.caption("🚀 Simulando entorno TLS de Red Humana (Chrome HTTP/2) para Adidas...")
@@ -240,7 +239,7 @@ def escanear_tienda(url, limite):
                             })
                     except: continue
 
-            # Capa C: Motor Regex Genérico sobre Texto Plano (El salvavidas original para prendas de ropa)
+            # Capa C: Motor Regex Genérico sobre Texto Plano
             if not productos:
                 items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element']))
                 for t in items:
@@ -272,7 +271,7 @@ def escanear_tienda(url, limite):
                                 })
                     except: continue
         except Exception as e:
-            st.error(f"Fallo en comunicación con Adidas: {e}")
+            st.error(f"Fallo en communication con Adidas: {e}")
 
     # -------------------------------------------------------
     # MOTOR PLATANITOS Y TRADICIONALES
@@ -322,6 +321,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     
     total, alertas = 0, 0
     enviados = set()
+    lista_html_streamlit = [] # 🧠 Contenedor para el reporte en vivo restaurado
     zona_peru = timezone(timedelta(hours=-5))
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
@@ -354,7 +354,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         if target != "TODOS" and target != grupo: 
             continue
         
-        st.write(f"🔄 **Patrullando Tienda:** `{ident.split('-')[0]}` | Categoría: *{grupo}*...")
+        tienda_actual = ident.split('-')[0]
+        st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
@@ -368,14 +369,53 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 p_v = float(p['precio'])
                 p_r = max(float(p.get('precio_regular', p_v)), p_v)
                 
+                # 🏷️ Inyectamos la tienda de origen real para pintarla en el reporte
+                p['tienda_origen'] = tienda_actual
+                lista_html_streamlit.append(p)
+                
                 supabase.table("historial_precios").upsert({"identificador": f"{item['identificador']}-{n_u.replace(' ','_')}", "precio": p_v, "precio_regular": p_r, "link_producto": p['link'], "imagen_producto": p.get('img', ''), "fecha": fecha_hoy}).execute()
                 
                 if p_v < p_r:
                     emoji = mapa_emojis.get(grupo, "🔥")
-                    msg_t = f"{emoji} <b>¡BAJÓ DE PRECIO! REMATE</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{ident.split('-')[0]}</code>\n❌ <b>Normal:</b> S/. {p_r:.2f}\n💰 <b>Oferta:</b> S/. {p_v:.2f}\n📉 <b>Ahorro:</b> S/. {(p_r - p_v):.2f}\n"
+                    msg_t = f"{emoji} <b>¡BAJÓ DE PRECIO! REMATE</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Normal:</b> S/. {p_r:.2f}\n💰 <b>Oferta:</b> S/. {p_v:.2f}\n📉 <b>Ahorro:</b> S/. {(p_r - p_v):.2f}\n"
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
             except: 
                 pass
+            
+    # =======================================================
+    # 🎯 BLOQUE RESTAURADO: REPORTE VISUAL EN VIVO
+    # =======================================================
+    if len(lista_html_streamlit) > 0:
+        try:
+            st.write("---")
+            st.write(f"### 🎯 Modelos encontrados e indexados en vivo ({len(lista_html_streamlit)}):")
+            for prod in lista_html_streamlit:
+                with st.container(border=True):
+                    col1, col2 = st.columns([2, 8])
+                    with col1:
+                        if prod.get('img'): 
+                            st.image(prod['img'], width=120)
+                        else: 
+                            st.write("📷 _Sin Foto_")
+                    with col2:
+                        st.markdown(f"#### `{prod['nombre']}`")
+                        st.markdown(f"🏪 **Tienda de Origen:** `{prod['tienda_origen']}`") # Aquí sabrás de quién es
+                        p_oferta = prod['precio']
+                        p_regular = prod.get('precio_regular', p_oferta)
+                        
+                        if p_regular > p_oferta:
+                            ahorro_soles = p_regular - p_oferta
+                            porcentaje = (ahorro_soles / p_regular) * 100
+                            st.markdown(f"❌ ~~Precio Regular: S/. {p_regular:.2f}~~")
+                            st.markdown(f"💰 **Precio Oferta: S/. {p_oferta:.2f}**")
+                            st.markdown(f"🔥 **¡Ahorraste S/. {ahorro_soles:.2f}! ({porcentaje:.0f}% de Descuento)**")
+                        else:
+                            st.markdown(f"💰 **Precio Actual: S/. {p_oferta:.2f}**")
+                            st.caption("ℹ️ _Precio base de lista detectado o sin descuento de etiqueta._")
+                            
+                        st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO]({prod['link']})")
+        except: 
+            pass
             
     return f"Éxito. Modelos procesados: {total}. Alertas Telegram: {alertas}."
