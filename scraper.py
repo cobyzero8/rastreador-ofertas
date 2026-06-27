@@ -162,7 +162,6 @@ def escanear_tienda(url, limite):
                 st.warning(f"⚠️ Adidas bloqueó la conexión. Código HTTP: {status_code}.")
                 return []
                 
-            # 🎯 NORMALIZACIÓN CRÍTICA: Reemplaza espacios fantasmas \xa0 por espacios comunes planos
             texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
             
@@ -201,7 +200,7 @@ def escanear_tienda(url, limite):
                         if productos: break
                 except: continue
 
-            # 💎 Capa B: Selectores Nativos del Sistema de Diseño "gl-" de Adidas
+            # Capa B: Selectores Nativos del Sistema de Diseño "gl-" de Adidas
             if not productos:
                 items = soup.select('.gl-product-card') or soup.select('[class*="gl-product-card"]') or soup.select('.glass-product-card') or soup.select('.grid-item') or soup.select('[data-cyber="product-card"]')
                 for t in items:
@@ -359,7 +358,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         else: 
             grupo = "OTROS"
         
-        if target != "TODOS" and target != group: 
+        # 🛡️ CORRECCIÓN CRÍTICA: Cambiado "group" por "grupo" para solventar el NameError
+        if target != "TODOS" and target != grupo: 
             continue
         
         tienda_actual = ident.split('-')[0]
