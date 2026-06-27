@@ -140,36 +140,22 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (BARRIDO ULTRA QUIRÚRGICO DE RED)
+    # MOTOR 5: ADIDAS PERÚ (IMPERSONACIÓN AUTOMÁTICA PURA)
     # -------------------------------------------------------
     elif "adidas" in url_low:
         try:
             texto_html = ""
             status_code = 0
             
-            # 🔥 CORRECCIÓN MAESTRA: Cabeceras estructurales de navegación directa anti-desafío
-            headers_navigator = {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
-                "Cache-Control": "max-age=0",
-                "Sec-Ch-Ua": '"Not/A)Brand";v=\"8\", "Chromium";v=\"126\", "Google Chrome";v=\"126\"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Upgrade-Insecure-Requests": "1"
-            }
-            
             try:
                 from curl_cffi import requests as crequests
-                st.caption("🚀 Abriendo túnel seguro de navegación humana en Adidas (HTTP/2)...")
-                resp = crequests.get(url, headers=headers_navigator, impersonate="chrome", timeout=15)
+                st.caption("🚀 Ejecutando firma TLS pura (Chrome 120 sin alterar cabeceras) para Adidas...")
+                # 🔥 CLAVE: No pasamos 'headers' customizados para no corromper la huella digital del navegador
+                resp = crequests.get(url, impersonate="chrome120", timeout=15)
                 texto_html = resp.text
                 status_code = resp.status_code
             except ImportError:
-                st.caption("⚠️ `curl_cffi` no detectado. Usando fallback básico...")
+                st.caption("⚠️ `curl_cffi` no detectado. Usando conector estándar...")
                 resp = requests.get(url, headers={"User-Agent": random.choice(LISTA_USER_AGENTS)}, timeout=15, verify=False)
                 texto_html = resp.text
                 status_code = resp.status_code
@@ -181,7 +167,7 @@ def escanear_tienda(url, limite):
             texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
             
-            # 🎯 CAPA EXCLUSIVA INSPECTOR: Extracción inteligente indexando los data-testid reales de tu captura
+            # Buscador por Atributos Fijos del Servidor (data-testid)
             titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
             
             for tit_el in titulos_testid:
@@ -190,7 +176,6 @@ def escanear_tienda(url, limite):
                     if len(nombre_prod) < 3: 
                         continue
                     
-                    # Rastrear ancestros compartidos de la tarjeta para capturar precios e imágenes asociadas
                     ancestor = tit_el
                     oferta_el = None
                     regular_el = None
@@ -232,7 +217,7 @@ def escanear_tienda(url, limite):
                 except:
                     continue
 
-            # Capa B: Metadatos estructurados JSON de respaldo
+            # Capa B: Respaldo por JSON Estructurado Interno
             if not productos:
                 json_scripts = soup.find_all('script', type='application/ld+json')
                 for script in json_scripts:
@@ -257,33 +242,13 @@ def escanear_tienda(url, limite):
                         if productos: break
                     except: continue
 
-            # Capa C: Extractor Clásico por Clases del Sistema "gl-" de Adidas
+            # Sistema de Control en Pantalla para Validación en Vivo
             if not productos:
-                items = soup.select('.gl-product-card') or soup.select('[class*="gl-product-card"]')
-                for t in items:
-                    try:
-                        tit_el = t.select_one('.gl-product-card__title') or t.find(['h3', 'h4', 'p', 'a'])
-                        if not tit_el: continue
-                        nombre_prod = tit_el.text.strip().upper()
-                        oferta_el = t.select_one('.gl-price-item--sale') or t.select_one('.gl-price-item')
-                        if oferta_el:
-                            precio_oferta = limpiar_precio_pnp(oferta_el.text)
-                            if 0 < precio_oferta <= limite:
-                                enlace_el = t.find('a', href=True)
-                                productos.append({
-                                    "nombre": f"ADIDAS - {nombre_prod}",
-                                    "precio": precio_oferta,
-                                    "precio_regular": precio_oferta,
-                                    "link": urljoin(url, enlace_el['href']) if enlace_el else url,
-                                    "img": ""
-                                })
-                    except: continue
-                    
-            # 💡 SISTEMA DE MONITOREO VISUAL EN VIVO
-            if not productos and len(texto_html) < 4000:
-                st.error(f"⚠️ Alerta: El servidor devolvió una página muy corta ({len(texto_html)} letras). Akamai está pidiendo verificación de cookies.")
-                with st.expander("🔍 Ver fragmento del código recibido de Adidas"):
-                    st.code(texto_html[:1200], language="html")
+                st.info(f"ℹ️ Diagnóstico Adidas: HTML recibido de forma limpia ({len(texto_html)} letras). Analizando estructura...")
+                if len(texto_html) < 4000:
+                    st.error("🚨 Alerta: Akamai devolvió un cascarón vacío. Se requiere reintentar para forzar rotación de IP.")
+                    with st.expander("🔍 Ver fragmento del código"):
+                        st.code(texto_html[:1000], language="html")
                     
         except Exception as e:
             st.error(f"Fallo en comunicación con Adidas: {e}")
