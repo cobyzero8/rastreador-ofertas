@@ -140,116 +140,126 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (IMPERSONACIÓN AUTOMÁTICA PURA)
+    # MOTOR 5: ADIDAS PERÚ (SÚPER CONECTOR CON AUTO-REINTENTO)
     # -------------------------------------------------------
     elif "adidas" in url_low:
         try:
             texto_html = ""
             status_code = 0
             
-            try:
-                from curl_cffi import requests as crequests
-                st.caption("🚀 Ejecutando firma TLS pura (Chrome 120 sin alterar cabeceras) para Adidas...")
-                # 🔥 CLAVE: No pasamos 'headers' customizados para no corromper la huella digital del navegador
-                resp = crequests.get(url, impersonate="chrome120", timeout=15)
-                texto_html = resp.text
-                status_code = resp.status_code
-            except ImportError:
-                st.caption("⚠️ `curl_cffi` no detectado. Usando conector estándar...")
-                resp = requests.get(url, headers={"User-Agent": random.choice(LISTA_USER_AGENTS)}, timeout=15, verify=False)
-                texto_html = resp.text
-                status_code = resp.status_code
+            # 🔥 BUCLE INTELIGENTE ANTI-CHALLENGE: Reintenta hasta 3 veces si cae en el cascarón de Akamai
+            for intento in range(1, 4):
+                try:
+                    from curl_cffi import requests as crequests
+                    st.caption(f"🚀 [Intento {intento}/3] Conectando a Adidas con firma limpia HTTP/2...")
+                    resp = crequests.get(url, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
+                    texto_html = resp.text
+                    status_code = resp.status_code
+                except ImportError:
+                    resp = requests.get(url, headers={"User-Agent": random.choice(LISTA_USER_AGENTS)}, timeout=15, verify=False)
+                    texto_html = resp.text
+                    status_code = resp.status_code
+                
+                # Si recibimos la página real (más de 5000 letras), rompemos el bucle de reintentos
+                if status_code == 200 and len(texto_html) > 5000:
+                    break
+                else:
+                    st.warning(f"⚠️ Intento {intento} retenido por desafío Akamai ({len(texto_html)} letras). Reorientando IP...")
+                    time.sleep(random.uniform(2.5, 4.0))
             
-            if status_code != 200:
-                st.warning(f"⚠️ Adidas rechazó la conexión. Código HTTP: {status_code}.")
+            st.info(f"ℹ️ Diagnóstico Adidas: HTML recibido de forma limpia ({len(texto_html)} letras). Analizando estructura...")
+            
+            if len(texto_html) <= 5000:
+                st.error("🚨 Todos los intentos cayeron en el muro de Akamai. Ejecuta el botón nuevamente para forzar otra IP.")
                 return []
                 
             texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
+            total_detectados_tienda = 0
             
-            # Buscador por Atributos Fijos del Servidor (data-testid)
-            titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
-            
-            for tit_el in titulos_testid:
+            # 🎯 ESTRATEGIA ALTA VELOCIDAD: Minería del bloque Next.js de Adidas (__NEXT_DATA__)
+            next_script = soup.find('script', id='__NEXT_DATA__')
+            if next_script:
                 try:
-                    nombre_prod = tit_el.text.strip().upper()
-                    if len(nombre_prod) < 3: 
-                        continue
+                    json_data = json.loads(next_script.text)
+                    # Búsqueda recursiva automatizada de productos dentro del árbol JSON de Next.js
+                    def buscar_productos_next(nodo):
+                        if isinstance(nodo, dict):
+                            for k in ['products', 'results', 'items', 'itemListElement']:
+                                if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
+                                    if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
+                                        return nodo[k]
+                            for v in nodo.values():
+                                res = buscar_productos_next(v)
+                                if res: return res
+                        elif isinstance(nodo, list):
+                            for x in nodo:
+                                res = buscar_productos_next(x)
+                                if res: return res
+                        return []
                     
-                    ancestor = tit_el
-                    oferta_el = None
-                    regular_el = None
-                    enlace_el = None
-                    img_el = None
-                    
-                    for _ in range(5):
-                        ancestor = ancestor.parent
-                        if not ancestor: 
-                            break
-                        if not oferta_el: 
-                            oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
-                        if not regular_el: 
-                            regular_el = ancestor.find(attrs={"data-testid": "original-price"})
-                        if not enlace_el: 
-                            enlace_el = ancestor.find('a', href=True)
-                        if not img_el: 
-                            img_el = ancestor.find('img')
-                            
-                    if oferta_el:
-                        precio_oferta = limpiar_precio_pnp(oferta_el.text)
-                        precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
-                        
-                        if 0 < precio_oferta <= limite:
-                            enlace_final = urljoin(url, enlace_el['href']) if enlace_el else url
-                            img_final = ""
-                            if img_el:
-                                img_final = img_el.get('data-src') or img_el.get('src') or ""
-                                if img_final.startswith('//'): 
-                                    img_final = 'https:' + img_final
+                    items_json = buscar_productos_next(json_data)
+                    if items_json:
+                        for prod_j in items_json:
+                            try:
+                                total_detectados_tienda += 1
+                                nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
+                                nombre = str(nombre).upper()
+                                if len(nombre) < 3: continue
                                 
-                            productos.append({
-                                "nombre": f"ADIDAS - {nombre_prod}",
-                                "precio": precio_oferta,
-                                "precio_regular": max(precio_regular, precio_oferta),
-                                "link": enlace_final,
-                                "img": img_final
-                            })
-                except:
-                    continue
+                                p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
+                                p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
+                                
+                                if 0 < p_o <= limite:
+                                    link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
+                                    productos.append({
+                                        "nombre": f"ADIDAS - {nombre}",
+                                        "precio": p_o,
+                                        "precio_regular": max(p_r, p_o),
+                                        "link": urljoin("https://www.adidas.pe", link_rel),
+                                        "img": str(prod_j.get('image', ''))
+                                    })
+                            except: continue
+                except: pass
 
-            # Capa B: Respaldo por JSON Estructurado Interno
+            # Capa B: Rastreador por Atributos Fijos (data-testid) del HTML Visible
             if not productos:
-                json_scripts = soup.find_all('script', type='application/ld+json')
-                for script in json_scripts:
+                titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
+                for tit_el in titulos_testid:
                     try:
-                        script_content = script.text if script.text else (script.string if script.string else "")
-                        js_data = json.loads(script_content)
-                        elements = js_data.get("itemListElement", []) if isinstance(js_data, dict) else []
-                        for element in elements:
-                            item = element.get("item", {})
-                            nombre_p = item.get("name", "").upper()
-                            if len(nombre_p) < 3: continue
-                            offers = item.get("offers", {})
-                            p_o = safe_float(offers.get("lowPrice") or offers.get("price", 0))
-                            if 0 < p_o <= limite:
+                        total_detectados_tienda += 1
+                        nombre_prod = tit_el.text.strip().upper()
+                        ancestor = tit_el
+                        oferta_el, regular_el, enlace_el, img_el = None, None, None, None
+                        
+                        for _ in range(5):
+                            ancestor = ancestor.parent
+                            if not ancestor: break
+                            if not oferta_el: oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
+                            if not regular_el: regular_el = ancestor.find(attrs={"data-testid": "original-price"})
+                            if not enlace_el: enlace_el = ancestor.find('a', href=True)
+                            if not img_el: img_el = ancestor.find('img')
+                                
+                        if oferta_el:
+                            precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                            precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                            
+                            if 0 < precio_oferta <= limite:
                                 productos.append({
-                                    "nombre": f"ADIDAS - {nombre_p}",
-                                    "precio": p_o,
-                                    "precio_regular": safe_float(offers.get("highPrice", p_o)),
-                                    "link": urljoin(url, item.get("url", "")),
-                                    "img": item.get("image", "")
+                                    "nombre": f"ADIDAS - {nombre_prod}",
+                                    "precio": precio_oferta,
+                                    "precio_regular": max(precio_regular, precio_oferta),
+                                    "link": urljoin(url, enlace_el['href']) if enlace_el else url,
+                                    "img": img_el.get('src', '') if img_el else ''
                                 })
-                        if productos: break
                     except: continue
 
-            # Sistema de Control en Pantalla para Validación en Vivo
-            if not productos:
-                st.info(f"ℹ️ Diagnóstico Adidas: HTML recibido de forma limpia ({len(texto_html)} letras). Analizando estructura...")
-                if len(texto_html) < 4000:
-                    st.error("🚨 Alerta: Akamai devolvió un cascarón vacío. Se requiere reintentar para forzar rotación de IP.")
-                    with st.expander("🔍 Ver fragmento del código"):
-                        st.code(texto_html[:1000], language="html")
-                    
+            # 💡 INFORME DE DIAGNÓSTICO EN VIVO
+            if total_detectados_tienda > 0:
+                st.info(f"📊 Se escanearon {total_detectados_tienda} shorts en la web de Adidas. (Filtro actual: Menores a S/. {limite:.2f}).")
+                if not productos:
+                    st.warning(f"ℹ️ Los {total_detectados_tienda} shorts de Adidas superan los S/. {limite:.2f}. Sube el precio regular en tu panel de Radares para indexarlos.")
+            
         except Exception as e:
             st.error(f"Fallo en comunicación con Adidas: {e}")
 
@@ -370,7 +380,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 with st.container(border=True):
                     col1, col2 = st.columns([2, 8])
                     with col1:
-                        if prod.get('img'): 
+                        if prod.get('img') and len(prod['img']) > 5: 
                             st.image(prod['img'], width=120)
                         else: 
                             st.write("📷 _Sin Foto_")
