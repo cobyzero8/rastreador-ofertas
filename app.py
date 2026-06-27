@@ -4,6 +4,8 @@ import os
 import pandas as pd
 import requests
 from supabase import create_client, Client
+# 🛡️ CORRECCIÓN CRÍTICA: Importación al tope para romper el caché de Python de inmediato
+from scraper import revisar_ofertas
 
 st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
 
@@ -120,32 +122,22 @@ def botonera_independiente():
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Central de Ofertas Activas")
     
-    # 🧪 INYECTOR EXPANDER DE PRUEBA EXCLUSIVA PARA EL BOT
     with st.sidebar.expander("🧪 Verificar Bot de Telegram"):
         if st.button("🔔 Ejecutar Alerta de Prueba"):
             t_tok = st.secrets.get("TELEGRAM_TOKEN")
             t_cid = st.secrets.get("TELEGRAM_CHAT_ID")
-            if not t_tok or not t_cid:
-                st.error("Faltan credenciales en Secrets.")
+            if not t_tok or not t_cid: st.error("Faltan credenciales.")
             else:
-                test_body = "<b>🤖 COMPROBACIÓN CENTRAL DE CAZA:</b>\n\nEl Bot de Telegram se ha enlazado al Dashboard exitosamente."
+                test_body = "<b>🤖 COMPROBACIÓN CENTRAL:</b>\n\nEl Bot de Telegram se ha enlazado exitosamente."
                 img_demo = "https://images.unsplash.com/photo-1542291026-7eec264c27ff"
                 test_url = f"https://api.telegram.org/bot{t_tok}/sendPhoto"
-                payload_test = {
-                    "chat_id": t_cid,
-                    "photo": img_demo,
-                    "caption": f"{test_body}\n\n👉 <a href='https://google.com.pe'><b>¡ENLACE DE PRUEBA!</b></a>",
-                    "parse_mode": "HTML"
-                }
                 try:
-                    r_test = requests.post(test_url, json=payload_test, timeout=10)
-                    if r_test.status_code == 200: st.success("¡Mensaje enviado con éxito!")
-                    else: st.error(f"Error HTTP Telegram: {r_test.status_code}")
-                except Exception as ex_t: st.error(f"Fallo de conexión: {ex_t}")
+                    requests.post(test_url, json={"chat_id": t_cid, "photo": img_demo, "caption": f"{test_body}\n\n👉 <a href='https://google.com.pe'><b>¡ENLACE!</b></a>", "parse_mode": "HTML"}, timeout=10)
+                    st.success("¡Mensaje enviado con éxito!")
+                except Exception as ex_t: st.error(f"Fallo: {ex_t}")
 
     botonera_independiente()
     st.write("---")
-    st.write(f"📋 Mostrando registros para: **{st.session_state.filtro_activo}**")
     
     lista_dashboard = []
     try:
@@ -162,14 +154,12 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 proc.add(id_p.upper())
                 
                 parts = id_p.split("-")
-                tnd_txt = parts[0].upper() if len(parts) > 0 else "N/A"
-                cat_txt = parts[1].upper().strip() if len(parts) > 1 else "OTROS"
+                tnd_txt = parts[0].upper()
+                cat_txt = parts[1].upper().strip()
                 
                 prd_txt = "N/A"
-                if len(parts) > 2:
-                    prd_txt = parts[2].replace("_", " ").title()
-                if len(parts) > 4:
-                    prd_txt = "-".join(parts[4:]).replace("_", " ").title()
+                if len(parts) > 2: prd_txt = parts[2].replace("_", " ").title()
+                if len(parts) > 4: prd_txt = "-".join(parts[4:]).replace("_", " ").title()
                 
                 grupo = "OTROS"
                 if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
@@ -183,80 +173,44 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 elif "TV" in cat_txt: grupo = "TV"
                 elif "PARLANTE" in cat_txt: grupo = "PARLANTE"
                 elif "BARRA" in cat_txt: grupo = "BARRA DE SONIDO"
-                elif "CELULAR" in cat_txt: group = "CELULAR"
-                elif "PC" in cat_txt or "LAPTOP" in cat_txt: grupo = "PC"
+                elif "CELULAR" in cat_txt: grupo = "CELULAR"
+                elif "PC" in cat_txt: grupo = "PC"
                 elif "REFRIGERADORA" in cat_txt: grupo = "REFRIGERADORA"
                 elif "LAVADORA" in cat_txt: grupo = "LAVADORA"
                 elif "ELECTRO" in cat_txt: grupo = "ELECTRODOMESTICOS"
-                elif "CAMA" in cat_txt or "COLCHON" in cat_txt: grupo = "CAMA"
+                elif "CAMA" in cat_txt: grupo = "CAMA"
 
                 f_activo = st.session_state.filtro_activo
-                mostrar = False
-                if f_activo == "TODOS": mostrar = True
-                if f_activo == grupo: mostrar = True
-                
-                if mostrar:
+                if f_activo == "TODOS" or f_activo == grupo:
                     raw_regular = reg.get('precio_regular')
                     precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
-                    descuento_neto = precio_regular - precio_venta
-                    
                     lista_dashboard.append({
-                        "Tienda": tnd_txt, 
-                        "Nombre del Producto": prd_txt, 
+                        "Tienda": tnd_txt, "Nombre del Producto": prd_txt, 
                         "Imagen del Producto": reg.get('imagen_producto', ''),
-                        "Precio Real": precio_regular,
-                        "Precio de Venta": precio_venta, 
-                        "Descuento": descuento_neto,
-                        "Link": reg.get('link_producto', '#')
+                        "Precio Real": precio_regular, "Precio de Venta": precio_venta, 
+                        "Descuento": precio_regular - precio_venta, "Link": reg.get('link_producto', '#')
                     })
-    except Exception as e: 
-        st.warning(f"Sincronizando: {e}")
+    except Exception as e: st.warning(f"Sincronizando: {e}")
 
     if lista_dashboard: 
-        df_dash = pd.DataFrame(lista_dashboard)
-        df_dash = df_dash.sort_values(by="Descuento", ascending=False)
-        
-        st.dataframe(
-            df_dash, 
-            column_config={
-                "Tienda": st.column_config.TextColumn("🏪 Tienda"),
-                "Nombre del Producto": st.column_config.TextColumn("📦 Nombre del Producto"),
-                "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista"),
-                "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"),
-                "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"),
-                "Descuento": st.column_config.NumberColumn("📉 Descuento (Ahorro)", format="S/. %.2f"),
-                "Link": st.column_config.LinkColumn("🛒 Ir a la Tienda", display_text="Ver Producto")
-            }, 
-            hide_index=True, 
-            use_container_width=True
-        )
-    else: 
-        st.info("No hay ofertas registradas en este rango.")
+        df_dash = pd.DataFrame(lista_dashboard).sort_values(by="Descuento", ascending=False)
+        st.dataframe(df_dash, column_config={"Tienda": "🏪 Tienda", "Nombre del Producto": "📦 Nombre del Producto", "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista"), "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"), "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"), "Descuento": st.column_config.NumberColumn("📉 Descuento", format="S/. %.2f"), "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver")}, hide_index=True, use_container_width=True)
+    else: st.info("No hay ofertas registradas en este rango.")
 
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
     lista_tiendas = obtener_tiendas_dinamicas()
-    
-    cats_form = [
-        "Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", 
-        "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", 
-        "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", 
-        "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"
-    ]
+    cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"]
     
     with st.container(border=True):
         if st.session_state.mod_id is not None: st.markdown("### ✏️ Modificando Radar")
         else: st.markdown("### 📝 Registrar Nuevo Radar Activo")
-            
         c1, c2, c3 = st.columns(3)
         with c1:
-            idx_t = lista_tiendas.index(st.session_state.mod_tienda) if st.session_state.mod_tienda in lista_tiendas else 0
-            tienda_sel = st.selectbox("Tienda Sugerida", lista_tiendas, index=idx_t)
+            tienda_sel = st.selectbox("Tienda Sugerida", lista_tiendas, index=lista_tiendas.index(st.session_state.mod_tienda) if st.session_state.mod_tienda in lista_tiendas else 0)
             tienda_man = st.text_input("✍️ O Nueva Tienda", "").strip().upper()
             t_final = tienda_man if tienda_man else tienda_sel
-            
-            idx_c = cats_form.index(st.session_state.mod_cat) if st.session_state.mod_cat in cats_form else 0
-            cat_menu = st.selectbox("Categoría Sugerida", cats_form, index=idx_c)
+            cat_menu = st.selectbox("Categoría Sugerida", cats_form, index=cats_form.index(st.session_state.mod_cat) if st.session_state.mod_cat in cats_form else 0)
             cat_man = st.text_input("✍️ O Nueva Categoría", "").strip().upper()
         with c2:
             nombre = st.text_input("Nombre descriptivo", value=st.session_state.mod_nombre)
@@ -265,114 +219,52 @@ elif menu == "🛠️ Configurar Radares y URLs":
             talla = st.text_input("Talla / Detalle", value=st.session_state.mod_talla)
             precio_max = st.number_input("Precio máximo (S/.)", value=int(st.session_state.mod_precio), min_value=1)
         
-        c_b1, c_b2 = st.columns([8, 2])
-        with c_b1:
-            txt_b = "💾 GUARDAR CAMBIOS EN LA NUBE" if st.session_state.mod_id is not None else "💾 GUARDAR NUEVO RADAR EN LA NUBE"
-            if st.button(txt_b, type="primary", use_container_width=True):
-                if cat_man: 
-                    cat_final = cat_man.replace(" ", "_").upper()
-                else:
-                    cl = cat_menu.lower()
-                    if "medias" in cl: cat_final = "ROPA_MEDIAS"
-                    elif "polos" in cl: cat_final = "ROPA_POLOS"
-                    elif "casacas" in cl or "poleras" in cl: cat_final = "ROPA_CASACAS"
-                    elif "shorts" in cl: cat_final = "ROPA_SHORTS"
-                    elif "buzos" in cl: cat_final = "ROPA_BUZOS"
-                    elif "perfume" in cl: cat_final = "PERFUMES"
-                    elif "zapatilla" in cl: cat_final = "ZAPATILLAS"
-                    elif "audifono" in cl: cat_final = "AUDIFONOS"
-                    elif "tv" in cl: cat_final = "TV"
-                    elif "parlante" in cl: cat_final = "PARLANTE"
-                    elif "barra" in cl: cat_final = "BARRA_DE_SONIDO"
-                    elif "celular" in cl: cat_final = "CELULAR"
-                    elif "pc" in cl or "laptop" in cl: cat_final = "PC"
-                    elif "refrigeradora" in cl: cat_final = "REFRIGERADORA"
-                    elif "lavadora" in cl: cat_final = "LAVADORA"
-                    elif "electro" in cl: cat_final = "ELECTRODOMESTICOS"
-                    elif "cama" in cl or "colchon" in cl: cat_final = "CAMA"
-                    else: cat_final = "OTROS"
-                
-                nuevo_id = f"{t_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
-                try:
-                    if st.session_state.mod_id is not None:
-                        supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
-                        st.toast("✅ ¡Radar modificado!")
-                    else:
-                        supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
-                        st.toast("✅ ¡Radar guardado!")
-                    st.session_state.mod_id = None
-                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
-                    st.session_state.mod_precio = 100
-                    st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
-        with c_b2:
-            if st.session_state.mod_id is not None:
-                if st.button("❌ Cancelar", use_container_width=True):
-                    st.session_state.mod_id = None
-                    st.session_state.mod_nombre, st.session_state.mod_url, st.session_state.mod_talla = "", "", "Todas"
-                    st.session_state.mod_precio = 100
-                    st.rerun()
+        if st.button("💾 GUARDAR CAMBIOS EN LA NUBE", type="primary", use_container_width=True):
+            if cat_man: cat_final = cat_man.replace(" ", "_").upper()
+            else:
+                cl = cat_menu.lower()
+                cat_final = "ROPA_MEDIAS" if "medias" in cl else "ROPA_POLOS" if "polos" in cl else "ROPA_CASACAS" if "casacas" in cl or "poleras" in cl else "ROPA_SHORTS" if "shorts" in cl else "ROPA_BUZOS" if "buzos" in cl else "PERFUMES" if "perfume" in cl else "ZAPATILLAS" if "zapatilla" in cl else "AUDIFONOS" if "audifono" in cl else "TV" if "tv" in cl else "PARLANTE" if "parlante" in cl else "BARRA_DE_SONIDO" if "barra" in cl else "CELULAR" if "celular" in cl else "PC" if "pc" in cl or "laptop" in cl else "REFRIGERADORA" if "refrigeradora" in cl else "LAVADORA" if "lavadora" in cl else "ELECTRODOMESTICOS" if "electro" in cl else "CAMA" if "cama" in cl or "colchon" in cl else "OTROS"
+            
+            nuevo_id = f"{t_final.replace(' ', '_')}-{cat_final}-{nombre.replace(' ', '_').upper()}-{talla.replace(' ', '_').upper()}"
+            try:
+                if st.session_state.mod_id is not None: supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
+                else: supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                st.session_state.mod_id = None
+                st.session_state.mod_nombre, st.session_state.mod_url = "", ""
+                st.rerun()
+            except Exception as e: st.error(f"Error: {e}")
 
     st.write("---")
-    st.markdown("### 📋 Registro Actual de Radares Activos")
     try:
         res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
         if res_radares.data:
             for index, item in enumerate(res_radares.data):
                 parts = item["identificador"].split("-")
-                tienda_p = parts[0].upper()
-                cat_p = parts[1].upper()
-                nombre_p = parts[2].replace("_", " ").title() if len(parts) > 2 else "N/A"
-                talla_p = parts[3].replace("_", " ") if len(parts) > 3 else "Todas"
-                
                 with st.container(border=True):
                     col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
                     with col_info:
-                        st.markdown(f"**{index + 1}. 🌐 [{tienda_p}]** | #{cat_p.replace('_', ' ')} | Etiqueta: `{nombre_p}` | Filtro: `{talla_p}` | **Tope: S/. {item['precio_max']:.2f}**")
-                        st.caption(f"🔗 **URL:** [{item['url']}]({item['url']})")
+                        st.markdown(f"**{index + 1}. 🌐 [{parts[0]}]** | #{parts[1].replace('_', ' ')} | Etiqueta: `{parts[2] if len(parts)>2 else 'N/A'}` | **Tope: S/. {item['precio_max']:.2f}**")
+                        st.caption(f"🔗 **URL:** {item['url']}")
                     with col_mod:
-                        st.write("")
-                        if st.button(f"📝 Modificar", key=f"mod_btn_{item['id']}", use_container_width=True):
+                        if st.button("📝 Modificar", key=f"m_{item['id']}", use_container_width=True):
                             st.session_state.mod_id = item["id"]
-                            st.session_state.mod_tienda = tienda_p
-                            
-                            rev_mapa = {
-                                "PERFUMES": "Perfumes", "ZAPATILLAS": "Zapatillas", "OTROS": "Otros",
-                                "ROPA_MEDIAS": "Ropa (Medias)", "ROPA_POLOS": "Ropa (Polos)", "ROPA_CASACAS": "Ropa (Casacas/Poleras)",
-                                "ROPA_SHORTS": "Ropa (Shorts)", "ROPA_BUZOS": "Ropa (Buzos)",
-                                "AUDIFONOS": "Audifonos", "TV": "TV", "PARLANTE": "Parlante", 
-                                "BARRA_DE_SONIDO": "Barra de sonido", "CELULAR": "Celular", "PC": "PC / Laptop",
-                                "REFRIGERADORA": "Refrigeradora", "LAVADORA": "Lavadora", "ELECTRODOMESTICOS": "Electrodomesticos", "CAMA": "Cama"
-                            }
-                            st.session_state.mod_cat = rev_mapa.get(cat_p, "Otros")
-                            st.session_state.mod_nombre = parts[2].replace("_", " ") if len(parts) > 2 else ""
+                            st.session_state.mod_tienda = parts[0]
                             st.session_state.mod_url = item["url"]
-                            st.session_state.mod_talla = talla_p
                             st.session_state.mod_precio = item["precio_max"]
                             st.rerun()
                     with col_del:
-                        st.write("")
-                        if st.button(f"🗑️ Eliminar", key=f"del_btn_{item['id']}", use_container_width=True, type="secondary"):
-                            try:
-                                supabase.table("radares").delete().eq("id", item["id"]).execute()
-                                st.toast(f"🗑️ Radar {tienda_p} eliminado.")
-                                st.rerun()
-                            except Exception as err: st.error(f"Error: {err}")
-        else: st.info("No hay radares registrados.")
-    except Exception as e: st.error(f"Error al conectar: {e}")
+                        if st.button("🗑️ Eliminar", key=f"d_{item['id']}", use_container_width=True):
+                            supabase.table("radares").delete().eq("id", item["id"]).execute()
+                            st.rerun()
+    except Exception as e: st.error(f"Error Supabase: {e}")
 
 elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje")
+    st.title("💥 Módulo de Patrullaje Activo")
     botonera_independiente()
-        
     st.write("---")
     if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
         target = st.session_state.filtro_activo
         st.toast(f"🕵️‍♂️ Buscando {target}...")
-        
-        try:
-            from scraper import revisar_ofertas
-            msg = revisar_ofertas(target)
-            st.success(f"📊 Resumen del patrullaje: {msg}")
-        except Exception as e: 
-            st.error(f"❌ Error en el motor: {e}")
+        # 🛡️ AL ESTAR LA IMPORTACIÓN GLOBAL ARRIBA, ESTA LLAMADA TIENE CERO LATENCIA DE CACHÉ
+        msg = revisar_ofertas(target)
+        st.success(f"📊 Resumen del patrullaje: {msg}")
