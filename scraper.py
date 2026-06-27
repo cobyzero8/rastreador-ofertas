@@ -38,8 +38,7 @@ else:
 
 LISTA_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 ]
 
 def limpiar_precio_pnp(texto_precio):
@@ -141,25 +140,37 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (MINERÍA DE JAVASCRIPT RECURSIVA)
+    # MOTOR 5: ADIDAS PERÚ (BARRIDO ULTRA QUIRÚRGICO DE RED)
     # -------------------------------------------------------
     elif "adidas" in url_low:
         try:
             texto_html = ""
             status_code = 0
             
+            # 🔥 CORRECCIÓN MAESTRA: Cabeceras estructurales de navegación directa anti-desafío
+            headers_navigator = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
+                "Cache-Control": "max-age=0",
+                "Sec-Ch-Ua": '"Not/A)Brand";v=\"8\", "Chromium";v=\"126\", "Google Chrome";v=\"126\"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1"
+            }
+            
             try:
                 from curl_cffi import requests as crequests
-                st.caption("🚀 Descargando datos dinámicos de Adidas mediante HTTP/2...")
-                resp = crequests.get(url, impersonate="chrome", timeout=15)
+                st.caption("🚀 Abriendo túnel seguro de navegación humana en Adidas (HTTP/2)...")
+                resp = crequests.get(url, headers=headers_navigator, impersonate="chrome", timeout=15)
                 texto_html = resp.text
                 status_code = resp.status_code
             except ImportError:
-                headers_full = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-                }
-                resp = requests.get(url, headers=headers_full, timeout=15, verify=False)
+                st.caption("⚠️ `curl_cffi` no detectado. Usando fallback básico...")
+                resp = requests.get(url, headers={"User-Agent": random.choice(LISTA_USER_AGENTS)}, timeout=15, verify=False)
                 texto_html = resp.text
                 status_code = resp.status_code
             
@@ -167,117 +178,113 @@ def escanear_tienda(url, limite):
                 st.warning(f"⚠️ Adidas rechazó la conexión. Código HTTP: {status_code}.")
                 return []
                 
-            # 🎯 ESTRATEGIA DE MINERÍA NÚCLEO: Extraer el JSON oculto en window.__INITIAL_STATE__
-            json_bloque = None
-            match_state = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});', texto_html)
-            if match_state:
-                try: json_bloque = json.loads(match_state.group(1))
-                except: pass
-                
-            if not json_bloque:
-                # Intento alternativo por si está en otra variable global o bloque de scripts
-                soup = BeautifulSoup(texto_html, 'html.parser')
-                for sc in soup.find_all('script'):
-                    if sc.text and 'initial_state' in sc.text.lower() or 'plpdata' in sc.text.lower():
-                        match_inner = re.search(r'=\s*(\{.*?\});', sc.text)
-                        if match_inner:
-                            try:
-                                json_bloque = json.loads(match_inner.group(1))
-                                break
-                            except: pass
-
-            # Si encontramos el JSON estructurado, hacemos una búsqueda recursiva profunda de productos
-            if json_bloque:
-                items_raw = []
-                def buscar_nodos_producto(nodo):
-                    if isinstance(nodo, dict):
-                        for k in ['products', 'results', 'items', 'itemListElement']:
-                            if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
-                                if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName', 'productId']):
-                                    return nodo[k]
-                        for v in nodo.values():
-                            res = buscar_nodos_producto(v)
-                            if res: return res
-                    elif isinstance(nodo, list):
-                        for x in nodo:
-                            res = buscar_nodos_producto(x)
-                            if res: return res
-                    return []
-                
-                items_raw = buscar_nodos_producto(json_bloque)
-                
-                for prod_j in items_raw:
-                    try:
-                        # Extraer del esquema estructurado o directo del objeto de catálogo
-                        item_data = prod_j.get('item', prod_j) if isinstance(prod_j.get('item'), dict) else prod_j
-                        nombre = item_data.get('name') or item_data.get('title') or item_data.get('displayName') or ""
-                        nombre = str(nombre).upper()
-                        if len(nombre) < 3: continue
+            texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
+            soup = BeautifulSoup(texto_html, 'html.parser')
+            
+            # 🎯 CAPA EXCLUSIVA INSPECTOR: Extracción inteligente indexando los data-testid reales de tu captura
+            titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
+            
+            for tit_el in titulos_testid:
+                try:
+                    nombre_prod = tit_el.text.strip().upper()
+                    if len(nombre_prod) < 3: 
+                        continue
+                    
+                    # Rastrear ancestros compartidos de la tarjeta para capturar precios e imágenes asociadas
+                    ancestor = tit_el
+                    oferta_el = None
+                    regular_el = None
+                    enlace_el = None
+                    img_el = None
+                    
+                    for _ in range(5):
+                        ancestor = ancestor.parent
+                        if not ancestor: 
+                            break
+                        if not oferta_el: 
+                            oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
+                        if not regular_el: 
+                            regular_el = ancestor.find(attrs={"data-testid": "original-price"})
+                        if not enlace_el: 
+                            enlace_el = ancestor.find('a', href=True)
+                        if not img_el: 
+                            img_el = ancestor.find('img')
+                            
+                    if oferta_el:
+                        precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                        precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                         
-                        # Manejo inteligente de precios anidados
-                        p_o = 0.0
-                        p_r = 0.0
-                        offers = item_data.get('offers', {})
-                        if isinstance(offers, dict) and 'price' in offers:
-                            p_o = safe_float(offers.get('price'))
-                            p_r = safe_float(offers.get('highPrice', p_o))
-                        else:
-                            p_o = safe_float(item_data.get('salePrice') or item_data.get('price'))
-                            p_r = safe_float(item_data.get('originalPrice') or item_data.get('price') or p_o)
-                            
-                        if 0 < p_o <= limite:
-                            link_rel = item_data.get('url') or item_data.get('link') or item_data.get('href') or ""
-                            link_f = urljoin("https://www.adidas.pe", link_rel)
-                            
-                            img_src = ""
-                            img_raw = item_data.get('image') or item_data.get('imageUrl') or ""
-                            if isinstance(img_raw, dict): img_src = img_raw.get('src') or img_raw.get('url') or ""
-                            else: img_src = str(img_raw)
-                            
-                            if img_src.startswith('//'): img_src = 'https:' + img_src
-                            
+                        if 0 < precio_oferta <= limite:
+                            enlace_final = urljoin(url, enlace_el['href']) if enlace_el else url
+                            img_final = ""
+                            if img_el:
+                                img_final = img_el.get('data-src') or img_el.get('src') or ""
+                                if img_final.startswith('//'): 
+                                    img_final = 'https:' + img_final
+                                
                             productos.append({
-                                "nombre": f"ADIDAS - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_f,
-                                "img": img_src
+                                "nombre": f"ADIDAS - {nombre_prod}",
+                                "precio": precio_oferta,
+                                "precio_regular": max(precio_regular, precio_oferta),
+                                "link": enlace_final,
+                                "img": img_final
                             })
+                except:
+                    continue
+
+            # Capa B: Metadatos estructurados JSON de respaldo
+            if not productos:
+                json_scripts = soup.find_all('script', type='application/ld+json')
+                for script in json_scripts:
+                    try:
+                        script_content = script.text if script.text else (script.string if script.string else "")
+                        js_data = json.loads(script_content)
+                        elements = js_data.get("itemListElement", []) if isinstance(js_data, dict) else []
+                        for element in elements:
+                            item = element.get("item", {})
+                            nombre_p = item.get("name", "").upper()
+                            if len(nombre_p) < 3: continue
+                            offers = item.get("offers", {})
+                            p_o = safe_float(offers.get("lowPrice") or offers.get("price", 0))
+                            if 0 < p_o <= limite:
+                                productos.append({
+                                    "nombre": f"ADIDAS - {nombre_p}",
+                                    "precio": p_o,
+                                    "precio_regular": safe_float(offers.get("highPrice", p_o)),
+                                    "link": urljoin(url, item.get("url", "")),
+                                    "img": item.get("image", "")
+                                })
+                        if productos: break
                     except: continue
 
-            # 🌐 CAPA DE RESPALDO EXTREMA: Parsing regex directo sobre el HTML por si el script falla
+            # Capa C: Extractor Clásico por Clases del Sistema "gl-" de Adidas
             if not productos:
-                soup = BeautifulSoup(texto_html, 'html.parser')
-                texto_html_limpio = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
-                soup_limpia = BeautifulSoup(texto_html_limpio, 'html.parser')
-                
-                items = soup_limpia.select('.gl-product-card') or soup_limpia.select('[class*="gl-product-card"]') or soup_limpia.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'gl-']))
+                items = soup.select('.gl-product-card') or soup.select('[class*="gl-product-card"]')
                 for t in items:
                     try:
-                        tit_el = t.select_one('.gl-product-card__title') or t.select_one('[class*="title"]') or t.find(['h3', 'h4', 'p', 'a'])
+                        tit_el = t.select_one('.gl-product-card__title') or t.find(['h3', 'h4', 'p', 'a'])
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
-                        
-                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                        if precios:
-                            prices_extracted = [float(pr.replace(',', '.')) for pr in precios]
-                            precio_oferta = min(prices_extracted)
-                            precio_regular = max(prices_extracted)
-                            
+                        oferta_el = t.select_one('.gl-price-item--sale') or t.select_one('.gl-price-item')
+                        if oferta_el:
+                            precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             if 0 < precio_oferta <= limite:
-                                a_href = t.find('a', href=True)['href'] if t.find('a', href=True) else url
+                                enlace_el = t.find('a', href=True)
                                 productos.append({
-                                    "nombre": f"ADIDAS - {nombre_prod}", 
-                                    "precio": precio_oferta, 
-                                    "precio_regular": precio_regular, 
-                                    "link": urljoin(url, a_href), 
+                                    "nombre": f"ADIDAS - {nombre_prod}",
+                                    "precio": precio_oferta,
+                                    "precio_regular": precio_oferta,
+                                    "link": urljoin(url, enlace_el['href']) if enlace_el else url,
                                     "img": ""
                                 })
                     except: continue
                     
-            if not productos:
-                st.info(f"ℹ️ Diagnóstico Adidas: HTML recibido correctamente ({len(texto_html)} letras), pero ningún modelo está por debajo de S/. {limite:.2f} o requiere actualización de filtros.")
-                
+            # 💡 SISTEMA DE MONITOREO VISUAL EN VIVO
+            if not productos and len(texto_html) < 4000:
+                st.error(f"⚠️ Alerta: El servidor devolvió una página muy corta ({len(texto_html)} letras). Akamai está pidiendo verificación de cookies.")
+                with st.expander("🔍 Ver fragmento del código recibido de Adidas"):
+                    st.code(texto_html[:1200], language="html")
+                    
         except Exception as e:
             st.error(f"Fallo en comunicación con Adidas: {e}")
 
@@ -359,7 +366,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         else: 
             grupo = "OTROS"
         
-        # 🛡️ FIJADO ABSOLUTO: "grupo" escrito perfectamente en español para evitar congelamientos
         if target != "TODOS" and target != grupo: 
             continue
         
