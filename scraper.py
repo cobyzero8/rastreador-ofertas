@@ -134,7 +134,7 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (ANTI-AKAMAI CON URL ORIGINAL)
+    # MOTOR 5: ADIDAS PERÚ (SÚPER DETECTOR COMPLETO)
     # -------------------------------------------------------
     elif "adidas" in url_low:
         try:
@@ -152,18 +152,18 @@ def escanear_tienda(url, limite):
                 headers_full = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8",
-                    "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1"
+                    "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8"
                 }
                 resp = requests.get(url, headers=headers_full, timeout=15, verify=False)
                 texto_html = resp.text
                 status_code = resp.status_code
             
             if status_code != 200:
-                st.warning(f"⚠️ Adidas bloqueó la conexión automática. Código de estado HTTP: {status_code}. El firewall de Adidas (Akamai) rechazó el servidor.")
+                st.warning(f"⚠️ Adidas bloqueó la conexión. Código HTTP: {status_code}.")
                 return []
                 
+            # 🎯 NORMALIZACIÓN CRÍTICA: Reemplaza espacios fantasmas \xa0 por espacios comunes planos
+            texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
             
             # Capa A: Extracción desde Metadatos Estructurados (JSON-LD)
@@ -201,12 +201,12 @@ def escanear_tienda(url, limite):
                         if productos: break
                 except: continue
 
-            # Capa B: Fallback de Selectores de Tarjetas Estructuradas
+            # 💎 Capa B: Selectores Nativos del Sistema de Diseño "gl-" de Adidas
             if not productos:
-                items = soup.select('.glass-product-card') or soup.select('[class*="product-card"]') or soup.select('.grid-item') or soup.select('[data-cyber="product-card"]')
+                items = soup.select('.gl-product-card') or soup.select('[class*="gl-product-card"]') or soup.select('.glass-product-card') or soup.select('.grid-item') or soup.select('[data-cyber="product-card"]')
                 for t in items:
                     try:
-                        tit_el = t.select_one('[class*="title"]') or t.select_one('[class*="name"]') or t.find(['h3', 'h4', 'p', 'a'])
+                        tit_el = t.select_one('.gl-product-card__title') or t.select_one('[class*="gl-product-card__title"]') or t.select_one('[class*="title"]') or t.find(['h3', 'h4', 'p', 'a'])
                         if not tit_el: continue
                         nombre_prod = tit_el.text.strip().upper()
                         if len(nombre_prod) < 3: continue
@@ -214,14 +214,22 @@ def escanear_tienda(url, limite):
                         enlace_el = t.find('a', href=True)
                         enlace_final = urljoin(url, enlace_el['href']) if enlace_el else url
                         
-                        oferta_el = t.select_one('[class*="sale-price"]') or t.select_one('[class*="price___"]') or t.select_one('.price') or t.select_one('[class*="price-discount"]')
-                        regular_el = t.select_one('[class*="original-price"]') or t.select_one('del') or t.select_one('[class*="price-old"]')
+                        oferta_el = t.select_one('.gl-price-item--sale') or t.select_one('[class*="price-item--sale"]') or t.select_one('.gl-price-item') or t.select_one('[class*="gl-price-item"]') or t.select_one('.price')
+                        regular_el = t.select_one('.gl-price-item--regular') or t.select_one('[class*="price-item--regular"]') or t.select_one('del')
                         
-                        if not oferta_el: continue
-                        precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                        if not oferta_el:
+                            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                            if precios:
+                                prices_extracted = [float(pr.replace(',', '.')) for pr in precios]
+                                precio_oferta = min(prices_extracted)
+                                precio_regular = max(prices_extracted)
+                            else:
+                                continue
+                        else:
+                            precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                            precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                        
                         if not precio_oferta: continue
-                        
-                        precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                         
                         img_el = t.find('img')
                         img_final = ""
@@ -239,9 +247,9 @@ def escanear_tienda(url, limite):
                             })
                     except: continue
 
-            # Capa C: Motor Regex Genérico sobre Texto Plano
+            # Capa C: Motor Regex sobre Texto Plano Limpio
             if not productos:
-                items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element']))
+                items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element', 'gl-']))
                 for t in items:
                     try:
                         tit = t.find(['h3', 'h2', 'h4', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description|heading)', re.I))
@@ -271,7 +279,7 @@ def escanear_tienda(url, limite):
                                 })
                     except: continue
         except Exception as e:
-            st.error(f"Fallo en communication con Adidas: {e}")
+            st.error(f"Fallo en comunicación con Adidas: {e}")
 
     # -------------------------------------------------------
     # MOTOR PLATANITOS Y TRADICIONALES
@@ -321,7 +329,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     
     total, alertas = 0, 0
     enviados = set()
-    lista_html_streamlit = [] # 🧠 Contenedor para el reporte en vivo restaurado
+    lista_html_streamlit = []
     zona_peru = timezone(timedelta(hours=-5))
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
@@ -351,7 +359,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         else: 
             grupo = "OTROS"
         
-        if target != "TODOS" and target != grupo: 
+        if target != "TODOS" and target != group: 
             continue
         
         tienda_actual = ident.split('-')[0]
@@ -369,7 +377,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 p_v = float(p['precio'])
                 p_r = max(float(p.get('precio_regular', p_v)), p_v)
                 
-                # 🏷️ Inyectamos la tienda de origen real para pintarla en el reporte
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
                 
@@ -383,9 +390,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             except: 
                 pass
             
-    # =======================================================
-    # 🎯 BLOQUE RESTAURADO: REPORTE VISUAL EN VIVO
-    # =======================================================
     if len(lista_html_streamlit) > 0:
         try:
             st.write("---")
@@ -400,7 +404,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                             st.write("📷 _Sin Foto_")
                     with col2:
                         st.markdown(f"#### `{prod['nombre']}`")
-                        st.markdown(f"🏪 **Tienda de Origen:** `{prod['tienda_origen']}`") # Aquí sabrás de quién es
+                        st.markdown(f"🏪 **Tienda de Origen:** `{prod['tienda_origen']}`")
                         p_oferta = prod['precio']
                         p_regular = prod.get('precio_regular', p_oferta)
                         
