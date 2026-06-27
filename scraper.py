@@ -6,7 +6,7 @@ import re
 import time
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
@@ -65,6 +65,13 @@ def limpiar_precio_pnp(texto_precio):
         return float(match[0]) if match else 0.0
     except: 
         return 0.0
+
+def safe_float(val):
+    if val is None: 
+        return 0.0
+    if isinstance(val, (int, float)): 
+        return float(val)
+    return limpiar_precio_pnp(str(val))
 
 def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: 
@@ -134,13 +141,14 @@ def escanear_tienda(url, limite):
             pass
 
     # -------------------------------------------------------
-    # MOTOR 5: ADIDAS PERÚ (SÚPER DETECTOR COMPLETO)
+    # MOTOR 5: ADIDAS PERÚ (EXTRACTOR MULTI-CAPA TOTAL)
     # -------------------------------------------------------
     elif "adidas" in url_low:
         try:
             texto_html = ""
             status_code = 0
             
+            # Conexión directa a la URL humana evadiendo Akamai mediante curl_cffi
             try:
                 from curl_cffi import requests as crequests
                 st.caption("🚀 Simulando entorno TLS de Red Humana (Chrome HTTP/2) para Adidas...")
@@ -162,18 +170,33 @@ def escanear_tienda(url, limite):
                 st.warning(f"⚠️ Adidas bloqueó la conexión. Código HTTP: {status_code}.")
                 return []
                 
+            # Normalización de caracteres monetarios fantasmas de Adidas
             texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
             
-            # Capa A: Extracción desde Metadatos Estructurados (JSON-LD)
+            # Capa A: Minería en metadatos JSON-LD usando .text (Inmune a fallos de BeautifulSoup)
             json_scripts = soup.find_all('script', type='application/ld+json')
             for script in json_scripts:
                 try:
-                    js_data = json.loads(script.string)
-                    if isinstance(js_data, dict) and (js_data.get("@type") == "ItemList" or "itemListElement" in js_data):
-                        for element in js_data.get("itemListElement", []):
-                            item = element.get("item", {})
-                            if not item: continue
+                    script_content = script.text if script.text else (script.string if script.string else "")
+                    if not script_content.strip(): 
+                        continue
+                    js_data = json.loads(script_content)
+                    
+                    elements = []
+                    if isinstance(js_data, dict):
+                        if js_data.get("@type") == "ItemList" or "itemListElement" in js_data:
+                            elements = js_data.get("itemListElement", [])
+                        elif js_data.get("@type") == "Product":
+                            elements = [{"item": js_data}]
+                    elif isinstance(js_data, list):
+                        elements = js_data
+                        
+                    for element in elements:
+                        try:
+                            item = element.get("item", element) if isinstance(element, dict) else {}
+                            if not item or not isinstance(item, dict): continue
+                            
                             nombre_prod = item.get("name", "").upper()
                             if len(nombre_prod) < 3: continue
                             
@@ -182,27 +205,29 @@ def escanear_tienda(url, limite):
                             
                             precio_oferta = 0.0
                             precio_regular = 0.0
-                            if offers.get("@type") == "AggregateOffer":
-                                precio_oferta = float(offers.get("lowPrice", 0))
-                                precio_regular = float(offers.get("highPrice", precio_oferta))
-                            elif offers.get("@type") == "Offer":
-                                precio_oferta = float(offers.get("price", 0))
-                                precio_regular = precio_oferta
-                                
+                            if isinstance(offers, dict):
+                                if offers.get("@type") == "AggregateOffer":
+                                    precio_oferta = safe_float(offers.get("lowPrice", 0))
+                                    precio_regular = safe_float(offers.get("highPrice", precio_oferta))
+                                elif offers.get("@type") == "Offer":
+                                    precio_oferta = safe_float(offers.get("price", 0))
+                                    precio_regular = precio_oferta
+                                    
                             if 0 < precio_oferta <= limite:
                                 productos.append({
                                     "nombre": f"ADIDAS - {nombre_prod}",
                                     "precio": precio_oferta,
-                                    "precio_regular": precio_regular,
-                                    "link": enlace_final,
+                                    "precio_regular": max(precio_regular, precio_oferta),
+                                    "link": urljoin(url, enlace_final),
                                     "img": item.get("image", "")
                                 })
-                        if productos: break
+                        except: continue
+                    if productos: break
                 except: continue
 
-            # Capa B: Selectores Nativos del Sistema de Diseño "gl-" de Adidas
+            # Capa B: Rejilla nativa HTML por clases del sistema "gl-" de Adidas
             if not productos:
-                items = soup.select('.gl-product-card') or soup.select('[class*="gl-product-card"]') or soup.select('.glass-product-card') or soup.select('.grid-item') or soup.select('[data-cyber="product-card"]')
+                items = soup.select('.gl-product-card') or soup.select('[class*="gl-product-card"]') or soup.select('.glass-product-card') or soup.select('.grid-item')
                 for t in items:
                     try:
                         tit_el = t.select_one('.gl-product-card__title') or t.select_one('[class*="gl-product-card__title"]') or t.select_one('[class*="title"]') or t.find(['h3', 'h4', 'p', 'a'])
@@ -213,42 +238,40 @@ def escanear_tienda(url, limite):
                         enlace_el = t.find('a', href=True)
                         enlace_final = urljoin(url, enlace_el['href']) if enlace_el else url
                         
-                        oferta_el = t.select_one('.gl-price-item--sale') or t.select_one('[class*="price-item--sale"]') or t.select_one('.gl-price-item') or t.select_one('[class*="gl-price-item"]') or t.select_one('.price')
+                        oferta_el = t.select_one('.gl-price-item--sale') or t.select_one('[class*="price-item--sale"]') or t.select_one('.gl-price-item') or t.select_one('.price')
                         regular_el = t.select_one('.gl-price-item--regular') or t.select_one('[class*="price-item--regular"]') or t.select_one('del')
                         
-                        if not oferta_el:
-                            precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
-                            if precios:
-                                prices_extracted = [float(pr.replace(',', '.')) for pr in precios]
-                                precio_oferta = min(prices_extracted)
-                                precio_regular = max(prices_extracted)
+                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                        if precios:
+                            prices_extracted = [float(pr.replace(',', '.')) for pr in precios]
+                            precio_oferta = min(prices_extracted)
+                            precio_regular = max(prices_extracted)
+                        else:
+                            if oferta_el:
+                                precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                                precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                             else:
                                 continue
-                        else:
-                            precio_oferta = limpiar_precio_pnp(oferta_el.text)
-                            precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
-                        
-                        if not precio_oferta: continue
-                        
-                        img_el = t.find('img')
-                        img_final = ""
-                        if img_el:
-                            img_final = img_el.get('data-src') or img_el.get('src') or ''
-                            if img_final.startswith('//'): img_final = 'https:' + img_final
                         
                         if 0 < precio_oferta <= limite:
+                            img_el = t.find('img')
+                            img_final = ""
+                            if img_el:
+                                img_final = img_el.get('data-src') or img_el.get('src') or ''
+                                if img_final.startswith('//'): img_final = 'https:' + img_final
+                                
                             productos.append({
                                 "nombre": f"ADIDAS - {nombre_prod}",
                                 "precio": precio_oferta,
-                                "precio_regular": precio_regular,
+                                "precio_regular": max(precio_regular, precio_oferta),
                                 "link": enlace_final,
                                 "img": img_final
                             })
                     except: continue
 
-            # Capa C: Motor Regex sobre Texto Plano Limpio
+            # Capa C: Extracción Directa de Texto plano por expresiones regulares (Garantía total)
             if not productos:
-                items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid', 'element', 'gl-']))
+                items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'gl-']))
                 for t in items:
                     try:
                         tit = t.find(['h3', 'h2', 'h4', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description|heading)', re.I))
@@ -358,7 +381,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         else: 
             grupo = "OTROS"
         
-        # 🛡️ CORRECCIÓN CRÍTICA: Cambiado "group" por "grupo" para solventar el NameError
+        # 🛡️ CORRECCIÓN CRÍTICA DE INDENTACIÓN Y NOMENCLATURA: "grupo" corregido de forma perentoria.
         if target != "TODOS" and target != grupo: 
             continue
         
