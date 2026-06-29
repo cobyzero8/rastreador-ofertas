@@ -200,14 +200,22 @@ def escanear_tienda(url, limite):
                     if items_json:
                         for prod_j in items_json:
                             try:
-                                total_detectados_tienda += 1
                                 nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
                                 nombre = str(nombre).upper()
                                 if len(nombre) < 3: continue
+                                
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
+                                # 🛠️ CORRECCIÓN ADIDAS JSON: Transformar centavos a soles
+                                # Si el precio es altísimo (ej. 6920) y al dividirlo cuadra con el límite de tu radar
+                                if p_o > 1000 and (p_o / 100) <= limite:
+                                    p_o = p_o / 100
+                                if p_r > 1000 and p_r > p_o: 
+                                    p_r = p_r / 100
+                                
                                 if 0 < p_o <= limite:
+                                    total_detectados_tienda += 1
                                     link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
                                     productos.append({
                                         "nombre": f"ADIDAS - {nombre}",
@@ -224,7 +232,6 @@ def escanear_tienda(url, limite):
                 titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
                 for tit_el in titulos_testid:
                     try:
-                        total_detectados_tienda += 1
                         nombre_prod = tit_el.text.strip().upper()
                         ancestor = tit_el
                         oferta_el, regular_el, enlace_el, img_el = None, None, None, None
@@ -239,7 +246,16 @@ def escanear_tienda(url, limite):
                         if oferta_el:
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                            
+                            # 🛠️ CORRECCIÓN ADIDAS HTML: Filtro para texto sin punto decimal
+                            # Verificamos si extrajo un número gigante pero el texto original no tenía comas ni puntos
+                            if precio_oferta > 1000 and '.' not in oferta_el.text and ',' not in oferta_el.text:
+                                precio_oferta = precio_oferta / 100
+                            if precio_regular > 1000 and regular_el and '.' not in regular_el.text and ',' not in regular_el.text:
+                                precio_regular = precio_regular / 100
+
                             if 0 < precio_oferta <= limite:
+                                total_detectados_tienda += 1
                                 productos.append({
                                     "nombre": f"ADIDAS - {nombre_prod}",
                                     "precio": precio_oferta,
@@ -250,7 +266,7 @@ def escanear_tienda(url, limite):
                     except: continue
 
             if total_detectados_tienda > 0:
-                st.info(f"📊 Adidas Real: Encontrados {total_detectados_tienda} shorts en catálogo web.")
+                st.info(f"📊 Adidas Real: Encontrados {total_detectados_tienda} items en catálogo web.")
         except Exception as e:
             st.error(f"Fallo en comunicación con Adidas: {e}")
 
