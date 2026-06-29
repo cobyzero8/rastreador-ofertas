@@ -207,11 +207,12 @@ def escanear_tienda(url, limite):
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
-                                # 🛠️ CORRECCIÓN ADIDAS JSON: Transformar centavos a soles
-                                # Si el precio es altísimo (ej. 6920) y al dividirlo cuadra con el límite de tu radar
-                                if p_o > 1000 and (p_o / 100) <= limite:
+                                # 🛠️ CORRECCIÓN MATEMÁTICA INFALIBLE (JSON)
+                                # 1. Si la oferta viene en miles pero dividida encaja en tu radar:
+                                if p_o > 100 and (p_o / 100) <= limite:
                                     p_o = p_o / 100
-                                if p_r > 1000 and p_r > p_o: 
+                                # 2. Si el precio regular es absurdamente mayor a la oferta (Ratio > 10x):
+                                if p_r > (p_o * 10):
                                     p_r = p_r / 100
                                 
                                 if 0 < p_o <= limite:
@@ -247,11 +248,10 @@ def escanear_tienda(url, limite):
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                             
-                            # 🛠️ CORRECCIÓN ADIDAS HTML: Filtro para texto sin punto decimal
-                            # Verificamos si extrajo un número gigante pero el texto original no tenía comas ni puntos
-                            if precio_oferta > 1000 and '.' not in oferta_el.text and ',' not in oferta_el.text:
+                            # 🛠️ CORRECCIÓN MATEMÁTICA INFALIBLE (HTML)
+                            if precio_oferta > 100 and (precio_oferta / 100) <= limite:
                                 precio_oferta = precio_oferta / 100
-                            if precio_regular > 1000 and regular_el and '.' not in regular_el.text and ',' not in regular_el.text:
+                            if precio_regular > (precio_oferta * 10):
                                 precio_regular = precio_regular / 100
 
                             if 0 < precio_oferta <= limite:
