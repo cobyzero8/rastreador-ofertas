@@ -99,7 +99,6 @@ def escanear_tienda(url, limite):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": float(offer["Price"]), "precio_regular": float(offer.get("ListPrice", offer["Price"])), "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: 
             pass
-
     # -------------------------------------------------------
     # MOTOR 2: CONECTA RETAIL (Efe / La Curacao)
     # -------------------------------------------------------
