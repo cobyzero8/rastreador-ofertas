@@ -389,4 +389,4 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO]({prod['link']})")
         except: 
             pass
-    return f"Éxito. Modelos procesados: {total}. Alertas Telegram: {alertas}." import streamlit as st
+    return f"Éxito. Modelos procesados: {total}. Alertas Telegram: {alertas}."
