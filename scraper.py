@@ -332,6 +332,22 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             grupo = "BUZOS"
         elif "TV" in ident or "smart-tv" in url_low: 
             grupo = "TV"
+            # ... después de los if anteriores ...
+        elif "CELULAR" in ident or "phone" in url_low: 
+            grupo = "CELULAR"
+        elif "REFRIGERADORA" in ident or "refrigeracion" in url_low: 
+            grupo = "REFRIGERADORA"
+        elif "LAVADORA" in ident or "lavado" in url_low: 
+            grupo = "LAVADORA"
+        elif "AUDIFONO" in ident or "headphone" in url_low: 
+            grupo = "AUDIFONOS"
+        elif "PARLANTE" in ident or "speaker" in url_low: 
+            grupo = "PARLANTE"
+        elif "BARRA" in ident or "soundbar" in url_low: 
+            grupo = "BARRA DE SONIDO"
+        # ... etc para el resto ...
+        else: 
+            grupo = "OTROS"
         else: 
             grupo = "OTROS"
     
