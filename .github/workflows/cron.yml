@@ -2,8 +2,8 @@ name: Patrullero de Ofertas Coby 24/7
 
 on:
   schedule:
-    # Corre automáticamente cada 6 horas (a las 00:00, 06:00, 12:00 y 18:00)
-    - cron: '0 */6 * * *'
+    # Corre automáticamente cada 45 minutos
+    - cron: '*/45 * * * *'
   push:
     branches: [ "main" ]
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
 
       - name: Instalando Librerías Básicas y Streamlit
         run: |
-          pip install requests beautifulsoup4 supabase urllib3 pandas streamlit st-annotated-text
+          pip install requests beautifulsoup4 supabase urllib3 pandas streamlit st-annotated-text curl_cffi
 
       - name: Ejecutando Patrullaje de Ofertas
         env:
