@@ -27,5 +27,7 @@ jobs:
       - name: Ejecutando Patrullaje de Ofertas
         env:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python -c "import os; from scraper import revisar_ofertas; print(revisar_ofertas('TODOS'))"
