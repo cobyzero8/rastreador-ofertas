@@ -11,6 +11,7 @@ from supabase import create_client, Client
 import urllib3
 import streamlit as st
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # =======================================================
 # 🛡️ CONFIGURACIÓN DE ENTORNO BLINDADA
 # =======================================================
@@ -18,6 +19,7 @@ SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 try:
     if "SUPABASE_KEY" in st.secrets: 
         SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -27,14 +29,30 @@ try:
         TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except Exception: 
     pass
+
 if SUPABASE_URL and SUPABASE_KEY: 
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else: 
     raise ValueError("Error crítico: Falta SUPABASE_KEY.")
+
 LISTA_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 ]
+
+def safe_log(texto, tipo="text"):
+    """Función segura para mostrar logs tanto en la App (Streamlit) como en Consola (GitHub)"""
+    try:
+        if tipo == "text" or tipo == "write": st.write(texto)
+        elif tipo == "caption": st.caption(texto)
+        elif tipo == "info": st.info(texto)
+        elif tipo == "error": st.error(texto)
+        elif tipo == "success": st.success(texto)
+        elif tipo == "warning": st.warning(texto)
+        elif tipo == "toast": st.toast(texto)
+    except:
+        print(f"[{tipo.upper()}] {texto}")
+
 def limpiar_precio_pnp(texto_precio):
     if not texto_precio: 
         return 0.0
@@ -58,12 +76,14 @@ def limpiar_precio_pnp(texto_precio):
         return float(match[0]) if match else 0.0
     except: 
         return 0.0
+
 def safe_float(val):
     if val is None: 
         return 0.0
     if isinstance(val, (int, float)): 
         return float(val)
     return limpiar_precio_pnp(str(val))
+
 def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: 
         return False
@@ -78,14 +98,15 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
         return requests.post(url_api, json=payload, timeout=10).status_code == 200
     except: 
         return False
+
 # =======================================================
 # NÚCLEO EXTRACTOR ADAPTATIVO
 # =======================================================
 def escanear_tienda(url, limite):
     productos = []
     headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
-    # 🎯 SEPARACIÓN FILTRADA POR DOMINIO REAL (Previene secuestros de algoritmos)
     dominio = urlparse(url).netloc.lower()
+    
     # -------------------------------------------------------
     # MOTOR 1: BELCORP
     # -------------------------------------------------------
@@ -99,6 +120,7 @@ def escanear_tienda(url, limite):
                     productos.append({"nombre": f"{marca.upper()} - {item['productName'].upper()}", "precio": float(offer["Price"]), "precio_regular": float(offer.get("ListPrice", offer["Price"])), "link": item["link"], "img": item["items"][0]["images"][0]["imageUrl"]})
         except: 
             pass
+            
     # -------------------------------------------------------
     # MOTOR 2: CONECTA RETAIL (Efe / La Curacao)
     # -------------------------------------------------------
@@ -129,7 +151,7 @@ def escanear_tienda(url, limite):
         except: 
             pass
 
-   # -------------------------------------------------------
+    # -------------------------------------------------------
     # MOTOR 3: ADIDAS PERÚ STRICTO
     # -------------------------------------------------------
     elif "adidas" in dominio:
@@ -140,7 +162,7 @@ def escanear_tienda(url, limite):
             for intento in range(1, 4):
                 try:
                     from curl_cffi import requests as crequests
-                    st.caption(f"🚀 [Adidas - Intento {intento}/3] Abriendo túnel cifrado HTTP/2...")
+                    safe_log(f"🚀 [Adidas - Intento {intento}/3] Abriendo túnel cifrado HTTP/2...", "caption")
                     resp = crequests.get(url, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
                     texto_html = resp.text
                     status_code = resp.status_code
@@ -154,17 +176,16 @@ def escanear_tienda(url, limite):
                 else:
                     time.sleep(random.uniform(2.0, 3.5))
             
-            st.info(f"ℹ️ Diagnóstico Adidas Real: HTML recibido ({len(texto_html)} letras). Analizando estructura...")
+            safe_log(f"ℹ️ Diagnóstico Adidas Real: HTML recibido ({len(texto_html)} letras). Analizando estructura...", "info")
             
             if len(texto_html) <= 5000:
-                st.error("🚨 Adidas bloqueado por Akamai. Ejecuta nuevamente para rotar la IP del servidor.")
+                safe_log("🚨 Adidas bloqueado por Akamai. Ejecuta nuevamente para rotar la IP del servidor.", "error")
                 return []
                 
             texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
             soup = BeautifulSoup(texto_html, 'html.parser')
             total_detectados_tienda = 0
             
-            # Intento por datos estructurados Next.js de Adidas
             next_script = soup.find('script', id='__NEXT_DATA__')
             if next_script:
                 try:
@@ -195,11 +216,8 @@ def escanear_tienda(url, limite):
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
-                                # 🛠️ CORRECCIÓN MATEMÁTICA INFALIBLE (JSON)
-                                # 1. Si la oferta viene en miles pero dividida encaja en tu radar:
                                 if p_o > 100 and (p_o / 100) <= limite:
                                     p_o = p_o / 100
-                                # 2. Si el precio regular es absurdamente mayor a la oferta (Ratio > 10x):
                                 if p_r > (p_o * 10):
                                     p_r = p_r / 100
                                 
@@ -216,7 +234,6 @@ def escanear_tienda(url, limite):
                             except: continue
                 except: pass
 
-            # Fallback por selectores data-testid oficiales
             if not productos:
                 titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
                 for tit_el in titulos_testid:
@@ -236,7 +253,6 @@ def escanear_tienda(url, limite):
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                             
-                            # 🛠️ CORRECCIÓN MATEMÁTICA INFALIBLE (HTML)
                             if precio_oferta > 100 and (precio_oferta / 100) <= limite:
                                 precio_oferta = precio_oferta / 100
                             if precio_regular > (precio_oferta * 10):
@@ -254,11 +270,9 @@ def escanear_tienda(url, limite):
                     except: continue
 
             if total_detectados_tienda > 0:
-                st.info(f"📊 Adidas Real: Encontrados {total_detectados_tienda} items en catálogo web.")
+                safe_log(f"📊 Adidas Real: Encontrados {total_detectados_tienda} items en catálogo web.", "info")
         except Exception as e:
-            st.error(f"Fallo en comunicación con Adidas: {e}")
-
-
+            safe_log(f"Fallo en comunicación con Adidas: {e}", "error")
 
     # -------------------------------------------------------
     # MOTOR 4: PLATANITOS Y TRADICIONALES EN GENERAL
@@ -295,7 +309,6 @@ def escanear_tienda(url, limite):
                 break
     return productos
 
-
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
 # =======================================================
@@ -306,6 +319,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         return f"Fallo Supabase: {e}"
     if not res or not res.data: 
         return "Sin radares."
+    
     total, alertas = 0, 0
     enviados = set()
     lista_html_streamlit = []
@@ -313,10 +327,11 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
     mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", "TV": "📺", "PARLANTE": "🔊", "BARRA DE SONIDO": "🎵", "CELULAR": "📱", "PC": "💻", "REFRIGERADORA": "❄️", "LAVADORA": "🧺", "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"}
+    
     for item in res.data:
         ident = item['identificador'].upper()
         url_low = item['url'].lower()
-      # Clasificación expandida para que no se pierdan tus categorías
+        
         if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
         elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: grupo = "ZAPATILLAS"
@@ -336,10 +351,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
         else: grupo = "OTROS"
 
-        if target != "TODOS" and target != grupo:
+        if target != "TODOS" and target != grupo: 
             continue
+            
         tienda_actual = ident.split('-')[0]
-        st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
+        safe_log(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...", "write")
+        
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
@@ -352,18 +369,51 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 p_r = max(float(p.get('precio_regular', p_v)), p_v)
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
-                supabase.table("historial_precios").upsert({"identificador": f"{item['identificador']}-{n_u.replace(' ','_')}", "precio": p_v, "precio_regular": p_r, "link_producto": p['link'], "imagen_producto": p.get('img', ''), "fecha": fecha_hoy}).execute()
-                if p_v < p_r:
+                
+                id_registro = f"{item['identificador']}-{n_u.replace(' ','_')}"
+                
+                # 🔍 PASO CLAVE: Consultar a Supabase el precio GUARDADO ANTERIORMENTE
+                precio_anterior = None
+                try:
+                    res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
+                    if res_ant.data:
+                        precio_anterior = float(res_ant.data[0]['precio'])
+                except:
+                    pass
+                
+                # Registramos o actualizamos el precio actual en la base de datos
+                supabase.table("historial_precios").upsert({
+                    "identificador": id_registro, 
+                    "precio": p_v, 
+                    "precio_regular": p_r, 
+                    "link_producto": p['link'], 
+                    "imagen_producto": p.get('img', ''), 
+                    "fecha": fecha_hoy
+                }).execute()
+                
+                # 🚨 LOGICA ANTISPAM MEJORADA:
+                # Caso A: Si ya existía el producto, SOLO avisa si el precio actual es MENOR que el precio guardado antes.
+                # Caso B: Si es la primera vez que se registra, avisa si tiene un descuento inicial válido en la web.
+                debe_alertar = False
+                if precio_anterior is not None:
+                    if p_v < precio_anterior:
+                        debe_alertar = True
+                else:
+                    if p_v < p_r:
+                        debe_alertar = True
+                
+                if debe_alertar:
                     emoji = mapa_emojis.get(grupo, "🔥")
-                    msg_t = f"{emoji} <b>¡BAJÓ DE PRECIO! REMATE</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Normal:</b> S/. {p_r:.2f}\n💰 <b>Oferta:</b> S/. {p_v:.2f}\n📉 <b>Ahorro:</b> S/. {(p_r - p_v):.2f}\n"
+                    msg_t = f"{emoji} <b>¡OFERTA DETECTADA!</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Precio Anterior:</b> S/. {precio_anterior if precio_anterior else p_r:.2f}\n💰 <b>Precio Nuevo:</b> S/. {p_v:.2f}\n📉 <b>Ahorro Real:</b> S/. {((precio_anterior if precio_anterior else p_r) - p_v):.2f}\n"
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
             except: 
                 pass
+                
     if len(lista_html_streamlit) > 0:
         try:
-            st.write("---")
-            st.write(f"### 🎯 Modelos encontrados e indexados en vivo ({len(lista_html_streamlit)}):")
+            safe_log("---", "write")
+            safe_log(f"### 🎯 Modelos encontrados e indexados en vivo ({len(lista_html_streamlit)}):", "write")
             for prod in lista_html_streamlit:
                 with st.container(border=True):
                     col1, col2 = st.columns([2, 8])
@@ -389,4 +439,5 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO]({prod['link']})")
         except: 
             pass
+            
     return f"Éxito. Modelos procesados: {total}. Alertas Telegram: {alertas}."
