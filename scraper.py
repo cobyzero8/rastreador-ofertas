@@ -348,10 +348,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         # ... etc para el resto ...
         else: 
             grupo = "OTROS"
-        else: 
-            grupo = "OTROS"
-    
-
         if target != "TODOS" and target != grupo: 
            continue
         tienda_actual = ident.split('-')[0]
