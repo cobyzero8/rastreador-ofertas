@@ -316,40 +316,28 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     for item in res.data:
         ident = item['identificador'].upper()
         url_low = item['url'].lower()
-        if "SHORT" in ident or "short" in url_low: 
-            grupo = "SHORTS"
-        elif "PERFUME" in ident or "perfume" in url_low: 
-            grupo = "PERFUMES"
-        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: 
-            grupo = "ZAPATILLAS"
-        elif "MEDIAS" in ident or "medias" in url_low: 
-            grupo = "MEDIAS"
-        elif "POLO" in ident or "polo" in url_low: 
-            grupo = "POLOS"
-        elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: 
-            grupo = "CASACAS"
-        elif "BUZO" in ident or "buzo" in url_low or "pantalon" in url_low: 
-            grupo = "BUZOS"
-        elif "TV" in ident or "smart-tv" in url_low: 
-            grupo = "TV"
-            # ... después de los if anteriores ...
-        elif "CELULAR" in ident or "phone" in url_low: 
-            grupo = "CELULAR"
-        elif "REFRIGERADORA" in ident or "refrigeracion" in url_low: 
-            grupo = "REFRIGERADORA"
-        elif "LAVADORA" in ident or "lavado" in url_low: 
-            grupo = "LAVADORA"
-        elif "AUDIFONO" in ident or "headphone" in url_low: 
-            grupo = "AUDIFONOS"
-        elif "PARLANTE" in ident or "speaker" in url_low: 
-            grupo = "PARLANTE"
-        elif "BARRA" in ident or "soundbar" in url_low: 
-            grupo = "BARRA DE SONIDO"
-        # ... etc para el resto ...
-        else: 
-            grupo = "OTROS"
-        if target != "TODOS" and target != grupo: 
-           continue
+      # Clasificación expandida para que no se pierdan tus categorías
+        if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
+        elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
+        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: grupo = "ZAPATILLAS"
+        elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
+        elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
+        elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
+        elif "BUZO" in ident or "buzo" in url_low or "pantalon" in url_low: grupo = "BUZOS"
+        elif "AUDIFONO" in ident or "audifono" in url_low: grupo = "AUDIFONOS"
+        elif "TV" in ident or "smart-tv" in url_low: grupo = "TV"
+        elif "PARLANTE" in ident or "speaker" in url_low: grupo = "PARLANTE"
+        elif "BARRA" in ident or "soundbar" in url_low: grupo = "BARRA DE SONIDO"
+        elif "CELULAR" in ident or "phone" in url_low: grupo = "CELULAR"
+        elif "PC" in ident or "laptop" in url_low: grupo = "PC"
+        elif "REFRIGERADORA" in ident: grupo = "REFRIGERADORA"
+        elif "LAVADORA" in ident: grupo = "LAVADORA"
+        elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
+        elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
+        else: grupo = "OTROS"
+
+        if target != "TODOS" and target != grupo:
+            continue
         tienda_actual = ident.split('-')[0]
         st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
         prods = escanear_tienda(item['url'], item['precio_max'])
