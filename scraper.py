@@ -216,9 +216,11 @@ def escanear_tienda(url, limite):
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
-                                if p_o > 100 and (p_o / 100) <= limite:
+                                # 🛠️ CORRECCIÓN MATEMÁTICA SEGURA
+                                # Solo divide entre 100 si el precio supera el límite por muchísimo (es decir, viene en formato de centavos '11900')
+                                if p_o > (limite * 5):
                                     p_o = p_o / 100
-                                if p_r > (p_o * 10):
+                                if p_r > (limite * 5):
                                     p_r = p_r / 100
                                 
                                 if 0 < p_o <= limite:
@@ -253,10 +255,7 @@ def escanear_tienda(url, limite):
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                             
-                            if precio_oferta > 100 and (precio_oferta / 100) <= limite:
-                                precio_oferta = precio_oferta / 100
-                            if precio_regular > (precio_oferta * 10):
-                                precio_regular = precio_regular / 100
+                            # 🛠️ AQUÍ SE ELIMINÓ LA DIVISIÓN ERRÓNEA. EL HTML YA TIENE LOS DECIMALES.
 
                             if 0 < precio_oferta <= limite:
                                 total_detectados_tienda += 1
@@ -372,7 +371,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 
                 id_registro = f"{item['identificador']}-{n_u.replace(' ','_')}"
                 
-                # 🔍 PASO CLAVE: Consultar a Supabase el precio GUARDADO ANTERIORMENTE
                 precio_anterior = None
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
@@ -381,7 +379,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 except:
                     pass
                 
-                # Registramos o actualizamos el precio actual en la base de datos
                 supabase.table("historial_precios").upsert({
                     "identificador": id_registro, 
                     "precio": p_v, 
@@ -391,9 +388,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     "fecha": fecha_hoy
                 }).execute()
                 
-                # 🚨 LOGICA ANTISPAM MEJORADA:
-                # Caso A: Si ya existía el producto, SOLO avisa si el precio actual es MENOR que el precio guardado antes.
-                # Caso B: Si es la primera vez que se registra, avisa si tiene un descuento inicial válido en la web.
                 debe_alertar = False
                 if precio_anterior is not None:
                     if p_v < precio_anterior:
