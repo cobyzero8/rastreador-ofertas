@@ -216,11 +216,9 @@ def escanear_tienda(url, limite):
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
-                                # 🛠️ CORRECCIÓN MATEMÁTICA SEGURA
-                                # Solo divide entre 100 si el precio supera el límite por muchísimo (es decir, viene en formato de centavos '11900')
-                                if p_o > (limite * 5):
-                                    p_o = p_o / 100
-                                if p_r > (limite * 5):
+                                # 🛠️ CORRECCIÓN MATEMÁTICA DEFINITIVA PARA ADIDAS
+                                # Si el precio regular es absurdamente mayor (10 veces+) que la oferta, es porque vino en céntimos
+                                if p_r > (p_o * 10):
                                     p_r = p_r / 100
                                 
                                 if 0 < p_o <= limite:
@@ -255,7 +253,9 @@ def escanear_tienda(url, limite):
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                             
-                            # 🛠️ AQUÍ SE ELIMINÓ LA DIVISIÓN ERRÓNEA. EL HTML YA TIENE LOS DECIMALES.
+                            # 🛠️ CORRECCIÓN MATEMÁTICA DEFINITIVA PARA ADIDAS (HTML)
+                            if precio_regular > (precio_oferta * 10):
+                                precio_regular = precio_regular / 100
 
                             if 0 < precio_oferta <= limite:
                                 total_detectados_tienda += 1
