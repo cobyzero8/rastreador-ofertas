@@ -100,7 +100,7 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
         return False
 
 # =======================================================
-# NÚCLEO EXTRACTOR ADAPTATIVO
+# NÚCLEO EXTRACTOR ADAPTATIVO (MOTORES INTACTOS)
 # =======================================================
 def escanear_tienda(url, limite):
     productos = []
@@ -216,8 +216,6 @@ def escanear_tienda(url, limite):
                                 p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
                                 p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
                                 
-                                # 🛠️ CORRECCIÓN MATEMÁTICA DEFINITIVA PARA ADIDAS
-                                # Si el precio regular es absurdamente mayor (10 veces+) que la oferta, es porque vino en céntimos
                                 if p_r > (p_o * 10):
                                     p_r = p_r / 100
                                 
@@ -253,7 +251,6 @@ def escanear_tienda(url, limite):
                             precio_oferta = limpiar_precio_pnp(oferta_el.text)
                             precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
                             
-                            # 🛠️ CORRECCIÓN MATEMÁTICA DEFINITIVA PARA ADIDAS (HTML)
                             if precio_regular > (precio_oferta * 10):
                                 precio_regular = precio_regular / 100
 
@@ -309,7 +306,7 @@ def escanear_tienda(url, limite):
     return productos
 
 # =======================================================
-# SISTEMA DE PATRULLAJE CENTRAL
+# SISTEMA DE PATRULLAJE CENTRAL (CON MEMORIA BLINDADA)
 # =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
     try: 
@@ -359,7 +356,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                n_u = p['nombre'].strip().upper()
+                # Limpieza estricta de espacios ocultos y saltos de linea para que la Base de Datos no se confunda
+                n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
                 if n_u in enviados: 
                     continue
                 enviados.add(n_u)
@@ -369,30 +367,48 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
                 
-                id_registro = f"{item['identificador']}-{n_u.replace(' ','_')}"
+                # Crear un ID super limpio solo con letras y numeros (Evita que Supabase lo rechace)
+                id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
+                id_registro = f"{item['identificador']}-{id_limpio}"[:200]
                 
                 precio_anterior = None
+                registro_existe = False
+                
+                # 1. PREGUNTAR MANUALMENTE A LA BASE DE DATOS
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
-                    if res_ant.data:
+                    if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
+                        registro_existe = True
                 except:
                     pass
                 
-                supabase.table("historial_precios").upsert({
+                # 2. GUARDADO MANUAL A PRUEBA DE FALLOS (Reemplaza al 'upsert' conflictivo)
+                datos_guardar = {
                     "identificador": id_registro, 
                     "precio": p_v, 
                     "precio_regular": p_r, 
                     "link_producto": p['link'], 
                     "imagen_producto": p.get('img', ''), 
                     "fecha": fecha_hoy
-                }).execute()
+                }
                 
+                try:
+                    if registro_existe:
+                        supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
+                    else:
+                        supabase.table("historial_precios").insert(datos_guardar).execute()
+                except:
+                    pass
+                
+                # 3. LÓGICA DE ALERTA
                 debe_alertar = False
                 if precio_anterior is not None:
+                    # Si el producto ya existía en la base de datos, SOLO alerta si el precio es estrictamente menor
                     if p_v < precio_anterior:
                         debe_alertar = True
                 else:
+                    # Si es totalmente nuevo, alerta si tiene descuento en la web
                     if p_v < p_r:
                         debe_alertar = True
                 
