@@ -100,7 +100,7 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
         return False
 
 # =======================================================
-# NÚCLEO EXTRACTOR ADAPTATIVO (MOTORES INTACTOS)
+# NÚCLEO EXTRACTOR ADAPTATIVO
 # =======================================================
 def escanear_tienda(url, limite):
     productos = []
@@ -271,7 +271,7 @@ def escanear_tienda(url, limite):
             safe_log(f"Fallo en comunicación con Adidas: {e}", "error")
 
     # -------------------------------------------------------
-    # MOTOR 4: PLATANITOS Y TRADICIONALES EN GENERAL
+    # MOTOR 4: PLATANITOS, JBL Y TRADICIONALES EN GENERAL
     # -------------------------------------------------------
     else:
         for pagina in range(1, 4):
@@ -289,12 +289,15 @@ def escanear_tienda(url, limite):
                         tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
                         if not tit or len(tit.text.strip()) < 3: 
                             continue
-                        precios = re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', t.text)
+                        # 🛠️ CORRECCIÓN VISUAL: Captura la cadena numérica completa con sus separadores
+                        precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                         if precios:
-                            p_o = float(precios[0].replace(',', '.'))
+                            # Se procesa mediante la función experta en limpiar formatos de millar
+                            p_o = limpiar_precio_pnp(precios[0])
                             if p_o <= limite:
                                 del_el = t.find(['del', 'span'], class_=re.compile(r'(regular|original|old)', re.I))
-                                p_r = float(re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', del_el.text)[0].replace(',', '.')) if del_el and re.findall(r'(?:S/\.?\s*)(\d+[\.,]\d{2}|\d+)', del_el.text) else p_o
+                                p_r_matches = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', del_el.text) if del_el else []
+                                p_r = limpiar_precio_pnp(p_r_matches[0]) if p_r_matches else p_o
                                 a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
                                 if a_el and 'productos?' not in a_el['href'].lower():
                                     img_el = t.find('img', src=True)
@@ -306,7 +309,7 @@ def escanear_tienda(url, limite):
     return productos
 
 # =======================================================
-# SISTEMA DE PATRULLAJE CENTRAL (CON MEMORIA BLINDADA)
+# SISTEMA DE PATRULLAJE CENTRAL
 # =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
     try: 
@@ -356,7 +359,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         prods = escanear_tienda(item['url'], item['precio_max'])
         for p in prods:
             try:
-                # Limpieza estricta de espacios ocultos y saltos de linea para que la Base de Datos no se confunda
                 n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
                 if n_u in enviados: 
                     continue
@@ -367,14 +369,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
                 
-                # Crear un ID super limpio solo con letras y numeros (Evita que Supabase lo rechace)
                 id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
                 id_registro = f"{item['identificador']}-{id_limpio}"[:200]
                 
                 precio_anterior = None
                 registro_existe = False
                 
-                # 1. PREGUNTAR MANUALMENTE A LA BASE DE DATOS
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
                     if res_ant.data and len(res_ant.data) > 0:
@@ -383,7 +383,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 except:
                     pass
                 
-                # 2. GUARDADO MANUAL A PRUEBA DE FALLOS (Reemplaza al 'upsert' conflictivo)
                 datos_guardar = {
                     "identificador": id_registro, 
                     "precio": p_v, 
@@ -401,14 +400,11 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 except:
                     pass
                 
-                # 3. LÓGICA DE ALERTA
                 debe_alertar = False
                 if precio_anterior is not None:
-                    # Si el producto ya existía en la base de datos, SOLO alerta si el precio es estrictamente menor
                     if p_v < precio_anterior:
                         debe_alertar = True
                 else:
-                    # Si es totalmente nuevo, alerta si tiene descuento en la web
                     if p_v < p_r:
                         debe_alertar = True
                 
