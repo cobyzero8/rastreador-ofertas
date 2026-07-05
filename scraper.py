@@ -158,35 +158,96 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
+    """Motor Falabella optimizado con bypass de seguridad HTTP/2 y extracción por JSON Oculto"""
     productos = []
     try:
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        from curl_cffi import requests as crequests
+        # Forzamos la simulación de un navegador real para saltar la seguridad de Falabella
+        resp = crequests.get(url, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            items = soup.select('div[id^="testId-pod-"]') or soup.select('.product-card') or soup.select('.grid-pod')
-            for t in items:
+            
+            # Estrategia A: Intentar pescar los datos perfectos desde el JSON oculto __NEXT_DATA__
+            next_script = soup.find('script', id='__NEXT_DATA__')
+            if next_script:
                 try:
-                    tit_el = t.select_one('b[id^="testId-pod-display-name-"]') or t.select_one('.pod-title') or t.select_one('[class*="pod-description"]')
-                    if not tit_el: continue
-                    o_el = t.select_one('span[id^="testId-pod-salePrice-"]') or t.select_one('.pod-saleprice') or t.select_one('span[class*="salePrice"]') or t.select_one('div[class*="rebrand-price"]')
-                    r_el = t.select_one('span[id^="testId-pod-listPrice-"]') or t.select_one('.pod-listprice') or t.select_one('span[class*="listPrice"]')
+                    json_data = json.loads(next_script.text)
+                    def buscar_fala_json(nodo):
+                        if isinstance(nodo, dict):
+                            if 'products' in nodo and isinstance(nodo['products'], list):
+                                return nodo['products']
+                            for v in nodo.values():
+                                res = buscar_fala_json(v)
+                                if res: return res
+                        elif isinstance(nodo, list):
+                            for x in nodo:
+                                res = buscar_fala_json(x)
+                                if res: return res
+                        return []
                     
-                    if not o_el: continue
-                    p_o = limpiar_precio_pnp(o_el.text)
-                    if 0 < p_o <= limite:
-                        img_el = t.find('img')
-                        img = img_el.get('src') or img_el.get('data-src') or '' if img_el else ''
-                        a_el = t.find('a', href=True)
-                        link_final = urljoin(url, a_el['href']) if a_el else url
-                        productos.append({
-                            "nombre": f"FALABELLA - {tit_el.text.strip().upper()}", 
-                            "precio": p_o, 
-                            "precio_regular": limpiar_precio_pnp(r_el.text) if r_el else p_o, 
-                            "link": link_final, 
-                            "img": img
-                        })
+                    fala_prods = buscar_fala_json(json_data)
+                    if fala_prods:
+                        for prod in fala_prods:
+                            try:
+                                nombre = str(prod.get('displayName', '')).upper()
+                                if len(nombre) < 3: continue
+                                
+                                p_o, p_r = 0.0, 0.0
+                                precios_list = prod.get('prices', [])
+                                for pr in precios_list:
+                                    tipo_p = pr.get('type', '')
+                                    if 'salePrice' in tipo_p or 'eventPrice' in tipo_p:
+                                        p_o = safe_float(pr.get('price', [0])[0])
+                                    elif 'listPrice' in tipo_p or 'originalPrice' in tipo_p:
+                                        p_r = safe_float(pr.get('price', [0])[0])
+                                
+                                if p_o == 0.0 and precios_list:
+                                    p_o = safe_float(precios_list[0].get('price', [0])[0])
+                                if p_r == 0.0:
+                                    p_r = p_o
+                                    
+                                if 0 < p_o <= limite:
+                                    link_rel = prod.get('url', '')
+                                    img = prod.get('imageUrl', '')
+                                    productos.append({
+                                        "nombre": f"FALABELLA - {nombre}",
+                                        "precio": p_o,
+                                        "precio_regular": max(p_r, p_o),
+                                        "link": urljoin("https://www.falabella.com.pe", link_rel),
+                                        "img": img
+                                    })
+                            except: continue
                 except:
-                    continue
+                    pass
+            
+            # Estrategia B: Respaldo por selectores HTML tradicionales (Corregido sin errores de escape)
+            if not productos:
+                items = soup.select('div[id^="testId-pod-"]') or soup.select('.product-card') or soup.select('.grid-pod')
+                for t in items:
+                    try:
+                        tit_el = t.select_one('b[id^="testId-pod-display-name-"]') or t.select_one('.pod-title') or t.select_one('[class*="pod-description"]')
+                        if not tit_el: continue
+                        
+                        o_el = t.select_one('span[id^="testId-pod-salePrice-"]') or t.select_one('.pod-saleprice') or t.select_one('span[class*="salePrice"]')
+                        r_el = t.select_one('span[id^="testId-pod-listPrice-"]') or t.select_one('.pod-listprice') or t.select_one('span[class*="listPrice"]')
+                        
+                        if not o_el: continue
+                        p_o = limpiar_precio_pnp(o_el.text)
+                        if 0 < p_o <= limite:
+                            img_el = t.find('img')
+                            img = img_el.get('src') or img_el.get('data-src') or '' if img_el else ''
+                            a_el = t.find('a', href=True)
+                            link_final = urljoin(url, a_el['href']) if a_el else url
+                            
+                            productos.append({
+                                "nombre": f"FALABELLA - {tit_el.text.strip().upper()}",
+                                "precio": p_o,
+                                "precio_regular": limpiar_precio_pnp(r_el.text) if r_el else p_o,
+                                "link": link_final,
+                                "img": img
+                            })
+                    except:
+                        continue
     except:
         pass
     return productos
@@ -222,8 +283,8 @@ def motor_adidas(url, limite):
                     if isinstance(nodo, dict):
                         for k in ['products', 'results', 'items', 'itemListElement']:
                             if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
-                                if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
-                                    return nodo[k]
+                                    if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
+                                        return nodo[k]
                         for v in nodo.values():
                             res = buscar_productos_next(v)
                             if res: return res
