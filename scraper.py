@@ -102,6 +102,21 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     except: 
         return False
 
+def extraer_productos_json_universal(nodo):
+    """Buscador recursivo que extrae diccionarios con estructura de producto en Falabella"""
+    coleccion = []
+    if isinstance(nodo, dict):
+        if any(k in nodo for k in ['displayName', 'productName', 'title']) and any(k in nodo for k in ['prices', 'price', 'salePrice']):
+            nombre = nodo.get('displayName') or nodo.get('productName') or nodo.get('title')
+            if nombre and len(str(nombre).strip()) > 3:
+                coleccion.append(nodo)
+        for v in nodo.values():
+            coleccion.extend(extraer_productos_json_universal(v))
+    elif isinstance(nodo, list):
+        for item in nodo:
+            coleccion.extend(extraer_productos_json_universal(item))
+    return coleccion
+
 # =======================================================
 # 🚀 MOTORES INDEPENDIENTES DE EXTRACCIÓN
 # =======================================================
@@ -158,17 +173,17 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella blindado con soporte HTTP/2, logs dinámicos y extracción multinivel"""
+    """Motor Falabella optimizado con sincronización TLS estricta y extractor recursivo"""
     productos = []
     try:
         texto_html = ""
         status_code = 0
         
-        # Intentamos simular el navegador real usando el túnel cifrado curl_cffi
+        # 🛡️ Evitamos pisar los headers para que la sincronización TLS de impersonate pase Akamai sin bloqueos
         for intento in range(1, 3):
             try:
                 from curl_cffi import requests as crequests
-                resp = crequests.get(url, headers=headers, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
+                resp = crequests.get(url, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
                 texto_html = resp.text
                 status_code = resp.status_code
             except Exception:
@@ -176,57 +191,38 @@ def motor_falabella(url, limite, headers):
                 texto_html = resp.text
                 status_code = resp.status_code
             
-            if status_code == 200 and len(texto_html) > 10000: break
+            if status_code == 200 and len(texto_html) > 5000: break
             else: time.sleep(random.uniform(1.5, 3.0))
         
-        safe_log(f"ℹ️ Diagnóstico Falabella: HTML recibido ({len(texto_html)} letras, Estado: {status_code}). Analizando...", "info")
+        safe_log(f"ℹ️ Diagnóstico Falabella: HTML recibido ({len(texto_html)} letras, Estado: {status_code}). Buscando ofertas...", "info")
         
         if status_code != 200 or len(texto_html) < 5000:
-            safe_log("🚨 Falabella bloqueó la petición por seguridad. Inténtalo de nuevo para rotar servidor.", "error")
             return []
             
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- ESTRATEGIA A: ESCÁNER INVISBLE DE DATOS DE CATÁLOGO (JSON AUTOMÁTICO) ---
+        # --- ESTRATEGIA A: EXTRACCIÓN UNIVERSAL POR SCRIPTS DE OBJETO ---
         fala_prods = []
         scripts_fala = soup.find_all('script')
         for script in scripts_fala:
-            if script.text and ('displayName' in script.text or 'products' in script.text) and len(script.text) > 1000:
+            if script.text and 'displayName' in script.text and len(script.text) > 1000:
                 try:
                     txt = script.text.strip()
-                    if "window.__INITIAL_STATE__" in txt:
-                        txt = txt.split('=', 1)[1].strip().rstrip(';')
-                    json_data = json.loads(txt) if txt.startswith('{') else None
-                    if not json_data:
-                        match = re.search(r'(\{.*\})', txt)
-                        if match: json_data = json.loads(match.group(1))
-                    
-                    if json_data:
-                        def buscar_productos_fala(nodo):
-                            if isinstance(nodo, dict):
-                                for k in ['products', 'results', 'items', 'elements']:
-                                    if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
-                                        if isinstance(nodo[k][0], dict) and any(x in nodo[k][0] for x in ['displayName', 'productName', 'productId', 'title']):
-                                            return nodo[k]
-                                for v in nodo.values():
-                                    res = buscar_productos_fala(v)
-                                    if res: return res
-                            elif isinstance(nodo, list):
-                                for x in nodo:
-                                    res = buscar_productos_fala(x)
-                                    if res: return res
-                            return []
-                        
-                        res_prods = buscar_productos_fala(json_data)
-                        if res_prods:
-                            fala_prods = res_prods
+                    # Aislamos el objeto JSON limpio entre llaves sin importar las asignaciones de variables
+                    start_idx = txt.find('{')
+                    end_idx = txt.rfind('}')
+                    if start_idx != -1 and end_idx != -1:
+                        json_data = json.loads(txt[start_idx:end_idx+1])
+                        encontrados = extraer_productos_json_universal(json_data)
+                        if encontrados:
+                            fala_prods = encontrados
                             break
                 except: continue
 
         if fala_prods:
             for prod in fala_prods:
                 try:
-                    nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or '').upper()
+                    nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or '').strip().upper()
                     if len(nombre) < 3: continue
                     
                     p_o, p_r = 0.0, 0.0
@@ -235,42 +231,50 @@ def motor_falabella(url, limite, headers):
                     
                     if isinstance(precios_list, list):
                         for pr in precios_list:
+                            if not isinstance(pr, dict): continue
                             tipo_p = str(pr.get('type', '')).lower()
                             val_p = pr.get('price') or pr.get('value')
                             if isinstance(val_p, list) and len(val_p) > 0: val_p = val_p[0]
                             float_p = safe_float(val_p)
                             
-                            if 'sale' in tipo_p or 'event' in tipo_p or 'oferta' in tipo_p: p_o = float_p
-                            elif 'list' in tipo_p or 'original' in tipo_p or 'regular' in tipo_p: p_r = float_p
+                            if any(x in tipo_p for x in ['sale', 'event', 'oferta', 'internet', 'current']): 
+                                p_o = float_p
+                            elif any(x in tipo_p for x in ['list', 'original', 'regular']): 
+                                p_r = float_p
                         if p_o == 0.0 and precios_list:
                             val_p = precios_list[0].get('price') or precios_list[0].get('value')
                             if isinstance(val_p, list) and len(val_p) > 0: val_p = val_p[0]
                             p_o = safe_float(val_p)
-                    else:
-                        p_o = safe_float(prod.get('price') or prod.get('salePrice'))
-                        
-                    if p_r == 0.0: p_r = p_o
+                    
+                    if p_o == 0.0:
+                        p_o = safe_float(prod.get('salePrice') or prod.get('price'))
+                    if p_r == 0.0: 
+                        p_r = safe_float(prod.get('listPrice') or prod.get('originalPrice') or prod.get('regularPrice') or p_o)
                     
                     if 0 < p_o <= limite:
+                        link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
+                        img = prod.get('imageUrl') or prod.get('image') or ''
+                        if isinstance(img, list) and len(img) > 0: img = img[0]
+                        
                         productos.append({
                             "nombre": f"FALABELLA - {nombre}",
                             "precio": p_o,
                             "precio_regular": max(p_r, p_o),
-                            "link": urljoin("https://www.falabella.com.pe", prod.get('url') or prod.get('link') or ''),
-                            "img": prod.get('imageUrl') or prod.get('image') or ''
+                            "link": urljoin("https://www.falabella.com.pe", link_rel),
+                            "img": str(img)
                         })
                 except: continue
 
-        # --- ESTRATEGIA B: RESPALDO POR VISUALIZACIÓN DE ETIQUETAS HTML ---
+        # --- ESTRATEGIA B: RESPALDO AGNOSTICO POR HTML BROAD SELECTORS ---
         if not productos:
-            items = soup.select('div[id^="testId-pod-"]') or soup.select('.product-card') or soup.select('.grid-pod') or soup.find_all(['div', 'li'], class_=re.compile(r'pod', re.I))
+            items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item|item)', re.I))
             for t in items:
                 try:
-                    tit_el = t.select_one('b[id^="testId-pod-display-name-"]') or t.select_one('.pod-title') or t.find(['b', 'span', 'p'], class_=re.compile(r'(title|name|description)', re.I))
+                    tit_el = t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], id=re.compile(r'name', re.I)) or t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], class_=re.compile(r'(title|name|description|displayName)', re.I))
                     if not tit_el or len(tit_el.text.strip()) < 3: continue
                     
-                    o_el = t.select_one('span[id^="testId-pod-salePrice-"]') or t.select_one('.pod-saleprice') or t.find(class_=re.compile(r'(salePrice|price-value|oferta)', re.I))
-                    r_el = t.select_one('span[id^="testId-pod-listPrice-"]') or t.select_one('.pod-listprice') or t.find(class_=re.compile(r'(listPrice|regular-price)', re.I))
+                    o_el = t.find(id=re.compile(r'(salePrice|offerPrice|currentPrice|precio)', re.I)) or t.find(class_=re.compile(r'(salePrice|price-value|oferta|current-price|price-item)', re.I))
+                    r_el = t.find(id=re.compile(r'(listPrice|regularPrice|oldPrice)', re.I)) or t.find(class_=re.compile(r'(listPrice|regular-price|old-price)', re.I))
                     
                     if not o_el: continue
                     p_o = limpiar_precio_pnp(o_el.text)
@@ -286,8 +290,18 @@ def motor_falabella(url, limite, headers):
                             "img": img
                         })
                 except: continue
-        if productos:
-            safe_log(f"🎯 Falabella Motor: ¡Extracción exitosa de {len(productos)} barras de sonido!", "success")
+
+        # Remoción de duplicados locales por enlace de producto
+        vistos = set()
+        productos_unicos = []
+        for p in productos:
+            if p['link'] not in vistos:
+                vistos.add(p['link'])
+                productos_unicos.append(p)
+        
+        if productos_unicos:
+            safe_log(f"🎯 Falabella Motor: ¡Se extrajeron exitosamente {len(productos_unicos)} productos!", "success")
+        return productos_unicos
     except Exception as e:
         safe_log(f"Error interno en motor Falabella: {e}", "error")
     return productos
@@ -550,7 +564,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                             st.markdown(f"💰 **Precio Oferta: S/. {p_oferta:.2f}**")
                             st.markdown(f"🔥 **¡Ahorraste S/. {ahorro_soles:.2f}! ({porcentaje:.0f}% de Descuento)**")
                         else:
-                            st.markdown(f"💰 **Precio Actual: S/. {p_oferta:.2f}**")
+                            st.markdown(f"💰 **Precio Actual: S/. {prod['precio']:.2f}**")
                             st.caption("ℹ️ _Precio base de lista detectado o sin descuento de etiqueta._")
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO]({prod['link']})")
         except: 
