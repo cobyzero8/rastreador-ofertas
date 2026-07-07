@@ -117,6 +117,25 @@ def extraer_productos_json_universal(nodo):
             coleccion.extend(extraer_productos_json_universal(item))
     return coleccion
 
+def encontrar_foto_fala(nodo):
+    """Escaner recursivo especializado en capturar urls de imágenes de Falabella dentro del JSON"""
+    if isinstance(nodo, str):
+        if ('.jpg' in nodo or '.png' in nodo or '/images/' in nodo) and (nodo.startswith('http') or nodo.startswith('//')):
+            return nodo
+    elif isinstance(nodo, dict):
+        for k in ['imageUrl', 'src', 'url', 'thumbnail']:
+            if k in nodo and isinstance(nodo[k], str):
+                if nodo[k].startswith('http') or nodo[k].startswith('//'):
+                    return nodo[k]
+        for v in nodo.values():
+            res = encontrar_foto_fala(v)
+            if res: return res
+    elif isinstance(nodo, list):
+        for item in nodo:
+            res = encontrar_foto_fala(item)
+            if res: return res
+    return ''
+
 # =======================================================
 # 🚀 MOTORES INDEPENDIENTES DE EXTRACCIÓN
 # =======================================================
@@ -173,7 +192,7 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella optimizado con sincronización TLS estricta y extractor recursivo"""
+    """Motor Falabella optimizado con inyección de protocolo https para imágenes fijas"""
     productos = []
     try:
         texto_html = ""
@@ -240,7 +259,6 @@ def motor_falabella(url, limite, headers):
                             elif any(x in tipo_p for x in ['list', 'original', 'regular', 'normal', 'normalprice']): 
                                 p_r = float_p
                         
-                        # Red de seguridad matemática si el bucle falla en separar precios
                         if p_o == 0.0 or p_r <= p_o:
                             valores_aux = []
                             def extraer_numeros_dict(d):
@@ -251,12 +269,6 @@ def motor_falabella(url, limite, headers):
                                             elif isinstance(v, str):
                                                 fv = limpiar_precio_pnp(v)
                                                 if fv > 0: valores_aux.append(fv)
-                                            elif isinstance(v, list) and len(v) > 0:
-                                                for val in v:
-                                                    if isinstance(val, (int, float)): valores_aux.append(float(val))
-                                                    elif isinstance(val, str):
-                                                        fv = limpiar_precio_pnp(val)
-                                                        if fv > 0: valores_aux.append(fv)
                                     for sub_v in d.values(): extraer_numeros_dict(sub_v)
                                 elif isinstance(d, list):
                                     for item in d: extraer_numeros_dict(item)
@@ -278,18 +290,10 @@ def motor_falabella(url, limite, headers):
                     if 0 < p_o <= limite:
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         
-                        # Extractor de imágenes mejorado para JSON
-                        img = prod.get('imageUrl') or prod.get('image') or prod.get('thumbnail') or ''
-                        if not img and 'variants' in prod and isinstance(prod['variants'], list) and len(prod['variants']) > 0:
-                            v0 = prod['variants'][0]
-                            img = v0.get('imageUrl') or v0.get('image') or ''
-                            if not img and 'images' in v0 and isinstance(v0['images'], list) and len(v0['images']) > 0:
-                                img_obj = v0['images'][0]
-                                img = img_obj.get('url') if isinstance(img_obj, dict) else str(img_obj)
-                        if not img and 'images' in prod and isinstance(prod['images'], list) and len(prod['images']) > 0:
-                            img_obj = prod['images'][0]
-                            img = img_obj.get('url') if isinstance(img_obj, dict) else str(img_obj)
-                        if isinstance(img, list) and len(img) > 0: img = img[0]
+                        # 📸 Extractor recursivo de imágenes blindado para JSON
+                        img = encontrar_foto_fala(prod)
+                        if img.startswith('//'):
+                            img = 'https:' + img
                         
                         productos.append({
                             "nombre": f"FALABELLA - {nombre}",
@@ -308,7 +312,6 @@ def motor_falabella(url, limite, headers):
                     tit_el = t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], id=re.compile(r'name', re.I)) or t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], class_=re.compile(r'(title|name|description|displayName)', re.I))
                     if not tit_el or len(tit_el.text.strip()) < 3: continue
                     
-                    # Captura exacta desde atributos como se ve en tus capturas
                     el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
                     el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
                     
@@ -327,15 +330,18 @@ def motor_falabella(url, limite, headers):
                         if r_el: p_r = limpiar_precio_pnp(r_el.text)
                     
                     if 0 < p_o <= limite:
-                        # Extractor adaptativo de imágenes por ID o Atributo Lazy Loading
+                        # 📸 Extractor adaptativo de imágenes HTML resolviendo carga perezosa
                         img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img', id=re.compile(r'image', re.I)) or t.find('img')
                         img = ''
                         if img_el:
-                            for attr in ['src', 'data-src', 'data-lazy', 'srcset']:
+                            for attr in ['data-srcset', 'srcset', 'data-src', 'src', 'data-lazy']:
                                 val = img_el.get(attr)
                                 if val and 'data:image' not in str(val) and len(str(val)) > 10:
                                     img = str(val).split(' ')[0].strip()
                                     break
+                        
+                        if img.startswith('//'):
+                            img = 'https:' + img
                         
                         a_el = t.find('a', href=True) or (t if t.name == 'a' else None)
                         productos.append({
@@ -347,7 +353,6 @@ def motor_falabella(url, limite, headers):
                         })
                 except: continue
 
-        # Remoción de duplicados locales por enlace de producto
         vistos = set()
         productos_unicos = []
         for p in productos:
