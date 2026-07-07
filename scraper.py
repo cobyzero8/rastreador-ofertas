@@ -193,7 +193,7 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella optimizado con reconstrucción de URLs de imagen automática por ID de producto"""
+    """Motor Falabella optimizado con reconstrucción de URLs usando formato de barra nativa /w="""
     productos = []
     try:
         texto_html = ""
@@ -298,19 +298,17 @@ def motor_falabella(url, limite, headers):
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         link_final = urljoin("https://www.falabella.com.pe", link_rel)
                         
-                        # 📸 Extractor e inyector inteligente por ID de producto
                         img = encontrar_foto_fala(prod)
                         
-                        # Si la imagen viene rota, vacía o es una cadena distorsionada como '0'
+                        # 📸 CORRECCIÓN INTEGRAL: Inyección del formato nativo /w= detectado en el inspector
                         if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
                             match_id = re.findall(r'(\d{7,10})', link_final)
                             if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[0]}_01?wid=800&h=800&fit=cover"
+                                img = f"https://media.falabella.com/falabellaPE/{match_id[0]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
                         
-                        # Limpieza estricta de espacios y srcsets truncados
                         img = str(img).split(' ')[0].strip().rstrip(',')
                         
                         productos.append({
@@ -360,11 +358,11 @@ def motor_falabella(url, limite, headers):
                                     img = str(val).split(' ')[0].strip()
                                     break
                         
-                        # Reconstrucción blindada en HTML si el atributo vino en '0' o vacío
+                        # 📸 CORRECCIÓN INTEGRAL: Inyección del formato nativo /w= detectado en el inspector
                         if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
                             match_id = re.findall(r'(\d{7,10})', link_final)
                             if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[0]}_01?wid=800&h=800&fit=cover"
+                                img = f"https://media.falabella.com/falabellaPE/{match_id[0]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
