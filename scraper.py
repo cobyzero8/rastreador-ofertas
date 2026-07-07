@@ -118,15 +118,17 @@ def extraer_productos_json_universal(nodo):
     return coleccion
 
 def encontrar_foto_fala(nodo):
-    """Escaner recursivo especializado en capturar urls de imágenes de Falabella dentro del JSON"""
+    """Escaner recursivo optimizado para capturar imágenes dinámicas y adaptativas de Falabella"""
     if isinstance(nodo, str):
-        if ('.jpg' in nodo or '.png' in nodo or '/images/' in nodo) and (nodo.startswith('http') or nodo.startswith('//')):
+        # 🛠️ CORRECCIÓN: Detecta el dominio de medios de Falabella sin importar la extensión (.jpg/.png)
+        if (nodo.startswith('http') or nodo.startswith('//')) and ('falabella' in nodo or 'media' in nodo or any(ext in nodo.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
             return nodo
     elif isinstance(nodo, dict):
-        for k in ['imageUrl', 'src', 'url', 'thumbnail']:
+        for k in ['imageUrl', 'src', 'url', 'thumbnail', 'image']:
             if k in nodo and isinstance(nodo[k], str):
-                if nodo[k].startswith('http') or nodo[k].startswith('//'):
-                    return nodo[k]
+                val = nodo[k].strip()
+                if val.startswith('http') or val.startswith('//'):
+                    return val
         for v in nodo.values():
             res = encontrar_foto_fala(v)
             if res: return res
@@ -290,7 +292,7 @@ def motor_falabella(url, limite, headers):
                     if 0 < p_o <= limite:
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         
-                        # 📸 Extractor recursivo de imágenes blindado para JSON
+                        # 📸 Extractor recursivo de imágenes adaptativas reparado
                         img = encontrar_foto_fala(prod)
                         if img.startswith('//'):
                             img = 'https:' + img
@@ -330,7 +332,6 @@ def motor_falabella(url, limite, headers):
                         if r_el: p_r = limpiar_precio_pnp(r_el.text)
                     
                     if 0 < p_o <= limite:
-                        # 📸 Extractor adaptativo de imágenes HTML resolviendo carga perezosa
                         img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img', id=re.compile(r'image', re.I)) or t.find('img')
                         img = ''
                         if img_el:
