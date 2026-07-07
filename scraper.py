@@ -118,36 +118,19 @@ def extraer_productos_json_universal(nodo):
     return coleccion
 
 def encontrar_foto_fala(nodo):
-    """Escaner recursivo profundamente optimizado para capturar el SKU ID numérico real en Falabella"""
+    """Escaner recursivo optimizado para capturar imágenes directas dentro del JSON de Falabella"""
     if isinstance(nodo, str):
         if (nodo.startswith('http') or nodo.startswith('//')) and ('falabella' in nodo or 'media' in nodo):
             return nodo
-        if 'falabellaPE/' in nodo or 'falabella-pe/' in nodo:
-            return f"https://media.falabella.com/{nodo.strip().lstrip('/')}"
-            
     elif isinstance(nodo, dict):
-        # Prioridad 1: Claves explícitas de URLs multimedia
-        for k in ['imageUrl', 'src', 'url', 'thumbnail', 'image', 'images']:
+        for k in ['imageUrl', 'src', 'url', 'thumbnail', 'image']:
             val = nodo.get(k)
             if isinstance(val, str) and len(val) > 5:
                 if val.startswith('http') or val.startswith('//'):
                     return val
-                if 'falabellaPE/' in val:
-                    return f"https://media.falabella.com/{val.strip().lstrip('/')}"
-                    
-        # Prioridad 2: Buscar identificadores puros de SKU para construir la URL nativa perfecta
-        for k in ['skuId', 'sku', 'skuCode', 'variantId', 'id']:
-            val = nodo.get(k)
-            if val and isinstance(val, (str, int)):
-                v_str = str(val).strip()
-                if re.match(r'^\d{7,10}$', v_str):
-                    return f"https://media.falabella.com/falabellaPE/{v_str}_01/w=800,h=800,fit=pad"
-                    
-        # Recursión controlada sobre el mapa del diccionario
         for v in nodo.values():
             res = encontrar_foto_fala(v)
             if res: return res
-            
     elif isinstance(nodo, list):
         for item in nodo:
             res = encontrar_foto_fala(item)
@@ -210,7 +193,7 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella optimizado con resolución estricta de SKU ID para imágenes"""
+    """Motor Falabella optimizado con extracción estricta y segura de SKU mediante URL limpia"""
     productos = []
     try:
         texto_html = ""
@@ -306,40 +289,24 @@ def motor_falabella(url, limite, headers):
                                 p_o = valores_unicos[0]
                                 if p_r == 0.0: p_r = p_o
 
-                    if p_o == 0.0:
-                        p_o = safe_float(prod.get('salePrice') or prod.get('price'))
-                    if p_r == 0.0: 
-                        p_r = safe_float(prod.get('listPrice') or prod.get('originalPrice') or prod.get('regularPrice') or p_o)
+                        if p_o == 0.0:
+                            p_o = safe_float(prod.get('salePrice') or prod.get('price'))
+                        if p_r == 0.0: 
+                            p_r = safe_float(prod.get('listPrice') or prod.get('originalPrice') or prod.get('regularPrice') or p_o)
                     
                     if 0 < p_o <= limite:
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         link_final = urljoin("https://www.falabella.com.pe", link_rel)
                         
-                        # 📸 Ejecución del rastreador inteligente recursivo sobre el nodo de datos de Falabella
                         img = encontrar_foto_fala(prod)
                         
-                        # Rescate secundario masivo de ID numérico si fallan los selectores de strings
-                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
-                            numeros_nodo = []
-                            def buscar_numeros_recursivo(n):
-                                if isinstance(n, (str, int)):
-                                    ints = re.findall(r'(\d{7,10})', str(n))
-                                    numeros_nodo.extend(ints)
-                                elif isinstance(n, dict):
-                                    for k, v in n.items():
-                                        if any(x in k.lower() for x in ['sku', 'variant', 'image', 'media']):
-                                            ints = re.findall(r'(\d{7,10})', str(v))
-                                            if ints: numeros_nodo.extend(ints)
-                                    for v in n.values(): buscar_numeros_recursivo(v)
-                                elif isinstance(n, list):
-                                    for item in n: buscar_numeros_recursivo(item)
-                            buscar_numeros_recursivo(prod)
-                            if numeros_nodo:
-                                img = f"https://media.falabella.com/falabellaPE/{numeros_nodo[-1]}_01/w=800,h=800,fit=pad"
-                            else:
-                                match_id = re.findall(r'(\d{7,10})', link_final)
-                                if match_id:
-                                    img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+                        # 📸 FALLBACK DEFINITIVO SOBERANO: Extrae el SKU directamente de los tramos de la URL limpia
+                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false'] or 'falabellaPE' not in str(img):
+                            url_limpia = link_final.split('?')[0].split('#')[0]
+                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                            if match_id:
+                                sku_id = match_id[-1]
+                                img = f"https://media.falabella.com/falabellaPE/{sku_id}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
@@ -393,10 +360,13 @@ def motor_falabella(url, limite, headers):
                                     img = str(val).split(' ')[0].strip()
                                     break
                         
-                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
-                            match_id = re.findall(r'(\d{7,10})', link_final)
+                        # 📸 FALLBACK DEFINITIVO SOBERANO: Extrae el SKU directamente de los tramos de la URL limpia
+                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false'] or 'falabellaPE' not in str(img):
+                            url_limpia = link_final.split('?')[0].split('#')[0]
+                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
                             if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+                                sku_id = match_id[-1]
+                                img = f"https://media.falabella.com/falabellaPE/{sku_id}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
@@ -580,7 +550,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     zona_peru = timezone(timedelta(hours=-5))
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
-    mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "%s", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", "TV": "📺", "PARLANTE": "🔊", "BARRA DE SONIDO": "🎵", "CELULAR": "📱", "PC": "💻", "REFRIGERADORA": "❄️", "LAVADORA": "🧺", "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"}
+    mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", "TV": "📺", "PARLANTE": "🔊", "BARRA DE SONIDO": "🎵", "CELULAR": "📱", "PC": "💻", "REFRIGERADORA": "❄️", "LAVADORA": "🧺", "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"}
     
     for item in res.data:
         ident = item['identificador'].upper()
