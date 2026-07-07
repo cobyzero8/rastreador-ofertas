@@ -193,7 +193,7 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella optimizado con reconstrucción de URLs usando formato de barra nativa /w="""
+    """Motor Falabella optimizado con resolución estricta de SKU ID para imágenes"""
     productos = []
     try:
         texto_html = ""
@@ -273,7 +273,7 @@ def motor_falabella(url, limite, headers):
                                             elif isinstance(v, list) and len(v) > 0:
                                                 for val in v:
                                                     if isinstance(val, (int, float)): valores_aux.append(float(val))
-                                                    elif isinstance(val, str):
+                                                    elif isinstance(v, str):
                                                         fv = limpiar_precio_pnp(val)
                                                         if fv > 0: valores_aux.append(fv)
                                     for sub_v in d.values(): extraer_numeros_dict(sub_v)
@@ -298,16 +298,15 @@ def motor_falabella(url, limite, headers):
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         link_final = urljoin("https://www.falabella.com.pe", link_rel)
                         
-                        img = encontrar_foto_fala(prod)
-                        
-                        # 📸 CORRECCIÓN INTEGRAL: Inyección del formato nativo /w= detectado en el inspector
-                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
-                            match_id = re.findall(r'(\d{7,10})', link_final)
-                            if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[0]}_01/w=800,h=800,fit=pad"
-                        
-                        if str(img).startswith('//'):
-                            img = 'https:' + str(img)
+                        # 📸 EXTRACCIÓN BLINDADA POR SKU ID (Último bloque numérico de la URL)
+                        match_id = re.findall(r'(\d{7,10})', link_final)
+                        if match_id:
+                            sku_id = match_id[-1]  # Cambio crítico: -1 selecciona el SKU ID correcto
+                            img = f"https://media.falabella.com/falabellaPE/{sku_id}_01/w=800,h=800,fit=pad"
+                        else:
+                            img = encontrar_foto_fala(prod)
+                            if str(img).startswith('//'):
+                                img = 'https:' + str(img)
                         
                         img = str(img).split(' ')[0].strip().rstrip(',')
                         
@@ -349,23 +348,22 @@ def motor_falabella(url, limite, headers):
                         a_el = t.find('a', href=True) or (t if t.name == 'a' else None)
                         link_final = urljoin(url, a_el['href']) if a_el else url
                         
-                        img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img', id=re.compile(r'image', re.I)) or t.find('img')
-                        img = ''
-                        if img_el:
-                            for attr in ['data-srcset', 'srcset', 'data-src', 'src', 'data-lazy']:
-                                val = img_el.get(attr)
-                                if val and 'data:image' not in str(val) and len(str(val)) > 10:
-                                    img = str(val).split(' ')[0].strip()
-                                    break
-                        
-                        # 📸 CORRECCIÓN INTEGRAL: Inyección del formato nativo /w= detectado en el inspector
-                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
-                            match_id = re.findall(r'(\d{7,10})', link_final)
-                            if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[0]}_01/w=800,h=800,fit=pad"
-                        
-                        if str(img).startswith('//'):
-                            img = 'https:' + str(img)
+                        # 📸 EXTRACCIÓN BLINDADA POR SKU ID (Último bloque numérico de la URL)
+                        match_id = re.findall(r'(\d{7,10})', link_final)
+                        if match_id:
+                            sku_id = match_id[-1]  # Cambio crítico: -1 selecciona el SKU ID correcto
+                            img = f"https://media.falabella.com/falabellaPE/{sku_id}_01/w=800,h=800,fit=pad"
+                        else:
+                            img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img', id=re.compile(r'image', re.I)) or t.find('img')
+                            img = ''
+                            if img_el:
+                                for attr in ['data-srcset', 'srcset', 'data-src', 'src', 'data-lazy']:
+                                    val = img_el.get(attr)
+                                    if val and 'data:image' not in str(val) and len(str(val)) > 10:
+                                        img = str(val).split(' ')[0].strip()
+                                        break
+                            if str(img).startswith('//'):
+                                img = 'https:' + str(img)
                         
                         img = str(img).split(' ')[0].strip().rstrip(',')
                         
