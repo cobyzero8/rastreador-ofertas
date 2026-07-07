@@ -118,16 +118,15 @@ def extraer_productos_json_universal(nodo):
     return coleccion
 
 def encontrar_foto_fala(nodo):
-    """Escaner recursivo optimizado para capturar imágenes directas dentro del JSON de Falabella"""
+    """Escaner recursivo de URLs de imágenes multimedia en el JSON de Falabella"""
     if isinstance(nodo, str):
-        if (nodo.startswith('http') or nodo.startswith('//')) and ('falabella' in nodo or 'media' in nodo):
+        if (nodo.startswith('http') or nodo.startswith('//')) and ('falabella' in nodo or 'media' in nodo or any(ext in nodo.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
             return nodo
     elif isinstance(nodo, dict):
         for k in ['imageUrl', 'src', 'url', 'thumbnail', 'image']:
             val = nodo.get(k)
-            if isinstance(val, str) and len(val) > 5:
-                if val.startswith('http') or val.startswith('//'):
-                    return val
+            if isinstance(val, str) and (val.startswith('http') or val.startswith('//')) and len(val) > 10:
+                return val
         for v in nodo.values():
             res = encontrar_foto_fala(v)
             if res: return res
@@ -193,7 +192,7 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella optimizado con extracción estricta y segura de SKU mediante URL limpia"""
+    """Motor Falabella optimizado con extracción nativa fluida sin filtros obstructivos de dominio"""
     productos = []
     try:
         texto_html = ""
@@ -289,24 +288,23 @@ def motor_falabella(url, limite, headers):
                                 p_o = valores_unicos[0]
                                 if p_r == 0.0: p_r = p_o
 
-                        if p_o == 0.0:
-                            p_o = safe_float(prod.get('salePrice') or prod.get('price'))
-                        if p_r == 0.0: 
-                            p_r = safe_float(prod.get('listPrice') or prod.get('originalPrice') or prod.get('regularPrice') or p_o)
+                    if p_o == 0.0:
+                        p_o = safe_float(prod.get('salePrice') or prod.get('price'))
+                    if p_r == 0.0: 
+                        p_r = safe_float(prod.get('listPrice') or prod.get('originalPrice') or prod.get('regularPrice') or p_o)
                     
                     if 0 < p_o <= limite:
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         link_final = urljoin("https://www.falabella.com.pe", link_rel)
                         
+                        # Capturar la imagen original sin descartes agresivos
                         img = encontrar_foto_fala(prod)
                         
-                        # 📸 FALLBACK DEFINITIVO SOBERANO: Extrae el SKU directamente de los tramos de la URL limpia
-                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false'] or 'falabellaPE' not in str(img):
-                            url_limpia = link_final.split('?')[0].split('#')[0]
-                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id:
-                                sku_id = match_id[-1]
-                                img = f"https://media.falabella.com/falabellaPE/{sku_id}_01/w=800,h=800,fit=pad"
+                        # Fallback por SKU interno del JSON si la imagen vino vacía
+                        if not img or len(str(img)) < 10 or str(img).strip() in ['0', 'None', 'false']:
+                            sku_candidato = prod.get('skuId') or prod.get('sku') or prod.get('variantId') or prod.get('id')
+                            if sku_candidato and str(sku_candidato).isdigit():
+                                img = f"https://media.falabella.com/falabellaPE/{sku_candidato}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
@@ -322,7 +320,7 @@ def motor_falabella(url, limite, headers):
                         })
                 except: continue
 
-        # --- ESTRATEGIA B: RESPALDO AGNOSTICO POR HTML BROAD SELECTORS ---
+        # --- ESTRATEGIA B: RESPALDO AGNÓSTICO POR HTML BROAD SELECTORS ---
         if not productos:
             items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item|item)', re.I))
             for t in items:
@@ -359,14 +357,6 @@ def motor_falabella(url, limite, headers):
                                 if val and 'data:image' not in str(val) and len(str(val)) > 10:
                                     img = str(val).split(' ')[0].strip()
                                     break
-                        
-                        # 📸 FALLBACK DEFINITIVO SOBERANO: Extrae el SKU directamente de los tramos de la URL limpia
-                        if not img or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false'] or 'falabellaPE' not in str(img):
-                            url_limpia = link_final.split('?')[0].split('#')[0]
-                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id:
-                                sku_id = match_id[-1]
-                                img = f"https://media.falabella.com/falabellaPE/{sku_id}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
