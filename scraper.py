@@ -179,7 +179,6 @@ def motor_falabella(url, limite, headers):
         texto_html = ""
         status_code = 0
         
-        # 🛡️ Evitamos pisar los headers para que la sincronización TLS de impersonate pase Akamai sin bloqueos
         for intento in range(1, 3):
             try:
                 from curl_cffi import requests as crequests
@@ -208,7 +207,6 @@ def motor_falabella(url, limite, headers):
             if script.text and 'displayName' in script.text and len(script.text) > 1000:
                 try:
                     txt = script.text.strip()
-                    # Aislamos el objeto JSON limpio entre llaves sin importar las asignaciones de variables
                     start_idx = txt.find('{')
                     end_idx = txt.rfind('}')
                     if start_idx != -1 and end_idx != -1:
@@ -237,15 +235,41 @@ def motor_falabella(url, limite, headers):
                             if isinstance(val_p, list) and len(val_p) > 0: val_p = val_p[0]
                             float_p = safe_float(val_p)
                             
-                            if any(x in tipo_p for x in ['sale', 'event', 'oferta', 'internet', 'current']): 
+                            if any(x in tipo_p for x in ['sale', 'event', 'oferta', 'internet', 'current', 'card', 'cmr', 'eventprice']): 
                                 p_o = float_p
-                            elif any(x in tipo_p for x in ['list', 'original', 'regular']): 
+                            elif any(x in tipo_p for x in ['list', 'original', 'regular', 'normal', 'normalprice']): 
                                 p_r = float_p
-                        if p_o == 0.0 and precios_list:
-                            val_p = precios_list[0].get('price') or precios_list[0].get('value')
-                            if isinstance(val_p, list) and len(val_p) > 0: val_p = val_p[0]
-                            p_o = safe_float(val_p)
-                    
+                        
+                        # Red de seguridad matemática si el bucle falla en separar precios
+                        if p_o == 0.0 or p_r <= p_o:
+                            valores_aux = []
+                            def extraer_numeros_dict(d):
+                                if isinstance(d, dict):
+                                    for k, v in d.items():
+                                        if any(x in k.lower() for x in ['price', 'precio', 'value']):
+                                            if isinstance(v, (int, float)): valores_aux.append(float(v))
+                                            elif isinstance(v, str):
+                                                fv = limpiar_precio_pnp(v)
+                                                if fv > 0: valores_aux.append(fv)
+                                            elif isinstance(v, list) and len(v) > 0:
+                                                for val in v:
+                                                    if isinstance(val, (int, float)): valores_aux.append(float(val))
+                                                    elif isinstance(val, str):
+                                                        fv = limpiar_precio_pnp(val)
+                                                        if fv > 0: valores_aux.append(fv)
+                                    for sub_v in d.values(): extraer_numeros_dict(sub_v)
+                                elif isinstance(d, list):
+                                    for item in d: extraer_numeros_dict(item)
+                            
+                            extraer_numeros_dict(prod)
+                            valores_unicos = sorted(list(set(valores_aux)))
+                            if len(valores_unicos) >= 2:
+                                p_o = valores_unicos[0]
+                                p_r = valores_unicos[-1]
+                            elif len(valores_unicos) == 1:
+                                p_o = valores_unicos[0]
+                                if p_r == 0.0: p_r = p_o
+
                     if p_o == 0.0:
                         p_o = safe_float(prod.get('salePrice') or prod.get('price'))
                     if p_r == 0.0: 
@@ -253,7 +277,18 @@ def motor_falabella(url, limite, headers):
                     
                     if 0 < p_o <= limite:
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
-                        img = prod.get('imageUrl') or prod.get('image') or ''
+                        
+                        # Extractor de imágenes mejorado para JSON
+                        img = prod.get('imageUrl') or prod.get('image') or prod.get('thumbnail') or ''
+                        if not img and 'variants' in prod and isinstance(prod['variants'], list) and len(prod['variants']) > 0:
+                            v0 = prod['variants'][0]
+                            img = v0.get('imageUrl') or v0.get('image') or ''
+                            if not img and 'images' in v0 and isinstance(v0['images'], list) and len(v0['images']) > 0:
+                                img_obj = v0['images'][0]
+                                img = img_obj.get('url') if isinstance(img_obj, dict) else str(img_obj)
+                        if not img and 'images' in prod and isinstance(prod['images'], list) and len(prod['images']) > 0:
+                            img_obj = prod['images'][0]
+                            img = img_obj.get('url') if isinstance(img_obj, dict) else str(img_obj)
                         if isinstance(img, list) and len(img) > 0: img = img[0]
                         
                         productos.append({
@@ -273,19 +308,40 @@ def motor_falabella(url, limite, headers):
                     tit_el = t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], id=re.compile(r'name', re.I)) or t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], class_=re.compile(r'(title|name|description|displayName)', re.I))
                     if not tit_el or len(tit_el.text.strip()) < 3: continue
                     
-                    o_el = t.find(id=re.compile(r'(salePrice|offerPrice|currentPrice|precio)', re.I)) or t.find(class_=re.compile(r'(salePrice|price-value|oferta|current-price|price-item)', re.I))
-                    r_el = t.find(id=re.compile(r'(listPrice|regularPrice|oldPrice)', re.I)) or t.find(class_=re.compile(r'(listPrice|regular-price|old-price)', re.I))
+                    # Captura exacta desde atributos como se ve en tus capturas
+                    el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
+                    el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
                     
-                    if not o_el: continue
-                    p_o = limpiar_precio_pnp(o_el.text)
+                    p_o = 0.0
+                    if el_event:
+                        p_o = safe_float(el_event.get('data-event-price'))
+                    else:
+                        o_el = t.find(id=re.compile(r'(salePrice|offerPrice|currentPrice|precio|event)', re.I)) or t.find(class_=re.compile(r'(salePrice|price-value|oferta|current-price|price-item|eventPrice)', re.I))
+                        if o_el: p_o = limpiar_precio_pnp(o_el.text)
+                        
+                    p_r = p_o
+                    if el_normal:
+                        p_r = safe_float(el_normal.get('data-normal-price'))
+                    else:
+                        r_el = t.find(id=re.compile(r'(listPrice|regularPrice|oldPrice|normal)', re.I)) or t.find(class_=re.compile(r'(listPrice|regular-price|old-price|normal-price)', re.I))
+                        if r_el: p_r = limpiar_precio_pnp(r_el.text)
+                    
                     if 0 < p_o <= limite:
-                        img_el = t.find('img')
-                        img = img_el.get('src') or img_el.get('data-src') or '' if img_el else ''
+                        # Extractor adaptativo de imágenes por ID o Atributo Lazy Loading
+                        img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img', id=re.compile(r'image', re.I)) or t.find('img')
+                        img = ''
+                        if img_el:
+                            for attr in ['src', 'data-src', 'data-lazy', 'srcset']:
+                                val = img_el.get(attr)
+                                if val and 'data:image' not in str(val) and len(str(val)) > 10:
+                                    img = str(val).split(' ')[0].strip()
+                                    break
+                        
                         a_el = t.find('a', href=True) or (t if t.name == 'a' else None)
                         productos.append({
                             "nombre": f"FALABELLA - {tit_el.text.strip().upper()}",
                             "precio": p_o,
-                            "precio_regular": limpiar_precio_pnp(r_el.text) if r_el else p_o,
+                            "precio_regular": max(p_r, p_o),
                             "link": urljoin(url, a_el['href']) if a_el else url,
                             "img": img
                         })
