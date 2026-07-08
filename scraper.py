@@ -118,14 +118,14 @@ def extraer_productos_json_universal(nodo):
     return coleccion
 
 def encontrar_foto_fala(nodo):
-    """Escaner recursivo de URLs de imágenes multimedia en el JSON de Falabella"""
+    """Escaner recursivo de URLs de imágenes multimedia en el JSON de Falabella sin enlaces web"""
     if isinstance(nodo, str):
-        if (nodo.startswith('http') or nodo.startswith('//')) and ('falabella' in nodo or 'media' in nodo or any(ext in nodo.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp'])):
+        if (nodo.startswith('http') or nodo.startswith('//')) and ('falabella' in nodo or 'media' in nodo or any(ext in nodo.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp'])) and '/product/' not in nodo:
             return nodo
     elif isinstance(nodo, dict):
         for k in ['imageUrl', 'src', 'url', 'thumbnail', 'image']:
             val = nodo.get(k)
-            if isinstance(val, str) and (val.startswith('http') or val.startswith('//')) and len(val) > 10:
+            if isinstance(val, str) and (val.startswith('http') or val.startswith('//')) and len(val) > 10 and '/product/' not in val:
                 return val
         for v in nodo.values():
             res = encontrar_foto_fala(v)
@@ -192,7 +192,7 @@ def motor_conecta_retail(url, limite, headers, tag):
     return productos
 
 def motor_falabella(url, limite, headers):
-    """Motor Falabella optimizado con extracción nativa fluida sin filtros obstructivos de dominio"""
+    """Motor Falabella optimizado con extracción garantizada de imágenes mediante SKU nativo"""
     productos = []
     try:
         texto_html = ""
@@ -275,18 +275,18 @@ def motor_falabella(url, limite, headers):
                                                     elif isinstance(val, str):
                                                         fv = limpiar_precio_pnp(val)
                                                         if fv > 0: valores_aux.append(fv)
-                                    for sub_v in d.values(): extraer_numeros_dict(sub_v)
-                                elif isinstance(d, list):
-                                    for item in d: extraer_numeros_dict(item)
-                            
-                            extraer_numeros_dict(prod)
-                            valores_unicos = sorted(list(set(valores_aux)))
-                            if len(valores_unicos) >= 2:
-                                p_o = valores_unicos[0]
-                                p_r = valores_unicos[-1]
-                            elif len(valores_unicos) == 1:
-                                p_o = valores_unicos[0]
-                                if p_r == 0.0: p_r = p_o
+                                        for sub_v in d.values(): extraer_numeros_dict(sub_v)
+                                    elif isinstance(d, list):
+                                        for item in d: extraer_numeros_dict(item)
+                                
+                                extraer_numeros_dict(prod)
+                                valores_unicos = sorted(list(set(valores_aux)))
+                                if len(valores_unicos) >= 2:
+                                    p_o = valores_unicos[0]
+                                    p_r = valores_unicos[-1]
+                                elif len(valores_unicos) == 1:
+                                    p_o = valores_unicos[0]
+                                    if p_r == 0.0: p_r = p_o
 
                     if p_o == 0.0:
                         p_o = safe_float(prod.get('salePrice') or prod.get('price'))
@@ -297,14 +297,13 @@ def motor_falabella(url, limite, headers):
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
                         link_final = urljoin("https://www.falabella.com.pe", link_rel)
                         
-                        # Capturar la imagen original sin descartes agresivos
                         img = encontrar_foto_fala(prod)
                         
-                        # Fallback por SKU interno del JSON si la imagen vino vacía
-                        if not img or len(str(img)) < 10 or str(img).strip() in ['0', 'None', 'false']:
-                            sku_candidato = prod.get('skuId') or prod.get('sku') or prod.get('variantId') or prod.get('id')
-                            if sku_candidato and str(sku_candidato).isdigit():
-                                img = f"https://media.falabella.com/falabellaPE/{sku_candidato}_01/w=800,h=800,fit=pad"
+                        if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
+                            url_limpia = link_final.split('?')[0].split('#')[0]
+                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                            if match_id:
+                                img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
@@ -320,7 +319,7 @@ def motor_falabella(url, limite, headers):
                         })
                 except: continue
 
-        # --- ESTRATEGIA B: RESPALDO AGNÓSTICO POR HTML BROAD SELECTORS ---
+        # --- ESTRATEGIA B: RESPALDO AGNOSTICO POR HTML BROAD SELECTORS ---
         if not productos:
             items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item|item)', re.I))
             for t in items:
@@ -357,6 +356,12 @@ def motor_falabella(url, limite, headers):
                                 if val and 'data:image' not in str(val) and len(str(val)) > 10:
                                     img = str(val).split(' ')[0].strip()
                                     break
+                        
+                        if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
+                            url_limpia = link_final.split('?')[0].split('#')[0]
+                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                            if match_id:
+                                img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'):
                             img = 'https:' + str(img)
