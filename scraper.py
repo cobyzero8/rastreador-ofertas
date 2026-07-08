@@ -275,18 +275,20 @@ def motor_falabella(url, limite, headers):
                                                     elif isinstance(val, str):
                                                         fv = limpiar_precio_pnp(val)
                                                         if fv > 0: valores_aux.append(fv)
-                                        for sub_v in d.values(): extraer_numeros_dict(sub_v)
-                                    elif isinstance(d, list):
-                                        for item in d: extraer_numeros_dict(item)
+                                    for sub_v in d.values():
+                                        extraer_numeros_dict(sub_v)
+                                elif isinstance(d, list):
+                                    for item in d:
+                                        extraer_numeros_dict(item)
                                 
-                                extraer_numeros_dict(prod)
-                                valores_unicos = sorted(list(set(valores_aux)))
-                                if len(valores_unicos) >= 2:
-                                    p_o = valores_unicos[0]
-                                    p_r = valores_unicos[-1]
-                                elif len(valores_unicos) == 1:
-                                    p_o = valores_unicos[0]
-                                    if p_r == 0.0: p_r = p_o
+                            extraer_numeros_dict(prod)
+                            valores_unicos = sorted(list(set(valores_aux)))
+                            if len(valores_unicos) >= 2:
+                                p_o = valores_unicos[0]
+                                p_r = valores_unicos[-1]
+                            elif len(valores_unicos) == 1:
+                                p_o = valores_unicos[0]
+                                if p_r == 0.0: p_r = p_o
 
                     if p_o == 0.0:
                         p_o = safe_float(prod.get('salePrice') or prod.get('price'))
@@ -553,7 +555,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
         elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
-        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: grupo = "ZAPATILLAS"
+        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: group = "ZAPATILLAS"
         elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
         elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
         elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
