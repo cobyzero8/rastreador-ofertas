@@ -263,18 +263,27 @@ def motor_falabella(url, limite, headers):
                             valores_aux = []
                             def extraer_numeros_dict(d):
                                 if isinstance(d, dict):
+                                    # 🚫 FILTRO CRÍTICO ANTI-TALLAS: Si el diccionario habla de selectores físicos, se ignora su extracción
+                                    d_keys_str = "".join(d.keys()).lower()
+                                    if any(x in d_keys_str for x in ['size', 'talla', 'option', 'variant']):
+                                        for sub_v in d.values(): extraer_numeros_dict(sub_v)
+                                        return
+                                        
                                     for k, v in d.items():
-                                        if any(x in k.lower() for x in ['price', 'precio', 'value']):
+                                        if any(x in k.lower() for x in ['price', 'precio']):
                                             if isinstance(v, (int, float)): valores_aux.append(float(v))
                                             elif isinstance(v, str):
                                                 fv = limpiar_precio_pnp(v)
                                                 if fv > 0: valores_aux.append(fv)
-                                            elif isinstance(v, list) and len(v) > 0:
-                                                for val in v:
-                                                    if isinstance(val, (int, float)): valores_aux.append(float(val))
-                                                    elif isinstance(val, str):
-                                                        fv = limpiar_precio_pnp(val)
-                                                        if fv > 0: valores_aux.append(fv)
+                                        elif 'value' in k.lower():
+                                            # Solo extrae de la clave genérica 'value' si el entorno es puramente comercial y libre de atributos de prenda
+                                            contexto_valido = any(x in str(d).lower() for x in ['price', 'precio', 'sale', 'list', 'oferta', 'regular', 'internet', 'cmr'])
+                                            contexto_invalido = any(x in str(d).lower() for x in ['size', 'talla', 'option', 'variant', 'sku'])
+                                            if contexto_valido and not contexto_invalido:
+                                                if isinstance(v, (int, float)): valores_aux.append(float(v))
+                                                elif isinstance(v, str):
+                                                    fv = limpiar_precio_pnp(v)
+                                                    if fv > 0: valores_aux.append(fv)
                                     for sub_v in d.values():
                                         extraer_numeros_dict(sub_v)
                                 elif isinstance(d, list):
