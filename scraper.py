@@ -280,7 +280,7 @@ def motor_falabella(url, limite, headers):
                                             if contexto_valido and not contexto_invalido:
                                                 if isinstance(v, (int, float)): valores_aux.append(float(v))
                                                 elif isinstance(v, str):
-                                                    fv = limpiar_precio_pnp(val)
+                                                    fv = limpiar_precio_pnp(v)
                                                     if fv > 0: valores_aux.append(fv)
                                     for sub_v in d.values():
                                         extraer_numeros_dict(sub_v)
@@ -487,7 +487,7 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_platanitos(url, limite):
-    """Motor dedicado para Platanitos con suplantación TLS para evadir desafíos de JS y vaciado SPA"""
+    """Motor Platanitos blindado contra mallas combinadas de texto y carruseles de navegación"""
     productos = []
     try:
         from curl_cffi import requests as crequests
@@ -522,7 +522,13 @@ def motor_platanitos(url, limite):
                         
                     if len(nombre) < 3 or "PLATANITOS" in nombre.upper(): continue
                     
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                    # 🔍 SOLUCIÓN PRECIOS: Recorrer individualmente las etiquetas para evitar fusiones ciegas con SKUs externos
+                    textos_precios = []
+                    for el in t.find_all(['span', 'p', 'div', 'b', 'strong']):
+                        if el.text and 'S/' in el.text and len(el.text.strip()) < 30:
+                            matches = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', el.text)
+                            textos_precios.extend(matches)
+                            
                     if not textos_precios: continue
                     
                     nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
@@ -532,11 +538,21 @@ def motor_platanitos(url, limite):
                     p_r = nums[-1] if len(nums) > 1 else p_o
                     
                     if 0 < p_o <= limite:
-                        img_el = t.find('img')
+                        # 📸 SOLUCIÓN FOTO: Escanear todas las imágenes y descartar controles de navegación (flechas) del carrusel
                         img = ""
-                        if img_el:
-                            img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
-                        if img.startswith('//'): img = 'https:' + img
+                        img_tags = t.find_all('img')
+                        for img_el in img_tags:
+                            src_candidato = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
+                            src_low = str(src_candidato).lower()
+                            if src_candidato and 'data:image' not in src_low:
+                                if any(x in src_low for x in ['arrow', 'chevron', 'left', 'right', 'icon', 'logo', 'svg', 'loading', 'placeholder']):
+                                    continue
+                                img = src_candidato
+                                break
+                        if not img and img_tags:
+                            img = img_tags[0].get('data-src') or img_tags[0].get('src') or ""
+                            
+                        if str(img).startswith('//'): img = 'https:' + str(img)
                         
                         productos.append({
                             "nombre": f"PLATANITOS - {nombre.upper()}",
