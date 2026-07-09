@@ -263,7 +263,6 @@ def motor_falabella(url, limite, headers):
                             valores_aux = []
                             def extraer_numeros_dict(d):
                                 if isinstance(d, dict):
-                                    # 🚫 FILTRO CRÍTICO ANTI-TALLAS: Si el diccionario habla de selectores físicos, se ignora su extracción
                                     d_keys_str = "".join(d.keys()).lower()
                                     if any(x in d_keys_str for x in ['size', 'talla', 'option', 'variant']):
                                         for sub_v in d.values(): extraer_numeros_dict(sub_v)
@@ -276,13 +275,12 @@ def motor_falabella(url, limite, headers):
                                                 fv = limpiar_precio_pnp(v)
                                                 if fv > 0: valores_aux.append(fv)
                                         elif 'value' in k.lower():
-                                            # Solo extrae de la clave genérica 'value' si el entorno es puramente comercial y libre de atributos de prenda
                                             contexto_valido = any(x in str(d).lower() for x in ['price', 'precio', 'sale', 'list', 'oferta', 'regular', 'internet', 'cmr'])
                                             contexto_invalido = any(x in str(d).lower() for x in ['size', 'talla', 'option', 'variant', 'sku'])
                                             if contexto_valido and not contexto_invalido:
                                                 if isinstance(v, (int, float)): valores_aux.append(float(v))
                                                 elif isinstance(v, str):
-                                                    fv = limpiar_precio_pnp(v)
+                                                    fv = limpiar_precio_pnp(val)
                                                     if fv > 0: valores_aux.append(fv)
                                     for sub_v in d.values():
                                         extraer_numeros_dict(sub_v)
@@ -488,6 +486,77 @@ def motor_adidas(url, limite):
         pass
     return productos
 
+def motor_platanitos(url, limite):
+    """Motor dedicado para Platanitos con suplantación TLS para evadir desafíos de JS y vaciado SPA"""
+    productos = []
+    try:
+        from curl_cffi import requests as crequests
+        resp = crequests.get(url, impersonate=random.choice(["chrome110", "chrome120"]), timeout=15)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            tarjetas = soup.find_all(['div', 'article', 'a'], class_=re.compile(r'(product|card|item|col|grid)', re.I))
+            
+            if not tarjetas:
+                enlaces_prod = soup.find_all('a', href=re.compile(r'/producto/', re.I))
+                seen_divs = set()
+                for a in enlaces_prod:
+                    parent = a.find_parent('div')
+                    if parent and id(parent) not in seen_divs:
+                        seen_divs.add(id(parent))
+                        tarjetas.append(parent)
+                        
+            for t in tarjetas:
+                try:
+                    a_el = t.find('a', href=re.compile(r'/producto/', re.I)) or (t if t.name == 'a' and '/producto/' in t.get('href', '').lower() else None)
+                    if not a_el: continue
+                    
+                    link_final = urljoin("https://platanitos.com", a_el['href'])
+                    
+                    tit_el = t.find(['h3', 'h2', 'span', 'p', 'div'], class_=re.compile(r'(title|name|nombre|description)', re.I))
+                    nombre = tit_el.text.strip() if tit_el else ""
+                    if not nombre and a_el.has_attr('title'): 
+                        nombre = a_el['title'].strip()
+                    if not nombre:
+                        spans = [s.text.strip() for s in t.find_all(['span', 'p']) if len(s.text.strip()) > 4]
+                        if spans: nombre = spans[0]
+                        
+                    if len(nombre) < 3 or "PLATANITOS" in nombre.upper(): continue
+                    
+                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                    if not textos_precios: continue
+                    
+                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                    if not nums: continue
+                    
+                    p_o = nums[0]
+                    p_r = nums[-1] if len(nums) > 1 else p_o
+                    
+                    if 0 < p_o <= limite:
+                        img_el = t.find('img')
+                        img = ""
+                        if img_el:
+                            img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
+                        if img.startswith('//'): img = 'https:' + img
+                        
+                        productos.append({
+                            "nombre": f"PLATANITOS - {nombre.upper()}",
+                            "precio": p_o,
+                            "precio_regular": p_r,
+                            "link": link_final,
+                            "img": img
+                        })
+                except: continue
+    except:
+        pass
+        
+    vistos = set()
+    unicos = []
+    for p in productos:
+        if p['link'] not in vistos:
+            vistos.add(p['link'])
+            unicos.append(p)
+    return unicos
+
 def motor_tradicional_general(url, limite, headers):
     productos = []
     dominio = urlparse(url).netloc.lower()
@@ -535,6 +604,8 @@ def escanear_tienda(url, limite):
         return motor_falabella(url, limite, headers)
     elif "adidas" in dominio:
         return motor_adidas(url, limite)
+    elif "platanitos.com" in dominio:
+        return motor_platanitos(url, limite)
     else:
         return motor_tradicional_general(url, limite, headers)
 
