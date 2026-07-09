@@ -555,7 +555,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
         elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
-        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: group = "ZAPATILLAS"
+        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: grupo = "ZAPATILLAS"
         elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
         elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
         elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
