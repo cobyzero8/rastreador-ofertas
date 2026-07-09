@@ -487,7 +487,7 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_platanitos(url, limite):
-    """Motor Platanitos blindado contra mallas combinadas de texto y carruseles de navegación"""
+    """Motor Platanitos blindado contra mallas combinadas de texto, carruseles y porcentajes pegados"""
     productos = []
     try:
         from curl_cffi import requests as crequests
@@ -522,11 +522,14 @@ def motor_platanitos(url, limite):
                         
                     if len(nombre) < 3 or "PLATANITOS" in nombre.upper(): continue
                     
-                    # 🔍 SOLUCIÓN PRECIOS: Recorrer individualmente las etiquetas para evitar fusiones ciegas con SKUs externos
+                    # 🔍 SOLUCIÓN DE PRECIOS BLINDADA: Solo leer nodos hoja puros y descartar tajantemente etiquetas con '%'
                     textos_precios = []
-                    for el in t.find_all(['span', 'p', 'div', 'b', 'strong']):
-                        if el.text and 'S/' in el.text and len(el.text.strip()) < 30:
-                            matches = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', el.text)
+                    for el in t.find_all(['span', 'p', 'b', 'strong', 'del', 'small']):
+                        if el.find(['span', 'p', 'b', 'strong', 'del', 'small']):
+                            continue  # Evita leer contenedores padres con textos de precio + descuento fusionados
+                        txt_el = el.text.strip() if el.text else ""
+                        if 'S/' in txt_el and '%' not in txt_el and len(txt_el) < 20:
+                            matches = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', txt_el)
                             textos_precios.extend(matches)
                             
                     if not textos_precios: continue
@@ -538,7 +541,6 @@ def motor_platanitos(url, limite):
                     p_r = nums[-1] if len(nums) > 1 else p_o
                     
                     if 0 < p_o <= limite:
-                        # 📸 SOLUCIÓN FOTO: Escanear todas las imágenes y descartar controles de navegación (flechas) del carrusel
                         img = ""
                         img_tags = t.find_all('img')
                         for img_el in img_tags:
