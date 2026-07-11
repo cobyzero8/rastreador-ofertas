@@ -378,86 +378,47 @@ def motor_falabella(url, limite, headers):
     return productos
 
 def motor_adidas(url, limite):
-    """Motor Adidas repotenciado con HTTP/2 nativo en Python Puro para saltarse los bloqueos de Akamai sin crashear"""
+    """Motor Adidas repotenciado con estrategia de bypass SEO (Googlebot + HTTP/2 nativo)"""
     productos = []
     texto_html = ""
     status_code = 0
     
+    # Generar un IP residencial peruano aleatorio para burlar validaciones geográficas secundarias de Akamai
+    ip_falso = f"181.176.{random.randint(1,254)}.{random.randint(1,254)}"
+    
+    # Cabeceras de Alta Fidelidad de Googlebot Oficial (SEO Whitelist Bypass)
     headers = {
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "accept-language": "es-PE,es;q=0.9,en-US;q=0.8",
         "accept-encoding": "gzip, deflate, br",
-        "referer": "https://www.google.com/",
-        "upgrade-insecure-requests": "1"
+        "x-forwarded-for": ip_falso,
+        "true-client-ip": ip_falso,
+        "x-real-ip": ip_falso,
+        "cache-control": "no-cache"
     }
     
-    # --- CAPA 1: CONSULTA MEDIANTE CLIENTE HTTP/2 (Engaña a Akamai al acoplar firma y versión de protocolo) ---
+    # Intento Principal: Descarga de catálogo simulando rastreo de Google indexador en HTTP/2 puro
     try:
         with httpx.Client(http2=True, timeout=15.0, follow_redirects=True) as client:
             resp = client.get(url, headers=headers)
             status_code = resp.status_code
             texto_html = resp.text
     except Exception as e:
-        safe_log(f"Aviso de red HTTP/2 en Adidas: {e}. Activando túnel secundario...", "caption")
+        safe_log(f"Aviso de red en Adidas: {e}. Probando variante móvil de Googlebot...", "caption")
 
-    # --- CAPA 2: INTENTO POR API DE CONTENIDO INTERNA SI EL HTML FALLÓ ---
+    # Respaldo: Googlebot Variante Móvil si la versión de escritorio fue restringida por el host
     if status_code != 200 or len(texto_html) <= 5000:
         try:
-            parsed = urlparse(url)
-            api_url = f"https://www.adidas.pe/api/plp/content-engine?url={parsed.path}"
-            if parsed.query:
-                api_url += f"?{parsed.query}"
-            
-            headers_api = {
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "accept": "application/json",
-                "x-requested-with": "XMLHttpRequest",
-                "referer": url
-            }
-            with httpx.Client(http2=True, timeout=12.0) as client:
-                resp_api = client.get(api_url, headers=headers_api)
-                if resp_api.status_code == 200:
-                    json_data = resp_api.json()
-                    
-                    def buscar_en_json(nodo):
-                        if isinstance(nodo, dict):
-                            for k in ['products', 'results', 'items', 'itemListElement']:
-                                if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
-                                    if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
-                                        return nodo[k]
-                            for v in nodo.values():
-                                res = buscar_en_json(v)
-                                if res: return res
-                        elif isinstance(nodo, list):
-                            for x in nodo:
-                                res = buscar_en_json(x)
-                                if res: return res
-                        return []
-                    
-                    items_json = buscar_en_json(json_data)
-                    if items_json:
-                        for prod_j in items_json:
-                            try:
-                                nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
-                                nombre = str(nombre).upper()
-                                if len(nombre) < 3: continue
-                                p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
-                                p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
-                                if p_r > (p_o * 10): p_r = p_r / 100
-                                if 0 < p_o <= limite:
-                                    link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
-                                    img_url = str(prod_j.get('image') or prod_j.get('imageUrl') or '')
-                                    productos.append({
-                                        "nombre": f"ADIDAS - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": urljoin("https://www.adidas.pe", link_rel), "img": img_url
-                                    })
-                            except Exception:
-                                continue
-                        if productos: return productos
+            headers["user-agent"] = "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+            with httpx.Client(http2=True, timeout=15.0, follow_redirects=True) as client:
+                resp = client.get(url, headers=headers)
+                status_code = resp.status_code
+                texto_html = resp.text
         except Exception:
             pass
 
-    # --- PROCESAMIENTO DEL HTML EXTRAÍDO POR HTTP/2 ---
+    # --- PROCESAMIENTO DEL CONTENIDO RECOLECTADO ---
     if texto_html and len(texto_html) > 5000:
         texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
         soup = BeautifulSoup(texto_html, 'html.parser')
@@ -781,7 +742,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                             ahorro_soles = p_regular - p_oferta
                             porcentaje = (ahorro_soles / p_regular) * 100
                             st.markdown(f"❌ ~~Precio Regular: S/. {p_regular:.2f}~~")
-                            st.markdown(f"💰 **Precio Oferta: S/. {p_oferta:.2f}**")
+                            st.markdown(f"💰 **Precio Oferta: S/. {prod['precio']:.2f}**")
                             st.markdown(f"🔥 **¡Ahorraste S/. {ahorro_soles:.2f}! ({porcentaje:.0f}% de Descuento)**")
                         else:
                             st.markdown(f"💰 **Precio Actual: S/. {prod['precio']:.2f}**")
