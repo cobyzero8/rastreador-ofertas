@@ -4,4 +4,4 @@ beautifulsoup4
 supabase
 pandas
 plotly
-curl_cffi
+
