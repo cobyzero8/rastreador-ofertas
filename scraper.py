@@ -376,7 +376,6 @@ def motor_falabella(url, limite, headers):
     return productos
 
 def motor_adidas(url, limite):
-    """Motor Adidas con canal de previsualización e instrumentación diagnóstica"""
     productos = []
     texto_html = ""
     status_code = 0
@@ -384,8 +383,7 @@ def motor_adidas(url, limite):
     headers = {
         "user-agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9",
-        "cache-control": "no-cache"
+        "accept-language": "es-PE,es;q=0.9"
     }
     
     try:
@@ -445,44 +443,41 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL blindado con Red Proxy en Cascada de triple contingencia para evadir Timeouts"""
+    """Motor JBL blindado con Red Proxy Multicanal Descentralizada (Resiliente a Timeouts)"""
     productos = []
     texto_html = ""
     status_code = 0
     motor_usado = ""
     
-    # Red Descentralizada de contingencia: Si un servidor proxy falla, se pasa al siguiente de inmediato
+    # Matriz de túneles proxy cruzados de alto rendimiento para Salesforce
     cadena_proxies = [
-        {"name": "CorsProxy IO (Ultra Rápido)", "url": f"https://corsproxy.io/?{url}", "tipo": "html"},
-        {"name": "CodeTabs Network (Resiliente)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"},
-        {"name": "AllOrigins Mirror (Respaldo)", "url": f"https://api.allorigins.win/get?url={quote(url, safe='')}", "tipo": "json"}
+        {"name": "CorsProxy Network (Nodo Directo)", "url": f"https://corsproxy.io/?{quote(url)}", "tipo": "html"},
+        {"name": "CodeTabs Grid (Nodo Secundario)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"},
+        {"name": "AllOrigins Cache Mirror", "url": f"https://api.allorigins.win/get?url={quote(url, safe='')}", "tipo": "json"}
     ]
     
     for nodo in cadena_proxies:
         try:
-            # Bajamos el timeout a 10s por nodo para que si uno se cuelga cambie rápido
-            resp = requests.get(nodo["url"], timeout=10)
+            resp = requests.get(nodo["url"], timeout=8)
             if resp.status_code == 200:
                 if nodo["tipo"] == "json":
                     texto_html = resp.json().get('contents', '')
                 else:
                     texto_html = resp.text
                 
-                # Validamos que el HTML tenga datos reales antes de darlo por válido
                 if texto_html and len(texto_html) > 5000:
                     status_code = 200
                     motor_usado = nodo["name"]
                     break
-        except Exception as e:
-            safe_log(f"Aviso técnico en {nodo['name']}: Fallo o Timeout. Saltando al siguiente proxy...", "caption")
+        except Exception:
             continue
 
-    safe_log(f"📊 [Diag JBL] Estado Servidor: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador Activo: {motor_usado}", "info")
+    safe_log(f"📊 [Diag JBL] Estado Servidor: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
 
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- CAPA A: MINERÍA DE SCRIPTS (DATA LAYER DE INFRAESTRUCTURA) ---
+        # --- CAPA A: MINERÍA DE DATA LAYER ---
         for script in soup.find_all("script"):
             if script.text and any(x in script.text for x in ["product", "ecommerce", "dataLayer", "price"]):
                 try:
@@ -504,10 +499,9 @@ def motor_jbl(url, limite, headers_pass):
                                     "link": urljoin("https://www.jbl.com.pe", link_rel),
                                     "img": str(prod_j.get('image') or prod_j.get('imageUrl') or '')
                                 })
-                except Exception: 
-                    continue
+                except Exception: continue
         
-        # --- CAPA B: SELECTORES VISUALES COMPUESTOS ---
+        # --- CAPA B: SELECTORES DE CAJAS VISUALES ---
         tiles = soup.select('.product-tile, .product, .grid-item, .product-item, [data-pid]')
         for t in tiles:
             try:
@@ -515,8 +509,7 @@ def motor_jbl(url, limite, headers_pass):
                     continue
                 tit_el = t.select_one('.pdp-link, .product-name, .title, h3, h4, a[class*="link"]')
                 nombre = ""
-                if tit_el: 
-                    nombre = tit_el.text.strip().upper()
+                if tit_el: nombre = tit_el.text.strip().upper()
                 else:
                     for a in t.find_all('a'):
                         if len(a.text.strip()) > 5:
@@ -545,10 +538,7 @@ def motor_jbl(url, limite, headers_pass):
                     img_el = t.find('img')
                     img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or "" if img_el else ""
                     if str(img).startswith('//'): img = 'https:' + str(img)
-                    
-                    productos.append({
-                        "nombre": f"JBL - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img).strip()
-                    })
+                    productos.append({"nombre": f"JBL - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img).strip()})
             except Exception: continue
                 
     vistos = set()
@@ -557,9 +547,6 @@ def motor_jbl(url, limite, headers_pass):
         if p['link'] not in vistos and len(p['nombre']) > 5:
             vistos.add(p['link'])
             productos_unicos.append(p)
-            
-    if productos_unicos: 
-        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos desde la Red de Contingencia!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
@@ -567,61 +554,35 @@ def motor_platanitos(url, limite):
     try:
         texto_html = ""
         try:
-            headers = {
-                "User-Agent": random.choice(LISTA_USER_AGENTS),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "es-ES,es;q=0.9"
-            }
+            headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
             resp = requests.get(url, headers=headers, timeout=15, verify=False)
             texto_html = resp.text
-        except Exception:
-            pass
+        except Exception: pass
 
-        if not texto_html or len(texto_html) < 2000: 
-            return []
+        if not texto_html or len(texto_html) < 2000: return []
         soup = BeautifulSoup(texto_html, 'html.parser')
         tarjetas = soup.find_all(['div', 'article', 'a'], class_=re.compile(r'(product|card|item|col|grid)', re.I))
-        
-        if not tarjetas:
-            enlaces_prod = soup.find_all('a', href=re.compile(r'/producto/', re.I))
-            seen_divs = set()
-            for a in enlaces_prod:
-                parent = a.find_parent('div')
-                if parent and id(parent) not in seen_divs:
-                    seen_divs.add(id(parent))
-                    tarjetas.append(parent)
                     
         for t in tarjetas:
             try:
                 a_el = t.find('a', href=re.compile(r'/producto/', re.I)) or (t if t.name == 'a' and '/producto/' in t.get('href', '').lower() else None)
-                if not a_el: 
-                    continue
-                
+                if not a_el: continue
                 link_final = urljoin("https://platanitos.com", a_el['href'])
                 tit_el = t.find(['h3', 'h2', 'span', 'p', 'div'], class_=re.compile(r'(title|name|nombre|description)', re.I))
                 nombre = tit_el.text.strip() if tit_el else ""
                 if not nombre and a_el.has_attr('title'): nombre = a_el['title'].strip()
-                if not nombre:
-                    spans = [s.text.strip() for s in t.find_all(['span', 'p']) if len(s.text.strip()) > 4]
-                    if spans: nombre = spans[0]
-                    
-                if len(nombre) < 3 or "PLATANITOS" in nombre.upper(): 
-                    continue
+                if len(nombre) < 3 or "PLATANITOS" in nombre.upper(): continue
                 
                 textos_precios = []
                 for el in t.find_all(['span', 'p', 'b', 'strong', 'del', 'small']):
                     if el.find(['span', 'p', 'b', 'strong', 'del', 'small']): continue
                     txt_el = el.text.strip() if el.text else ""
                     if 'S/' in txt_el and '%' not in txt_el and len(txt_el) < 20:
-                        matches = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', txt_el)
-                        textos_precios.extend(matches)
+                        textos_precios.extend(re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', txt_el))
                         
-                if not textos_precios: 
-                    continue
+                if not textos_precios: continue
                 nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                if not nums: 
-                    continue
-                
+                if not nums: continue
                 p_o = nums[0]
                 p_r = nums[-1] if len(nums) > 1 else p_o
                 
@@ -630,41 +591,26 @@ def motor_platanitos(url, limite):
                     img_tags = t.find_all('img')
                     for img_el in img_tags:
                         src_candidato = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
-                        src_low = str(src_candidato).lower()
-                        if src_candidato and 'data:image' not in src_low:
-                            if any(x in src_low for x in ['arrow', 'chevron', 'left', 'right', 'icon', 'logo', 'svg', 'loading', 'placeholder']):
-                                continue
+                        if src_candidato and 'data:image' not in str(src_candidato).lower():
                             img = src_candidato
                             break
-                    if not img and img_tags:
-                        img = img_tags[0].get('data-src') or img_tags[0].get('src') or ""
-                        
                     if str(img).startswith('//'): img = 'https:' + str(img)
                     productos.append({"nombre": f"PLATANITOS - {nombre.upper()}", "precio": p_o, "precio_regular": p_r, "link": link_final, "img": img})
-            except Exception:
-                continue
-    except Exception:
-        pass
+            except Exception: continue
+    except Exception: pass
     return productos
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
-    dominio = urlparse(url).netloc.lower()
-    for pagina in range(1, 4):
-        url_paginada = f"{url}{'&' if '?' in url else '?'}page={pagina}" if "platanitos.com" in dominio else url
-        try:
-            resp = requests.get(url_paginada, headers=headers, timeout=15, verify=False)
-            if resp.status_code not in [200, 206]: 
-                break
+    try:
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        if resp.status_code in [200, 206]:
             soup = BeautifulSoup(resp.text, 'html.parser')
             items = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda x: x and any(k in x.lower() for k in ['product', 'card', 'item', 'grid']))
-            if not items: 
-                break
             for t in items:
                 try:
                     tit = t.find(['h3', 'h2', 'span', 'p', 'div', 'a'], class_=re.compile(r'(title|name|nombre|description)', re.I))
-                    if not tit or len(tit.text.strip()) < 3: 
-                        continue
+                    if not tit or len(tit.text.strip()) < 3: continue
                     precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                     if precios:
                         p_o = limpiar_precio_pnp(precios[0])
@@ -676,45 +622,28 @@ def motor_tradicional_general(url, limite, headers):
                             if a_el and 'productos?' not in a_el['href'].lower():
                                 img_el = t.find('img', src=True)
                                 productos.append({"nombre": tit.text.strip().upper(), "precio": p_o, "precio_regular": p_r, "link": urljoin(url, a_el['href']), "img": img_el['src'] if img_el else ""})
-                except Exception:
-                    continue
-        except Exception:
-            break
+                except Exception: continue
+    except Exception: pass
     return productos
 
-# =======================================================
-# Enrutador Central del Escaneo
-# =======================================================
 def escanear_tienda(url, limite):
     headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
     dominio = urlparse(url).netloc.lower()
-    
-    if any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): 
-        return motor_belcorp(url, limite, headers)
-    elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio:
-        tag = "EFE" if "efe.com.pe" in dominio else "CURACAO"
-        return motor_conecta_retail(url, limite, headers, tag)
-    elif "falabella.com" in dominio: 
-        return motor_falabella(url, limite, headers)
-    elif "adidas" in dominio: 
-        return motor_adidas(url, limite)
-    elif "jbl" in dominio:
-        return motor_jbl(url, limite, headers)
-    elif "platanitos.com" in dominio: 
-        return motor_platanitos(url, limite)
-    else: 
-        return motor_tradicional_general(url, limite, headers)
+    if any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
+    elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
+    elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
+    elif "adidas" in dominio: return motor_adidas(url, limite)
+    elif "jbl" in dominio: return motor_jbl(url, limite, headers)
+    elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
+    else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
-# SISTEMA DE PATRULLAJE CENTRAL (CON MEMORIA BLINDADA)
+# SISTEMA DE PATRULLAJE CENTRAL (CON SISTEMA ANTI-SPAM)
 # =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
-    try: 
-        res = supabase.table("radares").select("*").execute()
-    except Exception as e: 
-        return f"Fallo Supabase: {e}"
-    if not res or not res.data: 
-        return "Sin radares."
+    try: res = supabase.table("radares").select("*").execute()
+    except Exception as e: return f"Fallo Supabase: {e}"
+    if not res or not res.data: return "Sin radares."
     
     total, alertas = 0, 0
     enviados = set()
@@ -747,8 +676,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
         else: grupo = "OTROS"
 
-        if target != "TODOS" and target != grupo: 
-            continue
+        if target != "TODOS" and target != grupo: continue
             
         tienda_actual = ident.replace('_', '-').split('-')[0]
         safe_log(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...", "write")
@@ -757,8 +685,14 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         for p in prods:
             try:
                 n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
-                if n_u in enviados: 
-                    continue
+                
+                # 🛡️ FILTRO QUIRÚRGICO ANTI-MEZCLA (Sábanas, almohadas y colchones fuera de barras de sonido)
+                if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
+                    palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA", "SABANAS", "ALMOHADAS"]
+                    if any(bad in n_u for bad in palabras_prohibidas):
+                        continue # Lo destruye en vivo antes de enviarlo o guardarlo
+                
+                if n_u in enviados: continue
                 enviados.add(n_u)
                 total += 1
                 p_v = float(p['precio'])
@@ -776,29 +710,28 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
                         registro_existe = True
-                except Exception:
-                    pass
+                except Exception: pass
                 
                 datos_guardar = {"identificador": id_registro, "precio": p_v, "precio_regular": p_r, "link_producto": p['link'], "imagen_producto": p.get('img', ''), "fecha": fecha_hoy}
                 try:
                     if registro_existe: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
                     else: supabase.table("historial_precios").insert(datos_guardar).execute()
-                except Exception:
-                    pass
+                except Exception: pass
                 
+                # 🛡️ REGLA DE ORO ANTI-SPAM TELEGRAM (Solo alerta si el precio REAL bajó respecto al escaneo anterior)
                 debe_alertar = False
                 if precio_anterior is not None:
-                    if p_v < precio_anterior: debe_alertar = True
+                    if p_v < precio_anterior: 
+                        debe_alertar = True # ¡Bajó de precio respecto a ayer!
                 else:
-                    if p_v < p_r: debe_alertar = True
+                    # Producto nuevo detectado por primera vez en la historia: lo guardamos en silencio para no spamear
+                    debe_alertar = False
                 
                 if debe_alertar:
                     emoji = mapa_emojis.get(grupo, "🔥")
-                    msg_t = f"{emoji} <b>¡OFERTA DETECTADA!</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Precio Anterior:</b> S/. {precio_anterior if precio_anterior else p_r:.2f}\n💰 <b>Precio Nuevo:</b> S/. {p_v:.2f}\n📉 <b>Ahorro Real:</b> S/. {((precio_anterior if precio_anterior else p_r) - p_v):.2f}\n"
-                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
-                        alertas += 1
-            except Exception: 
-                pass
+                    msg_t = f"{emoji} <b>¡PRECIO BAJÓ EN VIVO!</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Precio de Lista Anterior:</b> S/. {precio_anterior:.2f}\n💰 <b>Precio de Oferta Nuevo:</b> S/. {p_v:.2f}\n📉 <b>Ahorraste respecto a ayer:</b> S/. {(precio_anterior - p_v):.2f}\n"
+                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): alertas += 1
+            except Exception: pass
                 
     if len(lista_html_streamlit) > 0:
         try:
@@ -808,10 +741,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 with st.container(border=True):
                     col1, col2 = st.columns([2, 8])
                     with col1:
-                        if prod.get('img') and len(prod['img']) > 5: 
-                            st.image(prod['img'], width=120)
-                        else: 
-                            st.write("📷 _Sin Foto_")
+                        if prod.get('img') and len(prod['img']) > 5: st.image(prod['img'], width=120)
+                        else: st.write("📷 _Sin Foto_")
                     with col2:
                         st.markdown(f"#### `{prod['nombre']}`")
                         st.markdown(f"🏪 **Tienda de Origen:** `{prod['tienda_origen']}`")
@@ -825,9 +756,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                             st.markdown(f"🔥 **¡Ahorraste S/. {ahorro_soles:.2f}! ({porcentaje:.0f}% de Descuento)**")
                         else:
                             st.markdown(f"💰 **Precio Actual: S/. {prod['precio']:.2f}**")
-                            st.caption("ℹ️ _Precio base de lista detectado o sin descuento de etiqueta._")
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO]({prod['link']})")
-        except Exception: 
-            pass
+        except Exception: pass
             
     return f"Éxito. Modelos procesados: {total}. Alertas Telegram: {alertas}."
