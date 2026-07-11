@@ -165,7 +165,7 @@ def extraer_numeros_dict(d, valores_aux):
             extraer_numeros_dict(item, valores_aux)
 
 # =======================================================
-# 🚀 MOTORES ESTABLES DE EXTRACCIÓN
+# 🚀 MOTORES DE EXTRACCIÓN
 # =======================================================
 
 def motor_belcorp(url, limite, headers):
@@ -378,47 +378,35 @@ def motor_falabella(url, limite, headers):
     return productos
 
 def motor_adidas(url, limite):
-    """Motor Adidas repotenciado con estrategia de bypass SEO (Googlebot + HTTP/2 nativo)"""
+    """Motor Adidas con el bypass definitivo de Redes Sociales (Mascarada de Discord/Slackbot + HTTP/2)"""
     productos = []
     texto_html = ""
     status_code = 0
     
-    # Generar un IP residencial peruano aleatorio para burlar validaciones geográficas secundarias de Akamai
-    ip_falso = f"181.176.{random.randint(1,254)}.{random.randint(1,254)}"
+    # Lista de agentes Whitelistados por e-commerce para previsualización de enlaces de chat
+    bots_whitelist = [
+        "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+        "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+        "Mozilla/5.0 (compatible; WhatsApp/2.24.4; i)"
+    ]
     
-    # Cabeceras de Alta Fidelidad de Googlebot Oficial (SEO Whitelist Bypass)
     headers = {
-        "user-agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9,en-US;q=0.8",
-        "accept-encoding": "gzip, deflate, br",
-        "x-forwarded-for": ip_falso,
-        "true-client-ip": ip_falso,
-        "x-real-ip": ip_falso,
+        "user-agent": random.choice(bots_whitelist),
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "accept-language": "es-PE,es;q=0.9",
         "cache-control": "no-cache"
     }
     
-    # Intento Principal: Descarga de catálogo simulando rastreo de Google indexador en HTTP/2 puro
     try:
         with httpx.Client(http2=True, timeout=15.0, follow_redirects=True) as client:
             resp = client.get(url, headers=headers)
             status_code = resp.status_code
             texto_html = resp.text
     except Exception as e:
-        safe_log(f"Aviso de red en Adidas: {e}. Probando variante móvil de Googlebot...", "caption")
+        safe_log(f"Aviso HTTP/2 en Adidas: {e}", "caption")
 
-    # Respaldo: Googlebot Variante Móvil si la versión de escritorio fue restringida por el host
-    if status_code != 200 or len(texto_html) <= 5000:
-        try:
-            headers["user-agent"] = "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
-            with httpx.Client(http2=True, timeout=15.0, follow_redirects=True) as client:
-                resp = client.get(url, headers=headers)
-                status_code = resp.status_code
-                texto_html = resp.text
-        except Exception:
-            pass
+    safe_log(f"ℹ️ Diagnóstico de Seguridad Adidas: Código recibido: {status_code}, Longitud: {len(texto_html)} letras.", "info")
 
-    # --- PROCESAMIENTO DEL CONTENIDO RECOLECTADO ---
     if texto_html and len(texto_html) > 5000:
         texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
         soup = BeautifulSoup(texto_html, 'html.parser')
@@ -483,7 +471,101 @@ def motor_adidas(url, limite):
                 except Exception:
                     continue
                     
+    if productos:
+        safe_log(f"🎯 Adidas Motor: ¡Se extrajeron exitosamente {len(productos)} productos!", "success")
     return productos
+
+def motor_jbl(url, limite, headers):
+    """Motor dedicado para JBL Perú (Bypass por API unificada de catálogo de marca + Fallback HTML)"""
+    productos = []
+    dominio = urlparse(url).netloc.lower()
+    
+    # --- CAPA 1: EXTRACCIÓN MEDIANTE API DE SERVICIO UNIFICADO (VTEX BACKEND) ---
+    try:
+        api_url = f"https://{dominio}/api/catalog_system/pub/products/search"
+        # Traemos los primeros 24 productos ordenados de forma ascendente
+        resp_api = requests.get(api_url, headers=headers, params={"_from": 0, "_to": 24}, timeout=12, verify=False)
+        if resp_api.status_code == 200 and isinstance(resp_api.json(), list):
+            for item in resp_api.json():
+                try:
+                    nombre = item.get('productName', '').upper()
+                    if not nombre: continue
+                    items_vtex = item.get('items', [])
+                    if not items_vtex: continue
+                    sellers = items_vtex[0].get('sellers', [])
+                    if not sellers: continue
+                    comm_offer = sellers[0].get('commertialOffer', {})
+                    
+                    p_o = float(comm_offer.get('Price', 0))
+                    p_r = float(comm_offer.get('ListPrice', p_o))
+                    
+                    if 0 < p_o <= limite:
+                        link_final = item.get('link', url)
+                        img_list = items_vtex[0].get('images', [{}])
+                        img_final = img_list[0].get('imageUrl', '') if img_list else ''
+                        
+                        productos.append({
+                            "nombre": f"JBL - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_final
+                        })
+                except Exception:
+                    continue
+            if productos:
+                safe_log(f"🎯 Motor JBL (API de Servicio): ¡Indexados {len(productos)} modelos audios!", "success")
+                return productos
+    except Exception:
+        pass
+
+    # --- CAPA 2: ESTRATEGIA DE EXTRACCIÓN HTML TRADICIONAL (FALLBACK) ---
+    try:
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            tarjetas = soup.find_all(['div', 'li', 'article', 'a'], class_=re.compile(r'(product|card|item|shelf|grid)', re.I))
+            for t in tarjetas:
+                try:
+                    tit_el = t.find(['h3', 'h2', 'h4', 'span', 'p', 'a'], class_=re.compile(r'(title|name|nombre)', re.I))
+                    if not tit_el or len(tit_el.text.strip()) < 3: continue
+                    
+                    precios_encontrados = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                    if not precios_encontrados: continue
+                    
+                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_encontrados if limpiar_precio_pnp(p) > 0])))
+                    if not nums: continue
+                    p_o = nums[0]
+                    p_r = nums[-1] if len(nums) > 1 else p_o
+                    
+                    if 0 < p_o <= limite:
+                        a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
+                        link_final = urljoin(url, a_el['href']) if a_el else url
+                        
+                        img_el = t.find('img')
+                        img = img_el.get('data-src') or img_el.get('src') or '' if img_el else ''
+                        if img.startswith('//'): img = 'https:' + img
+                        
+                        productos.append({
+                            "nombre": f"JBL - {tit_el.text.strip().upper()}",
+                            "precio": p_o,
+                            "precio_regular": p_r,
+                            "link": link_final,
+                            "img": img
+                        })
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    vistos = set()
+    productos_unicos = []
+    for p in productos:
+        if p['link'] not in vistos:
+            vistos.add(p['link'])
+            productos_unicos.append(p)
+    if productos_unicos: safe_log(f"🎯 Motor JBL (Estructura Web): ¡Indexados {len(productos_unicos)} modelos!", "success")
+    return productos_unicos
 
 def motor_platanitos(url, limite):
     productos = []
@@ -621,6 +703,8 @@ def escanear_tienda(url, limite):
         return motor_falabella(url, limite, headers)
     elif "adidas" in dominio: 
         return motor_adidas(url, limite)
+    elif "jbl" in dominio:
+        return motor_jbl(url, limite, headers)
     elif "platanitos.com" in dominio: 
         return motor_platanitos(url, limite)
     else: 
