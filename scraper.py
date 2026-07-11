@@ -443,13 +443,12 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL blindado con Red Proxy Multicanal Descentralizada (Resiliente a Timeouts)"""
+    """Motor JBL de arquitectura experta: Extracción profunda adaptada a Salesforce Cloud mediante microdatos Schema SEO y Regex Difuso"""
     productos = []
     texto_html = ""
     status_code = 0
     motor_usado = ""
     
-    # Matriz de túneles proxy cruzados de alto rendimiento para Salesforce
     cadena_proxies = [
         {"name": "CorsProxy Network (Nodo Directo)", "url": f"https://corsproxy.io/?{quote(url)}", "tipo": "html"},
         {"name": "CodeTabs Grid (Nodo Secundario)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"},
@@ -464,7 +463,6 @@ def motor_jbl(url, limite, headers_pass):
                     texto_html = resp.json().get('contents', '')
                 else:
                     texto_html = resp.text
-                
                 if texto_html and len(texto_html) > 5000:
                     status_code = 200
                     motor_usado = nodo["name"]
@@ -477,17 +475,27 @@ def motor_jbl(url, limite, headers_pass):
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- CAPA A: MINERÍA DE DATA LAYER ---
+        # --- CAPA A: MINERÍA DE SCRIPTS DINÁMICOS CON CORRECCIÓN DE FRAGMENTOS ---
+        def clean_and_parse_json(text):
+            start_obj = text.find('{')
+            end_obj = text.rfind('}')
+            if start_obj != -1 and end_idx := end_obj:
+                try: return json.loads(text[start_obj:end_idx+1])
+                except Exception: pass
+            start_arr = text.find('[')
+            end_arr = text.rfind(']')
+            if start_arr != -1 and end_arr != -1:
+                try: return json.loads(text[start_arr:end_arr+1])
+                except Exception: pass
+            return None
+
         for script in soup.find_all("script"):
             if script.text and any(x in script.text for x in ["product", "ecommerce", "dataLayer", "price"]):
-                try:
-                    txt = script.text.strip()
-                    start_idx = txt.find('{')
-                    end_idx = txt.rfind('}')
-                    if start_idx != -1 and end_idx != -1:
-                        json_data = json.loads(txt[start_idx:end_idx+1])
-                        encontrados = extraer_productos_json_universal(json_data)
-                        for prod_j in encontrados:
+                json_data = clean_and_parse_json(script.text)
+                if json_data:
+                    encontrados = extraer_productos_json_universal(json_data)
+                    for prod_j in encontrados:
+                        try:
                             nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('productName') or '').strip().upper()
                             p_o = safe_float(prod_j.get('price') or prod_j.get('salePrice') or prod_j.get('value'))
                             if nombre and 0 < p_o <= limite and not any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ"]):
@@ -499,46 +507,72 @@ def motor_jbl(url, limite, headers_pass):
                                     "link": urljoin("https://www.jbl.com.pe", link_rel),
                                     "img": str(prod_j.get('image') or prod_j.get('imageUrl') or '')
                                 })
-                except Exception: continue
+                        except Exception: pass
         
-        # --- CAPA B: SELECTORES DE CAJAS VISUALES ---
-        tiles = soup.select('.product-tile, .product, .grid-item, .product-item, [data-pid]')
+        # --- CAPA B: EXTRACCIÓN ROBUSTA POR CONTENEDORES (VISUAL + MICRODATOS) ---
+        tiles = soup.select('.product-tile, .product, .grid-item, .product-item, .product-card, [data-pid], .tile-body')
+        if not tiles:
+            tiles = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(tile|product|card|item|grid)', re.I))
+            
         for t in tiles:
             try:
-                if t.find(['div', 'li'], class_=re.compile(r'(product-tile|product-grid)', re.I)):
-                    continue
-                tit_el = t.select_one('.pdp-link, .product-name, .title, h3, h4, a[class*="link"]')
-                nombre = ""
-                if tit_el: nombre = tit_el.text.strip().upper()
-                else:
-                    for a in t.find_all('a'):
-                        if len(a.text.strip()) > 5:
-                            nombre = a.text.strip().upper()
-                            break
-                            
-                if len(nombre) < 4 or any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ", "VER CARRITO", "JBL PE"]):
-                    continue
-                    
-                a_link = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
-                if not a_link: continue
-                link_final = urljoin("https://www.jbl.com.pe", a_link['href'])
-                
-                precios_texto = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                if not precios_texto:
-                    p_container = t.select_one('.price, .sales, .value')
-                    if p_container: precios_texto = re.findall(r'(\d[\d\.,]*)', p_container.text)
+                # 1. Recuperar el enlace y limpiar tags anidados falsos
+                a_elements = t.find_all('a', href=True)
+                link_final, nombre = "", ""
+                for a in a_elements:
+                    href_low = a['href'].lower()
+                    if any(x in href_low for x in ['cart', 'wishlist', 'compare', 'login', 'javascript']):
+                        continue
+                    link_final = urljoin("https://www.jbl.com.pe", a['href'])
+                    txt = a.text.strip()
+                    if len(txt) > 4 and not any(x in txt.upper() for x in ["COMPRAR", "VER DETALLE", "AGREGAR", "AÑADIR", "VER CARRITO"]):
+                        nombre = txt.upper()
+                        break
                         
-                if not precios_texto: continue
-                nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_texto if limpiar_precio_pnp(p) > 0])))
+                if not nombre:
+                    tit_el = t.select_one('.pdp-link, .product-name, .title, h3, h4, a[class*="link"]')
+                    if tit_el: nombre = tit_el.text.strip().upper()
+                    
+                if len(nombre) < 4 or any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ", "VER CARRITO", "JBL PE", "INICIO", "MI CUENTA"]):
+                    continue
+                if not link_final:
+                    a_link = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
+                    if not a_link: continue
+                    link_final = urljoin("https://www.jbl.com.pe", a_link['href'])
+                
+                # 2. Minar precios cruzando texto visible con atributos estructurados de Salesforce SEO
+                nums = []
+                precios_texto = re.findall(r'(?:S/\.?\s*)(\b\d[\d\.,]*\b)', t.text)
+                for p in precios_texto:
+                    val = limpiar_precio_pnp(p)
+                    if 0 < val <= limite: nums.append(val)
+                        
+                for el in t.find_all(True):
+                    for attr in ['data-price', 'data-price-value', 'content', 'data-amount', 'price']:
+                        if el.has_attr(attr):
+                            val = limpiar_precio_pnp(el[attr])
+                            if 0 < val <= limite: nums.append(val)
+                                
+                if not nums:
+                    precios_raw = re.findall(r'\b\d{2,4}[\.,]\d{2}\b|\b\d{1,3}[\.,]\d{3}\b', t.text)
+                    for p in precios_raw:
+                        val = limpiar_precio_pnp(p)
+                        if 0 < val <= limite: nums.append(val)
+                            
                 if not nums: continue
+                nums = sorted(list(set(nums)))
                 p_o = nums[0]
                 p_r = nums[-1] if len(nums) > 1 else p_o
                 
-                if 0 < p_o <= limite:
-                    img_el = t.find('img')
-                    img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or "" if img_el else ""
-                    if str(img).startswith('//'): img = 'https:' + str(img)
-                    productos.append({"nombre": f"JBL - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img).strip()})
+                img_el = t.find('img')
+                img = ""
+                if img_el:
+                    img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
+                if str(img).startswith('//'): img = 'https:' + str(img)
+                
+                productos.append({
+                    "nombre": f"JBL - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img).strip()
+                })
             except Exception: continue
                 
     vistos = set()
@@ -547,6 +581,9 @@ def motor_jbl(url, limite, headers_pass):
         if p['link'] not in vistos and len(p['nombre']) > 5:
             vistos.add(p['link'])
             productos_unicos.append(p)
+            
+    if productos_unicos: 
+        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
@@ -686,11 +723,10 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             try:
                 n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
                 
-                # 🛡️ FILTRO QUIRÚRGICO ANTI-MEZCLA (Sábanas, almohadas y colchones fuera de barras de sonido)
                 if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
                     palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA", "SABANAS", "ALMOHADAS"]
                     if any(bad in n_u for bad in palabras_prohibidas):
-                        continue # Lo destruye en vivo antes de enviarlo o guardarlo
+                        continue
                 
                 if n_u in enviados: continue
                 enviados.add(n_u)
@@ -718,13 +754,10 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     else: supabase.table("historial_precios").insert(datos_guardar).execute()
                 except Exception: pass
                 
-                # 🛡️ REGLA DE ORO ANTI-SPAM TELEGRAM (Solo alerta si el precio REAL bajó respecto al escaneo anterior)
                 debe_alertar = False
                 if precio_anterior is not None:
-                    if p_v < precio_anterior: 
-                        debe_alertar = True # ¡Bajó de precio respecto a ayer!
+                    if p_v < precio_anterior: debe_alertar = True
                 else:
-                    # Producto nuevo detectado por primera vez en la historia: lo guardamos en silencio para no spamear
                     debe_alertar = False
                 
                 if debe_alertar:
