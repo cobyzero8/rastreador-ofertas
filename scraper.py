@@ -445,28 +445,39 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL adaptado con puente Proxy (AllOrigins) para evadir el bloqueo de IP 403 DataCenter"""
+    """Motor JBL blindado con Red Proxy en Cascada de triple contingencia para evadir Timeouts"""
     productos = []
     texto_html = ""
     status_code = 0
-    motor_usado = "AllOrigins Web Bridge (Bypass Cloudflare)"
+    motor_usado = ""
     
-    try:
-        # Codificamos la URL para pasarla limpia a través de la API del puente externo
-        url_codificada = quote(url, safe='')
-        proxy_url = f"https://api.allorigins.win/get?url={url_codificada}"
-        
-        # AllOrigins descarga la página desde sus propios servidores y nos la devuelve sin bloquear
-        resp = requests.get(proxy_url, timeout=15)
-        status_code = resp.status_code
-        if status_code == 200:
-            json_res = resp.json()
-            texto_html = json_res.get('contents', '')
-    except Exception as e:
-        safe_log(f"Aviso en túnel Proxy JBL: {e}", "caption")
+    # Red Descentralizada de contingencia: Si un servidor proxy falla, se pasa al siguiente de inmediato
+    cadena_proxies = [
+        {"name": "CorsProxy IO (Ultra Rápido)", "url": f"https://corsproxy.io/?{url}", "tipo": "html"},
+        {"name": "CodeTabs Network (Resiliente)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"},
+        {"name": "AllOrigins Mirror (Respaldo)", "url": f"https://api.allorigins.win/get?url={quote(url, safe='')}", "tipo": "json"}
+    ]
+    
+    for nodo in cadena_proxies:
+        try:
+            # Bajamos el timeout a 10s por nodo para que si uno se cuelga cambie rápido
+            resp = requests.get(nodo["url"], timeout=10)
+            if resp.status_code == 200:
+                if nodo["tipo"] == "json":
+                    texto_html = resp.json().get('contents', '')
+                else:
+                    texto_html = resp.text
+                
+                # Validamos que el HTML tenga datos reales antes de darlo por válido
+                if texto_html and len(texto_html) > 5000:
+                    status_code = 200
+                    motor_usado = nodo["name"]
+                    break
+        except Exception as e:
+            safe_log(f"Aviso técnico en {nodo['name']}: Fallo o Timeout. Saltando al siguiente proxy...", "caption")
+            continue
 
-    # Nueva telemetría. Verás que el código pasará a medir miles de letras (HTML real desbloqueado)
-    safe_log(f"📊 [Diag JBL] Estado Servidor Proxy: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
+    safe_log(f"📊 [Diag JBL] Estado Servidor: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador Activo: {motor_usado}", "info")
 
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
@@ -519,7 +530,7 @@ def motor_jbl(url, limite, headers_pass):
                 if not a_link: continue
                 link_final = urljoin("https://www.jbl.com.pe", a_link['href'])
                 
-                precios_texto = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]?)', t.text)
+                precios_texto = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                 if not precios_texto:
                     p_container = t.select_one('.price, .sales, .value')
                     if p_container: precios_texto = re.findall(r'(\d[\d\.,]*)', p_container.text)
@@ -548,7 +559,7 @@ def motor_jbl(url, limite, headers_pass):
             productos_unicos.append(p)
             
     if productos_unicos: 
-        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos desde el puente!", "success")
+        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos desde la Red de Contingencia!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
@@ -734,7 +745,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
         elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
         elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
-        else: group = "OTROS"
+        else: grupo = "OTROS"
 
         if target != "TODOS" and target != grupo: 
             continue
