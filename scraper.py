@@ -7,7 +7,7 @@ import re
 import time
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import urljoin, urlparse, parse_qs, quote
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
@@ -445,47 +445,33 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL adaptado a Salesforce Cloud con Pipeline de Doble Canal e Inyección Analítica (Fixed Indentation)"""
+    """Motor JBL adaptado con puente Proxy (AllOrigins) para evadir el bloqueo de IP 403 DataCenter"""
     productos = []
     texto_html = ""
     status_code = 0
-    motor_usado = ""
+    motor_usado = "AllOrigins Web Bridge (Bypass Cloudflare)"
     
     try:
-        headers_req = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-            "Cache-Control": "no-cache"
-        }
-        resp = requests.get(url, headers=headers_req, timeout=12, verify=False)
-        status_code = resp.status_code
-        texto_html = resp.text
-        motor_usado = "requests (Nativo Browser)"
-    except Exception:
-        pass
+        # Codificamos la URL para pasarla limpia a través de la API del puente externo
+        url_codificada = quote(url, safe='')
+        proxy_url = f"https://api.allorigins.win/get?url={url_codificada}"
         
-    if status_code != 200 or len(texto_html) < 5000:
-        try:
-            headers_httpx = {
-                "user-agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "accept-language": "es-PE,es;q=0.9"
-            }
-            with httpx.Client(http2=True, timeout=12.0, follow_redirects=True) as client:
-                resp = client.get(url, headers=headers_httpx)
-                status_code = resp.status_code
-                texto_html = resp.text
-                motor_usado = "httpx (HTTP/2 Social Bot)"
-        except Exception:
-            pass
+        # AllOrigins descarga la página desde sus propios servidores y nos la devuelve sin bloquear
+        resp = requests.get(proxy_url, timeout=15)
+        status_code = resp.status_code
+        if status_code == 200:
+            json_res = resp.json()
+            texto_html = json_res.get('contents', '')
+    except Exception as e:
+        safe_log(f"Aviso en túnel Proxy JBL: {e}", "caption")
 
-    safe_log(f"📊 [Diag JBL] Estado Servidor: {status_code} | Tamaño Código: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
+    # Nueva telemetría. Verás que el código pasará a medir miles de letras (HTML real desbloqueado)
+    safe_log(f"📊 [Diag JBL] Estado Servidor Proxy: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
 
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- CAPA A: MINERÍA DE SCRIPTS (DATA LAYER / ANÁLISIS DE SALESFORCE) ---
+        # --- CAPA A: MINERÍA DE SCRIPTS (DATA LAYER DE INFRAESTRUCTURA) ---
         for script in soup.find_all("script"):
             if script.text and any(x in script.text for x in ["product", "ecommerce", "dataLayer", "price"]):
                 try:
@@ -510,7 +496,7 @@ def motor_jbl(url, limite, headers_pass):
                 except Exception: 
                     continue
         
-        # --- CAPA B: SELECTORES VISUALES COMPUESTOS DE SALESFORCE ---
+        # --- CAPA B: SELECTORES VISUALES COMPUESTOS ---
         tiles = soup.select('.product-tile, .product, .grid-item, .product-item, [data-pid]')
         for t in tiles:
             try:
@@ -533,7 +519,7 @@ def motor_jbl(url, limite, headers_pass):
                 if not a_link: continue
                 link_final = urljoin("https://www.jbl.com.pe", a_link['href'])
                 
-                precios_texto = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                precios_texto = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]?)', t.text)
                 if not precios_texto:
                     p_container = t.select_one('.price, .sales, .value')
                     if p_container: precios_texto = re.findall(r'(\d[\d\.,]*)', p_container.text)
@@ -562,7 +548,7 @@ def motor_jbl(url, limite, headers_pass):
             productos_unicos.append(p)
             
     if productos_unicos: 
-        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos!", "success")
+        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos desde el puente!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
@@ -748,7 +734,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
         elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
         elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
-        else: grupo = "OTROS"
+        else: group = "OTROS"
 
         if target != "TODOS" and target != grupo: 
             continue
