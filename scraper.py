@@ -396,7 +396,6 @@ def motor_adidas(url, limite):
     except Exception:
         pass
 
-    # CONSOLA DE TELEMETRÍA EN VIVO PARA ADIDAS
     safe_log(f"📊 [Diag Adidas] Código Estado: {status_code} | Peso HTML: {len(texto_html)} caracteres.", "info")
 
     if texto_html and len(texto_html) > 5000:
@@ -446,13 +445,12 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL adaptado a Salesforce Cloud con Pipeline de Doble Canal e Inyección Analítica"""
+    """Motor JBL adaptado a Salesforce Cloud con Pipeline de Doble Canal e Inyección Analítica (Fixed Indentation)"""
     productos = []
     texto_html = ""
     status_code = 0
     motor_usado = ""
     
-    # Canal 1: requests clásico estándar (Igual al motor Falabella/Platanitos)
     try:
         headers_req = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -467,7 +465,6 @@ def motor_jbl(url, limite, headers_pass):
     except Exception:
         pass
         
-    # Canal 2: Fallback por httpx HTTP/2 en caso de rechazo perimetral
     if status_code != 200 or len(texto_html) < 5000:
         try:
             headers_httpx = {
@@ -483,7 +480,6 @@ def motor_jbl(url, limite, headers_pass):
         except Exception:
             pass
 
-    # CONSOLA DE TELEMETRÍA EN VIVO PARA JBL (Aparecerá en el panel superior de Streamlit)
     safe_log(f"📊 [Diag JBL] Estado Servidor: {status_code} | Tamaño Código: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
 
     if texto_html and len(texto_html) > 5000:
@@ -511,12 +507,15 @@ def motor_jbl(url, limite, headers_pass):
                                     "link": urljoin("https://www.jbl.com.pe", link_rel),
                                     "img": str(prod_j.get('image') or prod_j.get('imageUrl') or '')
                                 })
-                    except Exception: continue
+                except Exception: 
+                    continue
         
         # --- CAPA B: SELECTORES VISUALES COMPUESTOS DE SALESFORCE ---
         tiles = soup.select('.product-tile, .product, .grid-item, .product-item, [data-pid]')
         for t in tiles:
             try:
+                if t.find(['div', 'li'], class_=re.compile(r'(product-tile|product-grid)', re.I)):
+                    continue
                 tit_el = t.select_one('.pdp-link, .product-name, .title, h3, h4, a[class*="link"]')
                 nombre = ""
                 if tit_el: 
