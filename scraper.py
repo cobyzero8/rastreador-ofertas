@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import httpx
 from bs4 import BeautifulSoup
 import re
 import time
@@ -377,42 +378,110 @@ def motor_falabella(url, limite, headers):
     return productos
 
 def motor_adidas(url, limite):
-    """Motor Adidas blindado de doble capa: Interceptación de PLP Content Engine + Aislamiento Móvil en HTTP/1.1"""
+    """Motor Adidas repotenciado con HTTP/2 nativo en Python Puro para saltarse los bloqueos de Akamai sin crashear"""
     productos = []
+    texto_html = ""
+    status_code = 0
+    
+    headers = {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "accept-language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "accept-encoding": "gzip, deflate, br",
+        "referer": "https://www.google.com/",
+        "upgrade-insecure-requests": "1"
+    }
+    
+    # --- CAPA 1: CONSULTA MEDIANTE CLIENTE HTTP/2 (Engaña a Akamai al acoplar firma y versión de protocolo) ---
     try:
-        # --- CAPA A: EXTRACCIÓN DIRIGIDA POR API INTERNA (CONTENT ENGINE) ---
+        with httpx.Client(http2=True, timeout=15.0, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+            status_code = resp.status_code
+            texto_html = resp.text
+    except Exception as e:
+        safe_log(f"Aviso de red HTTP/2 en Adidas: {e}. Activando túnel secundario...", "caption")
+
+    # --- CAPA 2: INTENTO POR API DE CONTENIDO INTERNA SI EL HTML FALLÓ ---
+    if status_code != 200 or len(texto_html) <= 5000:
         try:
             parsed = urlparse(url)
-            path_limpio = parsed.path
-            query_str = f"?{parsed.query}" if parsed.query else ""
-            api_url = f"https://www.adidas.pe/api/plp/content-engine?url={path_limpio}{query_str}"
+            api_url = f"https://www.adidas.pe/api/plp/content-engine?url={parsed.path}"
+            if parsed.query:
+                api_url += f"?{parsed.query}"
             
             headers_api = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": url
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "accept": "application/json",
+                "x-requested-with": "XMLHttpRequest",
+                "referer": url
             }
-            resp_api = requests.get(api_url, headers=headers_api, timeout=12, verify=False)
-            if resp_api.status_code == 200:
-                json_data = resp_api.json()
-                
-                def buscar_en_json(nodo):
+            with httpx.Client(http2=True, timeout=12.0) as client:
+                resp_api = client.get(api_url, headers=headers_api)
+                if resp_api.status_code == 200:
+                    json_data = resp_api.json()
+                    
+                    def buscar_en_json(nodo):
+                        if isinstance(nodo, dict):
+                            for k in ['products', 'results', 'items', 'itemListElement']:
+                                if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
+                                    if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
+                                        return nodo[k]
+                            for v in nodo.values():
+                                res = buscar_en_json(v)
+                                if res: return res
+                        elif isinstance(nodo, list):
+                            for x in nodo:
+                                res = buscar_en_json(x)
+                                if res: return res
+                        return []
+                    
+                    items_json = buscar_en_json(json_data)
+                    if items_json:
+                        for prod_j in items_json:
+                            try:
+                                nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
+                                nombre = str(nombre).upper()
+                                if len(nombre) < 3: continue
+                                p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
+                                p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
+                                if p_r > (p_o * 10): p_r = p_r / 100
+                                if 0 < p_o <= limite:
+                                    link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
+                                    img_url = str(prod_j.get('image') or prod_j.get('imageUrl') or '')
+                                    productos.append({
+                                        "nombre": f"ADIDAS - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": urljoin("https://www.adidas.pe", link_rel), "img": img_url
+                                    })
+                            except Exception:
+                                continue
+                        if productos: return productos
+        except Exception:
+            pass
+
+    # --- PROCESAMIENTO DEL HTML EXTRAÍDO POR HTTP/2 ---
+    if texto_html and len(texto_html) > 5000:
+        texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
+        soup = BeautifulSoup(texto_html, 'html.parser')
+        
+        next_script = soup.find('script', id='__NEXT_DATA__')
+        if next_script:
+            try:
+                json_data = json.loads(next_script.text)
+                def buscar_en_json_back(nodo):
                     if isinstance(nodo, dict):
                         for k in ['products', 'results', 'items', 'itemListElement']:
                             if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
                                 if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
                                     return nodo[k]
                         for v in nodo.values():
-                            res = buscar_en_json(v)
+                            res = buscar_en_json_back(v)
                             if res: return res
                     elif isinstance(nodo, list):
                         for x in nodo:
-                            res = buscar_en_json(x)
+                            res = buscar_en_json_back(x)
                             if res: return res
                     return []
                 
-                items_json = buscar_en_json(json_data)
+                items_json = buscar_en_json_back(json_data)
                 if items_json:
                     for prod_j in items_json:
                         try:
@@ -424,100 +493,35 @@ def motor_adidas(url, limite):
                             if p_r > (p_o * 10): p_r = p_r / 100
                             if 0 < p_o <= limite:
                                 link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
-                                img_url = str(prod_j.get('image') or prod_j.get('imageUrl') or '')
-                                productos.append({
-                                    "nombre": f"ADIDAS - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": urljoin("https://www.adidas.pe", link_rel), "img": img_url
-                                })
+                                productos.append({"nombre": f"ADIDAS - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": urljoin("https://www.adidas.pe", link_rel), "img": str(prod_j.get('image', ''))})
                         except Exception:
                             continue
-        except Exception:
-            pass
-
-        # --- CAPA B: RESPALDO POR HTML CON SESIÓN E INHERENCIA DE COOKIES MÓVILES ---
-        if not productos:
-            session = requests.Session()
-            headers_html = {
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-                "Cache-Control": "no-cache"
-            }
-            try:
-                session.get("https://www.adidas.pe", headers=headers_html, timeout=10, verify=False)
-                time.sleep(1.0)
             except Exception:
                 pass
-                
-            resp = session.get(url, headers=headers_html, timeout=15, verify=False)
-            if resp.status_code == 200 and len(resp.text) > 5000:
-                texto_html = resp.text.replace('\xa0', ' ').replace('&nbsp;', ' ')
-                soup = BeautifulSoup(texto_html, 'html.parser')
-                
-                next_script = soup.find('script', id='__NEXT_DATA__')
-                if next_script:
-                    try:
-                        json_data = json.loads(next_script.text)
-                        def buscar_en_json_back(nodo):
-                            if isinstance(nodo, dict):
-                                for k in ['products', 'results', 'items', 'itemListElement']:
-                                    if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
-                                        if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
-                                            return nodo[k]
-                                for v in nodo.values():
-                                    res = buscar_en_json_back(v)
-                                    if res: return res
-                            elif isinstance(nodo, list):
-                                for x in nodo:
-                                    res = buscar_en_json_back(x)
-                                    if res: return res
-                            return []
-                        
-                        items_json = buscar_en_json_back(json_data)
-                        if items_json:
-                            for prod_j in items_json:
-                                try:
-                                    nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
-                                    nombre = str(nombre).upper()
-                                    if len(nombre) < 3: continue
-                                    p_o = safe_float(prod_j.get('salePrice') or prod_j.get('price'))
-                                    p_r = safe_float(prod_j.get('originalPrice') or prod_j.get('price') or p_o)
-                                    if p_r > (p_o * 10): p_r = p_r / 100
-                                    if 0 < p_o <= limite:
-                                        link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
-                                        productos.append({
-                                            "nombre": f"ADIDAS - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": urljoin("https://www.adidas.pe", link_rel), "img": str(prod_j.get('image', ''))
-                                        })
-                                except Exception:
-                                    continue
-                    except Exception:
-                        pass
 
-                if not productos:
-                    titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
-                    for tit_el in titulos_testid:
-                        try:
-                            nombre_prod = tit_el.text.strip().upper()
-                            ancestor = tit_el
-                            oferta_el, regular_el, enlace_el, img_el = None, None, None, None
-                            for _ in range(5):
-                                ancestor = ancestor.parent
-                                if not ancestor: break
-                                if not oferta_el: oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
-                                if not regular_el: regular_el = ancestor.find(attrs={"data-testid": "original-price"})
-                                if not enlace_el: enlace_el = ancestor.find('a', href=True)
-                                if not img_el: img_el = ancestor.find('img')
-                            if oferta_el:
-                                precio_oferta = limpiar_precio_pnp(oferta_el.text)
-                                precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
-                                if precio_regular > (precio_oferta * 10): precio_regular = precio_regular / 100
-                                if 0 < precio_oferta <= limite:
-                                    productos.append({
-                                        "nombre": f"ADIDAS - {nombre_prod}", "precio": precio_oferta, "precio_regular": max(precio_regular, precio_oferta), "link": urljoin(url, enlace_el['href']) if enlace_el else url, "img": img_el.get('src', '') if img_el else ''
-                                    })
-                        except Exception:
-                            continue
-    except Exception:
-        pass
+        if not productos:
+            titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
+            for tit_el in titulos_testid:
+                try:
+                    nombre_prod = tit_el.text.strip().upper()
+                    ancestor = tit_el
+                    oferta_el, regular_el, enlace_el, img_el = None, None, None, None
+                    for _ in range(5):
+                        ancestor = ancestor.parent
+                        if not ancestor: break
+                        if not oferta_el: oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
+                        if not regular_el: regular_el = ancestor.find(attrs={"data-testid": "original-price"})
+                        if not enlace_el: enlace_el = ancestor.find('a', href=True)
+                        if not img_el: img_el = ancestor.find('img')
+                    if oferta_el:
+                        precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                        precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                        if precio_regular > (precio_oferta * 10): precio_regular = precio_regular / 100
+                        if 0 < precio_oferta <= limite:
+                            productos.append({"nombre": f"ADIDAS - {nombre_prod}", "precio": precio_oferta, "precio_regular": max(precio_regular, precio_oferta), "link": urljoin(url, enlace_el['href']) if enlace_el else url, "img": img_el.get('src', '') if img_el else ''})
+                except Exception:
+                    continue
+                    
     return productos
 
 def motor_platanitos(url, limite):
@@ -568,8 +572,7 @@ def motor_platanitos(url, limite):
                 
                 textos_precios = []
                 for el in t.find_all(['span', 'p', 'b', 'strong', 'del', 'small']):
-                    if el.find(['span', 'p', 'b', 'strong', 'del', 'small']): 
-                        continue
+                    if el.find(['span', 'p', 'b', 'strong', 'del', 'small']): continue
                     txt_el = el.text.strip() if el.text else ""
                     if 'S/' in txt_el and '%' not in txt_el and len(txt_el) < 20:
                         matches = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', txt_el)
