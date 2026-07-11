@@ -443,7 +443,7 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL de arquitectura experta: Extracción profunda sin errores de sintaxis"""
+    """Motor JBL de arquitectura experta: Extracción real de tarjetas Salesforce bloqueando URLs basura corporativas"""
     productos = []
     texto_html = ""
     status_code = 0
@@ -475,7 +475,7 @@ def motor_jbl(url, limite, headers_pass):
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- CAPA A: MINERÍA DE SCRIPTS DINÁMICOS CON SINTAXIS CORREGIDA ---
+        # --- CAPA A: MINERÍA DE DATA LAYER CON EXCLUSIÓN DE ENLACES FALSOS CORPORATIVOS ---
         def clean_and_parse_json(text):
             start_obj = text.find('{')
             end_obj = text.rfind('}')
@@ -498,48 +498,63 @@ def motor_jbl(url, limite, headers_pass):
                         try:
                             nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('productName') or '').strip().upper()
                             p_o = safe_float(prod_j.get('price') or prod_j.get('salePrice') or prod_j.get('value'))
+                            link_rel = str(prod_j.get('url') or prod_j.get('link') or '')
+                            link_final = urljoin("https://www.jbl.com.pe", link_rel)
+                            link_low = link_final.lower()
+                            
+                            # 🛡️ FILTRO ANTI-FALSOS REPORTES CORPORATIVOS
+                            if any(x in link_low for x in ["/pricing", "/cart", "/account", "/login", "/search", "support", "ayuda", "cookies", "terminos"]):
+                                continue
+                                
                             if nombre and 0 < p_o <= limite and not any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ"]):
-                                link_rel = str(prod_j.get('url') or prod_j.get('link') or '')
                                 productos.append({
                                     "nombre": f"JBL - {nombre}",
                                     "precio": p_o,
                                     "precio_regular": safe_float(prod_j.get('regularPrice') or prod_j.get('listPrice') or p_o),
-                                    "link": urljoin("https://www.jbl.com.pe", link_rel),
+                                    "link": link_final,
                                     "img": str(prod_j.get('image') or prod_j.get('imageUrl') or '')
                                 })
                         except Exception: pass
         
-        # --- CAPA B: EXTRACCIÓN ROBUSTA POR CONTENEDORES ---
+        # --- CAPA B: EXTRACCIÓN ROBUSTA POR CONTENEDORES (GRIDS DE SALESFORCE) ---
         tiles = soup.select('.product-tile, .product, .grid-item, .product-item, .product-card, [data-pid], .tile-body')
         if not tiles:
             tiles = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(tile|product|card|item|grid)', re.I))
             
         for t in tiles:
             try:
-                a_elements = t.find_all('a', href=True)
-                link_final, nombre = "", ""
-                for a in a_elements:
-                    href_low = a['href'].lower()
-                    if any(x in href_low for x in ['cart', 'wishlist', 'compare', 'login', 'javascript']):
-                        continue
-                    link_final = urljoin("https://www.jbl.com.pe", a['href'])
-                    txt = a.text.strip()
-                    if len(txt) > 4 and not any(x in txt.upper() for x in ["COMPRAR", "VER DETALLE", "AGREGAR", "AÑADIR", "VER CARRITO"]):
-                        nombre = txt.upper()
-                        break
-                        
-                if not nombre:
-                    tit_el = t.select_one('.pdp-link, .product-name, .title, h3, h4, a[class*="link"]')
-                    if tit_el: nombre = tit_el.text.strip().upper()
-                    
-                if len(nombre) < 4 or any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ", "VER CARRITO", "JBL PE", "INICIO", "MI CUENTA"]):
+                # Filtrar si el div es una fila o grilla superior contenedora general
+                if t.name == 'div' and ('product-grid' in str(t.get('class','')) or 'row' in str(t.get('class',''))):
                     continue
-                if not link_final:
-                    a_link = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
-                    if not a_link: continue
-                    link_final = urljoin("https://www.jbl.com.pe", a_link['href'])
+                    
+                # Extraemos el enlace nativo de Salesforce (.pdp-link es el estándar absoluto)
+                link_el = t.select_one('.pdp-link a, .product-name a, a.pdp-link') or t.find('a', href=True)
+                if not link_el or not link_el.get('href'): 
+                    continue
+                    
+                link_prod = urljoin("https://www.jbl.com.pe", link_el['href'])
+                link_low = link_prod.lower()
                 
+                # 🛡️ FILTRO ANTI-FALSOS REPORTES CORPORATIVOS EN TILES
+                if any(x in link_low for x in ["/pricing", "/cart", "/account", "/login", "/search", "support", "ayuda", "cookies", "terminos"]):
+                    continue
+                
+                nombre = link_el.text.strip()
+                if not nombre:
+                    tit_el = t.select_one('.product-name, .title, h3, h4')
+                    if tit_el: nombre = tit_el.text.strip()
+                nombre = nombre.upper()
+                
+                if len(nombre) < 4 or any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ", "VER CARRITO", "JBL PE", "INICIO", "MI CUENTA", "POLÍTICA"]):
+                    continue
+                
+                # Extracción de precio cruzando visual y microdatos ocultos Schema SEO de Salesforce
                 nums = []
+                sales_el = t.select_one('.sales .value, .price .sales, .sales')
+                if sales_el and sales_el.has_attr('content'):
+                    val = safe_float(sales_el['content'])
+                    if 0 < val <= limite: nums.append(val)
+                    
                 precios_texto = re.findall(r'(?:S/\.?\s*)(\b\d[\d\.,]*\b)', t.text)
                 for p in precios_texto:
                     val = limpiar_precio_pnp(p)
@@ -551,25 +566,24 @@ def motor_jbl(url, limite, headers_pass):
                             val = limpiar_precio_pnp(el[attr])
                             if 0 < val <= limite: nums.append(val)
                                 
-                if not nums:
-                    precios_raw = re.findall(r'\b\d{2,4}[\.,]\d{2}\b|\b\d{1,3}[\.,]\d{3}\b', t.text)
-                    for p in precios_raw:
-                        val = limpiar_precio_pnp(p)
-                        if 0 < val <= limite: nums.append(val)
-                            
                 if not nums: continue
                 nums = sorted(list(set(nums)))
                 p_o = nums[0]
                 p_r = nums[-1] if len(nums) > 1 else p_o
                 
-                img_el = t.find('img')
+                # Extracción precisa de la imagen de la barra/audífono (.tile-image es nativa de SFCC)
+                img_el = t.select_one('.tile-image, .product-image img, img')
                 img = ""
                 if img_el:
                     img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
                 if str(img).startswith('//'): img = 'https:' + str(img)
                 
                 productos.append({
-                    "nombre": f"JBL - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img).strip()
+                    "nombre": f"JBL - {nombre}", 
+                    "precio": p_o, 
+                    "precio_regular": max(p_r, p_o), 
+                    "link": link_prod, 
+                    "img": str(img).strip()
                 })
             except Exception: continue
                 
@@ -580,6 +594,8 @@ def motor_jbl(url, limite, headers_pass):
             vistos.add(p['link'])
             productos_unicos.append(p)
             
+    if productos_unicos: 
+        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos desde el catálogo real!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
