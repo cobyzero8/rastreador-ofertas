@@ -1,8 +1,6 @@
-streamlit
-requests
-beautifulsoup4
-supabase
-pandas
-plotly
 httpx
 h2
+beautifulsoup4
+requests
+supabase
+streamlit
