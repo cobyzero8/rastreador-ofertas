@@ -443,7 +443,7 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL de arquitectura experta: Extracción profunda adaptada a Salesforce Cloud mediante microdatos Schema SEO y Regex Difuso"""
+    """Motor JBL de arquitectura experta: Extracción profunda sin errores de sintaxis"""
     productos = []
     texto_html = ""
     status_code = 0
@@ -475,12 +475,12 @@ def motor_jbl(url, limite, headers_pass):
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- CAPA A: MINERÍA DE SCRIPTS DINÁMICOS CON CORRECCIÓN DE FRAGMENTOS ---
+        # --- CAPA A: MINERÍA DE SCRIPTS DINÁMICOS CON SINTAXIS CORREGIDA ---
         def clean_and_parse_json(text):
             start_obj = text.find('{')
             end_obj = text.rfind('}')
-            if start_obj != -1 and end_idx := end_obj:
-                try: return json.loads(text[start_obj:end_idx+1])
+            if start_obj != -1 and end_obj != -1:
+                try: return json.loads(text[start_obj:end_obj+1])
                 except Exception: pass
             start_arr = text.find('[')
             end_arr = text.rfind(']')
@@ -509,14 +509,13 @@ def motor_jbl(url, limite, headers_pass):
                                 })
                         except Exception: pass
         
-        # --- CAPA B: EXTRACCIÓN ROBUSTA POR CONTENEDORES (VISUAL + MICRODATOS) ---
+        # --- CAPA B: EXTRACCIÓN ROBUSTA POR CONTENEDORES ---
         tiles = soup.select('.product-tile, .product, .grid-item, .product-item, .product-card, [data-pid], .tile-body')
         if not tiles:
             tiles = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(tile|product|card|item|grid)', re.I))
             
         for t in tiles:
             try:
-                # 1. Recuperar el enlace y limpiar tags anidados falsos
                 a_elements = t.find_all('a', href=True)
                 link_final, nombre = "", ""
                 for a in a_elements:
@@ -540,7 +539,6 @@ def motor_jbl(url, limite, headers_pass):
                     if not a_link: continue
                     link_final = urljoin("https://www.jbl.com.pe", a_link['href'])
                 
-                # 2. Minar precios cruzando texto visible con atributos estructurados de Salesforce SEO
                 nums = []
                 precios_texto = re.findall(r'(?:S/\.?\s*)(\b\d[\d\.,]*\b)', t.text)
                 for p in precios_texto:
@@ -582,8 +580,6 @@ def motor_jbl(url, limite, headers_pass):
             vistos.add(p['link'])
             productos_unicos.append(p)
             
-    if productos_unicos: 
-        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
