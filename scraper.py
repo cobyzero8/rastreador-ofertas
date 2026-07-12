@@ -449,133 +449,60 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA: Telemetría Absoluta para evitar fallos silenciosos"""
+    """Motor CARSA: Extracción de emergencia. Ignora el límite para confirmar si extrae la data."""
     productos = []
     
-    # 1. Log inicial para confirmar que el router sí envió la URL aquí
-    safe_log(f"📡 [Diag CARSA] Iniciando escaneo en: {url}", "info")
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+    
+    resp = requests.get(url, headers=headers, timeout=15, verify=False)
+    html_text = resp.text
+    
+    # Búsqueda manual sin BeautifulSoup para evitar líos
+    start_marker = '__STATE__ = '
+    start_idx = html_text.find(start_marker)
+    if start_idx == -1: return []
+    
+    json_str = html_text[start_idx + len(start_marker):]
+    end_idx = json_str.find(';</script>')
+    if end_idx == -1: return []
     
     try:
-        headers = {
-            "User-Agent": random.choice(LISTA_USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9"
-        }
-        
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        
-        # 2. Log vital: Ver qué responde el servidor realmente
-        safe_log(f"📡 [Diag CARSA] Respuesta del servidor: Código {resp.status_code} | Peso: {len(resp.text)} letras", "info")
-        
-        if resp.status_code != 200: 
-            safe_log(f"🛑 [Diag CARSA] Bloqueo detectado. El servidor denegó el acceso (Error {resp.status_code}).", "error")
-            return []
+        data = json.loads(json_str[:end_idx])
+        for key, val in data.items():
+            if not isinstance(val, dict): continue
             
-        html_text = resp.text
-        estado_json = None
-        
-        # 3. BÚSQUEDA DEL JSON __STATE__
-        idx_var = html_text.find('__STATE__')
-        if idx_var != -1:
-            safe_log("📡 [Diag CARSA] Marca __STATE__ detectada en el código. Extrayendo bloque...", "info")
-            
-            # Método A: template data-varname
-            if 'data-varname="__STATE__"' in html_text:
-                idx_script = html_text.find('<script>', idx_var)
-                idx_script_end = html_text.find('</script>', idx_script)
-                if idx_script != -1 and idx_script_end != -1:
-                    json_str = html_text[idx_script+8:idx_script_end].strip()
-                    try:
-                        estado_json = json.loads(json_str)
-                        safe_log(f"📡 [Diag CARSA] ¡JSON decodificado exitosamente! (Método A)", "success")
-                    except Exception as e:
-                        safe_log(f"🛑 [Diag CARSA] Falla decodificando Método A: {e}", "error")
-            
-            # Método B: variable global (Si el A falla)
-            if not estado_json:
-                marcador = '__STATE__ = '
-                idx_m = html_text.find(marcador)
-                if idx_m != -1:
-                    idx_end = html_text.find('</script>', idx_m)
-                    json_str = html_text[idx_m + len(marcador):idx_end].strip()
-                    if json_str.endswith(';'): json_str = json_str[:-1]
-                    try:
-                        estado_json = json.loads(json_str)
-                        safe_log(f"📡 [Diag CARSA] ¡JSON decodificado exitosamente! (Método B)", "success")
-                    except Exception as e:
-                        safe_log(f"🛑 [Diag CARSA] Falla decodificando Método B: {e}", "error")
-        else:
-            safe_log("🛑 [Diag CARSA] No existe __STATE__ en este HTML. La estructura vino vacía.", "error")
-
-        # 4. ENSAMBLAJE DE DATOS
-        if estado_json:
-            productos_memoria = {}
-            for key, val in estado_json.items():
-                if not isinstance(val, dict): continue
+            # Buscamos productos que tengan nombre y precio
+            if 'productName' in val:
+                nombre = val['productName']
+                link = val.get('linkText', 'producto')
                 
-                # Rescatar Nombres
-                if ('Product:' in key or val.get('__typename') == 'Product') and val.get('productName'):
-                    prod_id = val.get('productId') or key.split('Product:')[-1].split('.')[0]
-                    if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                    productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
-                    productos_memoria[prod_id]['link'] = val.get('linkText', '')
+                # Buscamos su precio asociado en el diccionario buscando Keys que contengan el ID
+                prod_id = key.split(':')[-1]
+                precio = 0.0
+                for k2, v2 in data.items():
+                    if f"{prod_id}.commertialOffer" in k2 and 'Price' in v2:
+                        precio = float(v2.get('Price', 0))
+                        break
+                
+                # DIAGNÓSTICO: Si encontramos el nombre, lo metemos a la lista aunque supere el límite
+                # para ver si al menos el motor está capturando la info.
+                if nombre:
+                    productos.append({
+                        "nombre": f"CARSA - {nombre.upper()} (S/.{precio})",
+                        "precio": precio,
+                        "precio_regular": precio,
+                        "link": f"https://www.carsa.pe/{link}/p",
+                        "img": ""
+                    })
                     
-                # Rescatar Precios
-                elif 'commertialOffer' in key.lower() or val.get('__typename') == 'CommertialOffer':
-                    if 'Price' in val or 'spotPrice' in val:
-                        partes = key.split('Product:')
-                        if len(partes) > 1:
-                            prod_id = partes[1].split('.')[0]
-                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                            p_o = float(val.get('Price') or val.get('spotPrice') or 0)
-                            if p_o > 0:
-                                productos_memoria[prod_id]['precio'] = p_o
-                                productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
-                                
-                # Rescatar Imágenes HD
-                elif 'imageUrl' in key or 'imageUrl' in val:
-                    partes = key.split('Product:')
-                    if len(partes) > 1:
-                        prod_id = partes[1].split('.')[0]
-                        if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                        img = val.get('imageUrl', '')
-                        if img: productos_memoria[prod_id]['img'] = img
-
-            pre_count = len(productos_memoria)
-            count_limit = 0
-            
-            # 5. APLICAR FILTRO DE PRECIO MAXIMO
-            for prod_id, info in productos_memoria.items():
-                if info.get('nombre') and info.get('precio', 0) > 0:
-                    p_o = info['precio']
-                    if 0 < p_o <= limite:
-                        count_limit += 1
-                        link_rel = info.get('link', '')
-                        link_final = urljoin("https://www.carsa.pe", f"/{link_rel}/p" if link_rel else url)
-                        img = info.get('img', '')
-                        if img.startswith('//'): img = 'https:' + img
-                        
-                        productos.append({
-                            "nombre": f"CARSA - {info['nombre']}",
-                            "precio": p_o,
-                            "precio_regular": max(info.get('precio_regular', p_o), p_o),
-                            "link": link_final,
-                            "img": img
-                        })
-            
-            safe_log(f"📡 [Diag CARSA] Modelos encontrados: {pre_count}. Modelos que cumplen límite (< S/.{limite}): {count_limit}", "info")
-
     except Exception as e:
-        safe_log(f"🛑 [Diag CARSA] Excepción fatal en el código: {e}", "error")
-
-    vistos = set()
-    productos_unicos = []
-    for p in productos:
-        if p['link'] not in vistos:
-            vistos.add(p['link'])
-            productos_unicos.append(p)
-            
-    return productos_unicos
+        safe_log(f"Error en extracción total: {e}", "error")
+        
+    return productos
     
 def motor_tradicional_general(url, limite, headers):
     productos = []
