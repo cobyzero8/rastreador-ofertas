@@ -449,7 +449,7 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_hiraoka(url, limite):
-    """Motor HIRAOKA Definitivo: Extracción limpia para Magento 2 / Infracommerce"""
+    """Motor HIRAOKA Definitivo: Extractor especializado para Magento 2 (Infracommerce)"""
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -458,30 +458,35 @@ def motor_hiraoka(url, limite):
     }
     
     try:
+        safe_log(f"🚀 [Diag HIRAOKA] Conectando a los servidores de Magento 2...", "info")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: return []
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Diag HIRAOKA] Error de respuesta: Código {resp.status_code}", "error")
+            return []
         
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # En Magento 2, las cajas de productos usan las clases '.product-item' o '.product-item-info'
+        # Selectores nativos de la arquitectura Magento 2 / Infracommerce
         tarjetas = soup.select('.product-item') or soup.select('.product-item-info') or soup.select('.item.product')
         
+        if not tarjetas:
+            safe_log("🛑 [Diag HIRAOKA] Estructura vacía. Revisa si la URL de Supabase es correcta.", "error")
+            return []
+            
         for t in tarjetas:
             try:
-                # 1. Extraer Título / Nombre
-                tit_el = t.select_one('a.product-item-link') or t.select_one('.product-item-name a') or t.select_one('.product-name a')
+                # 1. Extraer Nombre y Enlace Ficha
+                tit_el = t.select_one('.product-item-link') or t.select_one('.product-item-name a') or t.select_one('.product-name a')
                 if not tit_el: continue
                 nombre = tit_el.text.strip().upper()
-                
-                # 2. Extraer Enlace Real Directo
                 link_final = urljoin("https://hiraoka.com.pe", tit_el['href'])
                 
-                # 3. Extraer Precios utilizando los identificadores de Magento 2
+                # 2. Extraer Precios (Magento indexa el precio final en data-price-type)
                 o_el = t.select_one('[data-price-type="finalPrice"] .price') or t.select_one('.special-price .price') or t.select_one('.price-box .price')
                 r_el = t.select_one('[data-price-type="oldPrice"] .price') or t.select_one('.old-price .price')
                 
                 if not o_el:
-                    # Fallback por texto si cambian las clases dinámicamente
+                    # Mecanismo de respaldo por texto si el diseño cambia
                     textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                     if textos_precios:
                         nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
@@ -493,7 +498,7 @@ def motor_hiraoka(url, limite):
                     p_o = limpiar_precio_pnp(o_el.text)
                     p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
                 
-                # 4. Validar límite de precios e indexar imágenes reales
+                # 3. Filtrar por límite e indexar la imagen real (.product-image-photo es estándar de Magento)
                 if 0 < p_o <= limite:
                     img_el = t.select_one('.product-image-photo') or t.find('img')
                     img_url = ""
@@ -511,8 +516,10 @@ def motor_hiraoka(url, limite):
             except Exception:
                 continue
                 
+        safe_log(f"✅ [Diag HIRAOKA] Escaneo exitoso. Encontrados {len(tarjetas)} productos en catálogo.", "success")
+                
     except Exception as e:
-        print(f"Error técnico en Hiraoka: {e}")
+        safe_log(f"🛑 [Diag HIRAOKA] Error crítico en el proceso: {e}", "error")
         
     return productos
         
