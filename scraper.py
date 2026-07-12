@@ -449,19 +449,18 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor aislado CARSA: Blindado con Proxies en cascada y Extracción Híbrida VTEX"""
+    """Motor aislado CARSA: Blindado contra Segmentation Faults (Extracción ultra-ligera de VTEX)"""
     productos = []
     texto_html = ""
     status_code = 0
     motor_usado = ""
     
-    # 1. Red Proxy Anti-Bloqueos para evadir firewalls (Igual que en JBL)
+    # 1. Red Proxy Anti-Bloqueos
     cadena_proxies = [
         {"name": "CorsProxy Network (Nodo Directo)", "url": f"https://corsproxy.io/?{quote(url)}", "tipo": "html"},
         {"name": "CodeTabs Grid (Nodo Secundario)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"}
     ]
     
-    # Añadimos un intento directo camuflado por si no hay firewall activo
     headers = {
         "User-Agent": random.choice(LISTA_USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -476,7 +475,6 @@ def motor_carsa(url, limite):
             motor_usado = "Conexión Directa"
     except Exception: pass
     
-    # Si la conexión directa falla o devuelve vacío, disparamos los proxies
     if not texto_html or status_code != 200:
         for nodo in cadena_proxies:
             try:
@@ -489,48 +487,69 @@ def motor_carsa(url, limite):
                         break
             except Exception: continue
 
-    safe_log(f"📊 [Diag CARSA] Estado Servidor: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
+    safe_log(f"📊 [Diag CARSA] Estado Servidor: {status_code} | Tamaño HTML: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
 
     if texto_html and len(texto_html) > 5000:
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        # --- ESTRATEGIA A: HACK VTEX __STATE__ (Memoria Oculta) ---
+        # --- ESTRATEGIA A: HACK VTEX __STATE__ (Súper optimizado para evitar Segfault) ---
         estado_json = None
-        for t_state in soup.find_all(['template', 'script']):
-            if t_state.name == 'template' and (t_state.get('data-varname') == '__STATE__' or t_state.get('id') == '__STATE__'):
-                try: estado_json = json.loads(t_state.text)
-                except: pass
-            elif t_state.name == 'script' and t_state.text and '__STATE__' in t_state.text:
-                match = re.search(r'__STATE__\s*=\s*({.*?});', t_state.text, re.DOTALL)
-                if match:
-                    try: estado_json = json.loads(match.group(1))
-                    except: pass
+        
+        # Método rápido: buscar el template directo
+        template_state = soup.find('template', attrs={'data-varname': '__STATE__'})
+        if template_state:
+            try: estado_json = json.loads(template_state.text)
+            except: pass
+            
+        # Método manual ultra-ligero sin REGEX pesado
+        if not estado_json:
+            for s in soup.find_all('script'):
+                txt = s.text
+                if txt and '__STATE__' in txt:
+                    # Usamos .find() en vez de re.search para no reventar la memoria
+                    start_marker = '__STATE__ = '
+                    start_idx = txt.find(start_marker)
+                    if start_idx != -1:
+                        json_str = txt[start_idx + len(start_marker):]
+                        end_idx = json_str.rfind('}')
+                        if end_idx != -1:
+                            clean_json = json_str[:end_idx+1]
+                            try:
+                                estado_json = json.loads(clean_json)
+                                break
+                            except: pass
                     
         if estado_json:
             productos_memoria = {}
             for key, val in estado_json.items():
                 if not isinstance(val, dict): continue
+                
                 if key.startswith('Product:') and val.get('productName'):
                     prod_id = key.split(':')[-1]
                     if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
                     productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
                     productos_memoria[prod_id]['link'] = val.get('linkText', '')
+                    
                 elif '.commertialOffer' in key and 'Price' in val:
-                    match_id = re.search(r'Product:([a-zA-Z0-9\-]+)', key)
-                    if match_id:
-                        prod_id = match_id.group(1)
-                        if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                        p_o = float(val.get('Price', 0))
-                        if p_o > 0:
-                            productos_memoria[prod_id]['precio'] = p_o
-                            productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
+                    # Extracción rápida de ID sin Regex
+                    if 'Product:' in key:
+                        partes = key.split('Product:')
+                        if len(partes) > 1:
+                            prod_id = partes[1].split('.')[0]
+                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
+                            p_o = float(val.get('Price', 0))
+                            if p_o > 0:
+                                productos_memoria[prod_id]['precio'] = p_o
+                                productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
+                                
                 elif '.imageUrl' in key or ('imageUrl' in val) or ('.images.0' in key):
-                    match_id = re.search(r'Product:([a-zA-Z0-9\-]+)', key)
-                    if match_id:
-                        prod_id = match_id.group(1)
-                        if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                        img = val.get('imageUrl', '')
-                        if img: productos_memoria[prod_id]['img'] = img
+                    if 'Product:' in key:
+                        partes = key.split('Product:')
+                        if len(partes) > 1:
+                            prod_id = partes[1].split('.')[0]
+                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
+                            img = val.get('imageUrl', '')
+                            if img: productos_memoria[prod_id]['img'] = img
 
             for prod_id, info in productos_memoria.items():
                 if info.get('nombre') and info.get('precio', 0) > 0:
@@ -539,12 +558,9 @@ def motor_carsa(url, limite):
                         link_final = urljoin("https://www.carsa.pe", f"/{info['link']}/p" if info.get('link') else url)
                         productos.append({"nombre": f"CARSA - {info['nombre']}", "precio": p_o, "precio_regular": max(info.get('precio_regular', p_o), p_o), "link": link_final, "img": info.get('img', '')})
 
-        # --- ESTRATEGIA B: EXTRACCIÓN VISUAL (Fallback de Tarjetas) ---
+        # --- ESTRATEGIA B: FALLBACK VISUAL ---
         if not productos:
             tarjetas = soup.find_all(['div', 'article', 'li', 'section'], class_=re.compile(r'(product-summary|product-card|vtex-product|item-card|vitrine|grid-item|galleryItem)', re.I))
-            if not tarjetas:
-                tarjetas = soup.select('[class*="galleryItem"], [class*="productSummary"]')
-                
             for t in tarjetas:
                 try:
                     a_el = t.find('a', href=True)
@@ -582,7 +598,7 @@ def motor_carsa(url, limite):
             productos_unicos.append(p)
             
     if productos_unicos:
-        safe_log(f"🎯 Motor CARSA: ¡Se superó el bloqueo! Se indexaron {len(productos_unicos)} productos con éxito.", "success")
+        safe_log(f"🎯 Motor CARSA: ¡Operación de memoria sin colapso! {len(productos_unicos)} productos indexados.", "success")
         
     return productos_unicos
     
