@@ -449,7 +449,7 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA definitivo: Extracción de memoria plana VTEX (Sin BeautifulSoup para evitar Segfaults)"""
+    """Motor CARSA: Extracción Quirúrgica de VTEX IO con Telemetría Integrada"""
     productos = []
     try:
         headers = {
@@ -458,7 +458,6 @@ def motor_carsa(url, limite):
             "Accept-Language": "es-PE,es;q=0.9"
         }
         
-        # 1. Conexión directa pura (Ya comprobamos en tu test forense que SÍ nos deja pasar)
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
         if resp.status_code != 200: 
             return []
@@ -466,53 +465,52 @@ def motor_carsa(url, limite):
         html_text = resp.text
         estado_json = None
         
-        # 2. CIRUGÍA DE TEXTO PLANO (Cero uso de BeautifulSoup, cero problemas de memoria)
-        # Buscamos el inicio exacto del JSON en los 2MB de texto
-        marcador_1 = 'template data-type="json" data-varname="__STATE__"><script>'
-        marcador_2 = '__STATE__ = '
-        
-        if marcador_1 in html_text:
-            start_idx = html_text.find(marcador_1) + len(marcador_1)
-            end_idx = html_text.find('</script>', start_idx)
-            try: 
-                estado_json = json.loads(html_text[start_idx:end_idx])
-            except: pass
-        elif marcador_2 in html_text:
-            start_idx = html_text.find(marcador_2) + len(marcador_2)
-            end_idx = html_text.find('</script>', start_idx)
-            clean_str = html_text[start_idx:end_idx].strip()
-            if clean_str.endswith(';'): 
-                clean_str = clean_str[:-1]
-            try: 
-                estado_json = json.loads(clean_str)
-            except: pass
+        # 1. BÚSQUEDA DEL JSON __STATE__ (A prueba de balas)
+        idx_var = html_text.find('data-varname="__STATE__"')
+        if idx_var != -1:
+            idx_script = html_text.find('<script>', idx_var)
+            idx_script_end = html_text.find('</script>', idx_script)
+            if idx_script != -1 and idx_script_end != -1:
+                json_str = html_text[idx_script+8:idx_script_end].strip()
+                try:
+                    import base64
+                    # VTEX a veces codifica el JSON en Base64 por seguridad
+                    if not json_str.startswith('{') and not json_str.startswith('['):
+                        json_str = base64.b64decode(json_str).decode('utf-8')
+                    estado_json = json.loads(json_str)
+                    safe_log(f"📡 [Diag CARSA] ¡JSON de inventario encontrado y decodificado! ({len(estado_json)} bloques de datos)", "info")
+                except Exception as e:
+                    safe_log(f"📡 [Diag CARSA] Error decodificando JSON: {e}", "error")
+        else:
+            safe_log(f"📡 [Diag CARSA] No se detectó la etiqueta base de VTEX. Activando Plan B...", "warning")
 
-        # 3. Ensamblaje de los productos desde el diccionario extraído
+        # 2. ENSAMBLAJE DE MEMORIA
         if estado_json:
             productos_memoria = {}
             for key, val in estado_json.items():
                 if not isinstance(val, dict): continue
                 
-                # Nombres
-                if key.startswith('Product:') and val.get('productName'):
-                    prod_id = key.split('Product:')[-1]
+                # Rescatar Nombres
+                if ('Product:' in key or val.get('__typename') == 'Product') and val.get('productName'):
+                    prod_id = val.get('productId') or key.split('Product:')[-1].split('.')[0]
                     if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
                     productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
                     productos_memoria[prod_id]['link'] = val.get('linkText', '')
                     
-                # Precios (Extracción rápida por split)
-                elif '.commertialOffer' in key and 'Price' in val:
-                    partes = key.split('Product:')
-                    if len(partes) > 1:
-                        prod_id = partes[1].split('.')[0]
-                        if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                        p_o = float(val.get('Price', 0))
-                        if p_o > 0:
-                            productos_memoria[prod_id]['precio'] = p_o
-                            productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
-                            
-                # Imágenes HD
-                elif ('.imageUrl' in key or 'imageUrl' in val or '.images.0' in key):
+                # Rescatar Precios
+                elif 'commertialOffer' in key.lower() or val.get('__typename') == 'CommertialOffer':
+                    if 'Price' in val or 'spotPrice' in val:
+                        partes = key.split('Product:')
+                        if len(partes) > 1:
+                            prod_id = partes[1].split('.')[0]
+                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
+                            p_o = float(val.get('Price') or val.get('spotPrice') or 0)
+                            if p_o > 0:
+                                productos_memoria[prod_id]['precio'] = p_o
+                                productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
+                                
+                # Rescatar Imágenes HD
+                elif 'imageUrl' in key or 'imageUrl' in val:
                     partes = key.split('Product:')
                     if len(partes) > 1:
                         prod_id = partes[1].split('.')[0]
@@ -520,17 +518,18 @@ def motor_carsa(url, limite):
                         img = val.get('imageUrl', '')
                         if img: productos_memoria[prod_id]['img'] = img
 
-            # Guardar en la lista final
+            # 3. Aplicar Filtro de Precios del Usuario
+            pre_count = len(productos_memoria)
+            count_limit = 0
             for prod_id, info in productos_memoria.items():
                 if info.get('nombre') and info.get('precio', 0) > 0:
                     p_o = info['precio']
                     if 0 < p_o <= limite:
+                        count_limit += 1
                         link_rel = info.get('link', '')
                         link_final = urljoin("https://www.carsa.pe", f"/{link_rel}/p" if link_rel else url)
-                        
                         img = info.get('img', '')
                         if img.startswith('//'): img = 'https:' + img
-                        elif img.startswith('http://'): img = img.replace('http://', 'https://')
                         
                         productos.append({
                             "nombre": f"CARSA - {info['nombre']}",
@@ -539,9 +538,49 @@ def motor_carsa(url, limite):
                             "link": link_final,
                             "img": img
                         })
+            
+            safe_log(f"📡 [Diag CARSA] Modelos de Audífonos detectados en código: {pre_count}. Modelos que cumplen tu límite (< S/.{limite}): {count_limit}", "info")
+
+        # 4. FALLBACK DE EXTRACCIÓN HTML SEGURA (En caso de que el JSON falle)
+        if not productos:
+            safe_log(f"📡 [Diag CARSA] Pasando a escáner visual por recortes de HTML...", "warning")
+            # Cortamos solo la galería para no saturar la memoria y evitar Segfaults
+            idx_gal = html_text.find('gallery-layout')
+            if idx_gal == -1: idx_gal = html_text.find('vtex-search-result')
+            
+            if idx_gal != -1:
+                chunk = html_text[max(0, idx_gal - 2000) : min(len(html_text), idx_gal + 150000)]
+                soup = BeautifulSoup(chunk, 'html.parser')
+                tarjetas = soup.find_all(['div', 'section', 'article'], class_=re.compile(r'(product-summary|galleryItem|product-card)', re.I))
+                for t in tarjetas:
+                    try:
+                        a_el = t.find('a', href=True)
+                        if not a_el: continue
+                        link_final = urljoin("https://www.carsa.pe", a_el['href'])
+                        if '/p' not in link_final: continue
                         
+                        tit_el = t.find(['h2', 'h3', 'span'], class_=re.compile(r'(name|title|brand)', re.I))
+                        nombre = tit_el.text.strip().upper() if tit_el else a_el.text.strip().upper()
+                        if len(nombre) < 4: continue
+                        
+                        precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                        if not precios: continue
+                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios if limpiar_precio_pnp(p) > 0])))
+                        if not nums: continue
+                        p_o = nums[0]
+                        
+                        if 0 < p_o <= limite:
+                            img = ""
+                            for img_el in t.find_all('img'):
+                                src = img_el.get('src') or ""
+                                if src and 'data:image' not in str(src).lower():
+                                    img = src
+                                    break
+                            productos.append({"nombre": f"CARSA - {nombre}", "precio": p_o, "precio_regular": p_o, "link": link_final, "img": img})
+                    except Exception: continue
+
     except Exception as e:
-        safe_log(f"Aviso en motor CARSA: {e}", "caption")
+        safe_log(f"Aviso en motor CARSA: {e}", "error")
 
     vistos = set()
     productos_unicos = []
@@ -550,9 +589,6 @@ def motor_carsa(url, limite):
             vistos.add(p['link'])
             productos_unicos.append(p)
             
-    if productos_unicos:
-        safe_log(f"🎯 Motor CARSA: ¡Extracción limpia de memoria ({len(productos_unicos)} productos)!", "success")
-        
     return productos_unicos
     
 def motor_tradicional_general(url, limite, headers):
