@@ -449,41 +449,111 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor Forense CARSA: Diseñado exclusivamente para revelar qué nos está bloqueando"""
-    import streamlit as st
-    
-    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN CARSA: {url}")
-    
-    headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9"
-    }
-
-    # --- PRUEBA 1: CONEXIÓN DIRECTA ---
-    st.write("📡 Prueba 1: Intentando conexión directa...")
+    """Motor CARSA definitivo: Extracción de memoria plana VTEX (Sin BeautifulSoup para evitar Segfaults)"""
+    productos = []
     try:
-        resp_dir = requests.get(url, headers=headers, timeout=10, verify=False)
-        st.code(f"Código de Estado: {resp_dir.status_code}\nLongitud HTML: {len(resp_dir.text)} caracteres", language="text")
-        with st.expander("🔍 Ver código fuente crudo (Directo)"):
-            st.code(resp_dir.text[:1500], language="html") # Mostramos solo las primeras 1500 letras
-    except Exception as e:
-        st.error(f"Fallo conexión directa: {e}")
+        headers = {
+            "User-Agent": random.choice(LISTA_USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-PE,es;q=0.9"
+        }
+        
+        # 1. Conexión directa pura (Ya comprobamos en tu test forense que SÍ nos deja pasar)
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        if resp.status_code != 200: 
+            return []
+            
+        html_text = resp.text
+        estado_json = None
+        
+        # 2. CIRUGÍA DE TEXTO PLANO (Cero uso de BeautifulSoup, cero problemas de memoria)
+        # Buscamos el inicio exacto del JSON en los 2MB de texto
+        marcador_1 = 'template data-type="json" data-varname="__STATE__"><script>'
+        marcador_2 = '__STATE__ = '
+        
+        if marcador_1 in html_text:
+            start_idx = html_text.find(marcador_1) + len(marcador_1)
+            end_idx = html_text.find('</script>', start_idx)
+            try: 
+                estado_json = json.loads(html_text[start_idx:end_idx])
+            except: pass
+        elif marcador_2 in html_text:
+            start_idx = html_text.find(marcador_2) + len(marcador_2)
+            end_idx = html_text.find('</script>', start_idx)
+            clean_str = html_text[start_idx:end_idx].strip()
+            if clean_str.endswith(';'): 
+                clean_str = clean_str[:-1]
+            try: 
+                estado_json = json.loads(clean_str)
+            except: pass
 
-    # --- PRUEBA 2: CONEXIÓN VÍA PROXY ---
-    st.write("📡 Prueba 2: Intentando conexión vía CorsProxy...")
-    proxy_url = f"https://corsproxy.io/?{quote(url)}"
-    try:
-        resp_proxy = requests.get(proxy_url, timeout=15)
-        st.code(f"Código de Estado: {resp_proxy.status_code}\nLongitud HTML: {len(resp_proxy.text)} caracteres", language="text")
-        with st.expander("🔍 Ver código fuente crudo (Proxy)"):
-            st.code(resp_proxy.text[:1500], language="html")
-    except Exception as e:
-        st.error(f"Fallo conexión proxy: {e}")
+        # 3. Ensamblaje de los productos desde el diccionario extraído
+        if estado_json:
+            productos_memoria = {}
+            for key, val in estado_json.items():
+                if not isinstance(val, dict): continue
+                
+                # Nombres
+                if key.startswith('Product:') and val.get('productName'):
+                    prod_id = key.split('Product:')[-1]
+                    if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
+                    productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
+                    productos_memoria[prod_id]['link'] = val.get('linkText', '')
+                    
+                # Precios (Extracción rápida por split)
+                elif '.commertialOffer' in key and 'Price' in val:
+                    partes = key.split('Product:')
+                    if len(partes) > 1:
+                        prod_id = partes[1].split('.')[0]
+                        if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
+                        p_o = float(val.get('Price', 0))
+                        if p_o > 0:
+                            productos_memoria[prod_id]['precio'] = p_o
+                            productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
+                            
+                # Imágenes HD
+                elif ('.imageUrl' in key or 'imageUrl' in val or '.images.0' in key):
+                    partes = key.split('Product:')
+                    if len(partes) > 1:
+                        prod_id = partes[1].split('.')[0]
+                        if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
+                        img = val.get('imageUrl', '')
+                        if img: productos_memoria[prod_id]['img'] = img
 
-    st.error("🛑 DIAGNÓSTICO TERMINADO. Copia el texto que sale dentro de los expansores 'Ver código fuente crudo' y envíamelo. Así sabremos exactamente con qué estamos lidiando.")
-    
-    return [] # Devolvemos vacío para no interrumpir el resto de tiendas
+            # Guardar en la lista final
+            for prod_id, info in productos_memoria.items():
+                if info.get('nombre') and info.get('precio', 0) > 0:
+                    p_o = info['precio']
+                    if 0 < p_o <= limite:
+                        link_rel = info.get('link', '')
+                        link_final = urljoin("https://www.carsa.pe", f"/{link_rel}/p" if link_rel else url)
+                        
+                        img = info.get('img', '')
+                        if img.startswith('//'): img = 'https:' + img
+                        elif img.startswith('http://'): img = img.replace('http://', 'https://')
+                        
+                        productos.append({
+                            "nombre": f"CARSA - {info['nombre']}",
+                            "precio": p_o,
+                            "precio_regular": max(info.get('precio_regular', p_o), p_o),
+                            "link": link_final,
+                            "img": img
+                        })
+                        
+    except Exception as e:
+        safe_log(f"Aviso en motor CARSA: {e}", "caption")
+
+    vistos = set()
+    productos_unicos = []
+    for p in productos:
+        if p['link'] not in vistos:
+            vistos.add(p['link'])
+            productos_unicos.append(p)
+            
+    if productos_unicos:
+        safe_log(f"🎯 Motor CARSA: ¡Extracción limpia de memoria ({len(productos_unicos)} productos)!", "success")
+        
+    return productos_unicos
     
 def motor_tradicional_general(url, limite, headers):
     productos = []
