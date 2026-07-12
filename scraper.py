@@ -449,54 +449,46 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_hiraoka(url, limite):
-    """Motor HIRAOKA: Extracción de alta precisión para VTEX clásico"""
-    productos = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
-    }
+    """Motor Forense HIRAOKA: Radiografía de la estructura real"""
+    import streamlit as st
+    import requests
     
+    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN HIRAOKA: {url}")
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+
     try:
+        st.write("📡 Intentando conexión directa con Hiraoka...")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: return []
         
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        # Hiraoka usa tarjetas con clase 'product-item' o 'vtex-product-summary'
-        tarjetas = soup.select('.vtex-product-summary-2-x-container')
+        st.code(f"Código de Estado: {resp.status_code}\nLongitud HTML: {len(resp.text)} caracteres", language="text")
         
-        for t in tarjetas:
-            try:
-                # Nombre
-                nombre_el = t.select_one('.vtex-product-summary-2-x-productBrand')
-                if not nombre_el: continue
-                nombre = nombre_el.text.strip().upper()
-                
-                # Precio
-                precio_el = t.select_one('.vtex-product-price-1-x-currencyInteger')
-                if not precio_el: continue
-                precio = float(precio_el.text.replace(',', '').replace('S/', '').strip())
-                
-                # Link
-                link_el = t.select_one('a')
-                link = urljoin("https://hiraoka.com.pe", link_el['href'])
-                
-                # Imagen
-                img_el = t.select_one('img')
-                img = img_el['src'] if img_el else ""
-                
-                if 0 < precio <= limite:
-                    productos.append({
-                        "nombre": f"HIRAOKA - {nombre}",
-                        "precio": precio,
-                        "precio_regular": precio,
-                        "link": link,
-                        "img": img
-                    })
-            except: continue
+        html_text = resp.text
+        
+        # Buscamos un recorte de código justo donde debería estar un producto
+        idx = html_text.lower().find('televisor')
+        if idx == -1: 
+            idx = html_text.lower().find('price')
             
-    except Exception as e:
-        safe_log(f"Error Hiraoka: {e}", "error")
+        start = max(0, idx - 500)
+        end = min(len(html_text), idx + 2500)
         
-    return productos
+        with st.expander("🔍 Ver fragmento clave del código fuente (Donde están los productos)"):
+            st.code(html_text[start:end], language="html")
+            
+        with st.expander("🔍 Ver inicio del código fuente (Scripts globales)"):
+            st.code(html_text[:2000], language="html")
+
+        st.error("🛑 DIAGNÓSTICO HIRAOKA TERMINADO. Por favor, abre los expansores, copia el texto que sale ahí y envíamelo. Con eso armaremos el motor definitivo.")
+        
+    except Exception as e:
+        st.error(f"🛑 Fallo en la conexión con Hiraoka: {e}")
+
+    return [] # Retornamos vacío para no romper el radar
         
 
 def motor_carsa(url, limite):
