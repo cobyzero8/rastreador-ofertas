@@ -449,158 +449,41 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor aislado CARSA: Blindado contra Segmentation Faults (Extracción ultra-ligera de VTEX)"""
-    productos = []
-    texto_html = ""
-    status_code = 0
-    motor_usado = ""
+    """Motor Forense CARSA: Diseñado exclusivamente para revelar qué nos está bloqueando"""
+    import streamlit as st
     
-    # 1. Red Proxy Anti-Bloqueos
-    cadena_proxies = [
-        {"name": "CorsProxy Network (Nodo Directo)", "url": f"https://corsproxy.io/?{quote(url)}", "tipo": "html"},
-        {"name": "CodeTabs Grid (Nodo Secundario)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"}
-    ]
+    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN CARSA: {url}")
     
     headers = {
         "User-Agent": random.choice(LISTA_USER_AGENTS),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
-    
+
+    # --- PRUEBA 1: CONEXIÓN DIRECTA ---
+    st.write("📡 Prueba 1: Intentando conexión directa...")
     try:
         resp_dir = requests.get(url, headers=headers, timeout=10, verify=False)
-        if resp_dir.status_code == 200 and len(resp_dir.text) > 5000:
-            texto_html = resp_dir.text
-            status_code = 200
-            motor_usado = "Conexión Directa"
-    except Exception: pass
+        st.code(f"Código de Estado: {resp_dir.status_code}\nLongitud HTML: {len(resp_dir.text)} caracteres", language="text")
+        with st.expander("🔍 Ver código fuente crudo (Directo)"):
+            st.code(resp_dir.text[:1500], language="html") # Mostramos solo las primeras 1500 letras
+    except Exception as e:
+        st.error(f"Fallo conexión directa: {e}")
+
+    # --- PRUEBA 2: CONEXIÓN VÍA PROXY ---
+    st.write("📡 Prueba 2: Intentando conexión vía CorsProxy...")
+    proxy_url = f"https://corsproxy.io/?{quote(url)}"
+    try:
+        resp_proxy = requests.get(proxy_url, timeout=15)
+        st.code(f"Código de Estado: {resp_proxy.status_code}\nLongitud HTML: {len(resp_proxy.text)} caracteres", language="text")
+        with st.expander("🔍 Ver código fuente crudo (Proxy)"):
+            st.code(resp_proxy.text[:1500], language="html")
+    except Exception as e:
+        st.error(f"Fallo conexión proxy: {e}")
+
+    st.error("🛑 DIAGNÓSTICO TERMINADO. Copia el texto que sale dentro de los expansores 'Ver código fuente crudo' y envíamelo. Así sabremos exactamente con qué estamos lidiando.")
     
-    if not texto_html or status_code != 200:
-        for nodo in cadena_proxies:
-            try:
-                resp = requests.get(nodo["url"], timeout=12)
-                if resp.status_code == 200:
-                    texto_html = resp.text
-                    if texto_html and len(texto_html) > 5000:
-                        status_code = 200
-                        motor_usado = nodo["name"]
-                        break
-            except Exception: continue
-
-    safe_log(f"📊 [Diag CARSA] Estado Servidor: {status_code} | Tamaño HTML: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
-
-    if texto_html and len(texto_html) > 5000:
-        soup = BeautifulSoup(texto_html, 'html.parser')
-        
-        # --- ESTRATEGIA A: HACK VTEX __STATE__ (Súper optimizado para evitar Segfault) ---
-        estado_json = None
-        
-        # Método rápido: buscar el template directo
-        template_state = soup.find('template', attrs={'data-varname': '__STATE__'})
-        if template_state:
-            try: estado_json = json.loads(template_state.text)
-            except: pass
-            
-        # Método manual ultra-ligero sin REGEX pesado
-        if not estado_json:
-            for s in soup.find_all('script'):
-                txt = s.text
-                if txt and '__STATE__' in txt:
-                    # Usamos .find() en vez de re.search para no reventar la memoria
-                    start_marker = '__STATE__ = '
-                    start_idx = txt.find(start_marker)
-                    if start_idx != -1:
-                        json_str = txt[start_idx + len(start_marker):]
-                        end_idx = json_str.rfind('}')
-                        if end_idx != -1:
-                            clean_json = json_str[:end_idx+1]
-                            try:
-                                estado_json = json.loads(clean_json)
-                                break
-                            except: pass
-                    
-        if estado_json:
-            productos_memoria = {}
-            for key, val in estado_json.items():
-                if not isinstance(val, dict): continue
-                
-                if key.startswith('Product:') and val.get('productName'):
-                    prod_id = key.split(':')[-1]
-                    if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                    productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
-                    productos_memoria[prod_id]['link'] = val.get('linkText', '')
-                    
-                elif '.commertialOffer' in key and 'Price' in val:
-                    # Extracción rápida de ID sin Regex
-                    if 'Product:' in key:
-                        partes = key.split('Product:')
-                        if len(partes) > 1:
-                            prod_id = partes[1].split('.')[0]
-                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                            p_o = float(val.get('Price', 0))
-                            if p_o > 0:
-                                productos_memoria[prod_id]['precio'] = p_o
-                                productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
-                                
-                elif '.imageUrl' in key or ('imageUrl' in val) or ('.images.0' in key):
-                    if 'Product:' in key:
-                        partes = key.split('Product:')
-                        if len(partes) > 1:
-                            prod_id = partes[1].split('.')[0]
-                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                            img = val.get('imageUrl', '')
-                            if img: productos_memoria[prod_id]['img'] = img
-
-            for prod_id, info in productos_memoria.items():
-                if info.get('nombre') and info.get('precio', 0) > 0:
-                    p_o = info['precio']
-                    if 0 < p_o <= limite:
-                        link_final = urljoin("https://www.carsa.pe", f"/{info['link']}/p" if info.get('link') else url)
-                        productos.append({"nombre": f"CARSA - {info['nombre']}", "precio": p_o, "precio_regular": max(info.get('precio_regular', p_o), p_o), "link": link_final, "img": info.get('img', '')})
-
-        # --- ESTRATEGIA B: FALLBACK VISUAL ---
-        if not productos:
-            tarjetas = soup.find_all(['div', 'article', 'li', 'section'], class_=re.compile(r'(product-summary|product-card|vtex-product|item-card|vitrine|grid-item|galleryItem)', re.I))
-            for t in tarjetas:
-                try:
-                    a_el = t.find('a', href=True)
-                    if not a_el: continue
-                    link_final = urljoin("https://www.carsa.pe", a_el['href'])
-                    if '/p' not in link_final and len(a_el['href']) < 10: continue
-                    
-                    tit_el = t.find(['h2', 'h3', 'span', 'div'], class_=re.compile(r'(name|title|product-item-link|brand)', re.I))
-                    nombre = tit_el.text.strip().upper() if tit_el else a_el.text.strip().upper()
-                    if len(nombre) < 4: continue
-                    
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                    if not textos_precios: continue
-                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                    if not nums: continue
-                    p_o = nums[0]
-                    p_r = nums[-1] if len(nums) > 1 else p_o
-                    
-                    if 0 < p_o <= limite:
-                        img = ""
-                        for img_el in t.find_all('img'):
-                            src = img_el.get('data-src') or img_el.get('src') or ""
-                            if src and 'data:image' not in str(src).lower():
-                                img = src
-                                break
-                        productos.append({"nombre": f"CARSA - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": img})
-                except Exception: continue
-
-    vistos = set()
-    productos_unicos = []
-    for p in productos:
-        if p['link'] not in vistos:
-            vistos.add(p['link'])
-            if str(p['img']).startswith('//'): p['img'] = 'https:' + str(p['img'])
-            productos_unicos.append(p)
-            
-    if productos_unicos:
-        safe_log(f"🎯 Motor CARSA: ¡Operación de memoria sin colapso! {len(productos_unicos)} productos indexados.", "success")
-        
-    return productos_unicos
+    return [] # Devolvemos vacío para no interrumpir el resto de tiendas
     
 def motor_tradicional_general(url, limite, headers):
     productos = []
