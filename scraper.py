@@ -558,71 +558,55 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE: Extractor optimizado para la arquitectura VTEX Legacy"""
-    productos = []
+    """Motor Forense OECHSLE: Radiografía de la estructura real"""
+    import streamlit as st
+    import requests
+    from bs4 import BeautifulSoup
+    
+    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN OECHSLE: {url}")
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
-    
+
     try:
+        st.write("📡 Intentando conexión directa con Oechsle...")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: return []
         
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        st.code(f"Código de Estado: {resp.status_code}\nLongitud HTML: {len(resp.text)} caracteres", language="text")
         
-        # VTEX Legacy organiza los productos en elementos 'li' de estantería o tarjetas con clase product
-        tarjetas = soup.select('li[vtexid]') or soup.select('.product-item') or soup.select('.shelf-item')
+        html_text = resp.text
         
-        for t in tarjetas:
-            try:
-                # 1. Extraer Título y Enlace directo
-                tit_el = t.select_one('.product-name a') or t.select_one('.product-title a') or t.find('a', class_=re.compile(r'(name|title)', re.I))
-                if not tit_el: continue
-                nombre = tit_el.text.strip().upper()
-                link_final = urljoin("https://www.oechsle.pe", tit_el['href'])
-                
-                # 2. Extraer Precios (Etiquetas clásicas de VTEX para Oferta y Lista)
-                o_el = t.select_one('.best-price') or t.select_one('.skuBestPrice') or t.select_one('.Price')
-                r_el = t.select_one('.old-price') or t.select_one('.skuListPrice')
-                
-                if not o_el:
-                    # Respaldo de seguridad por texto si modifican las clases de precio
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                    if textos_precios:
-                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                        p_o = nums[0] if nums else 0.0
-                        p_r = nums[-1] if len(nums) > 1 else p_o
-                    else:
-                        continue
-                else:
-                    p_o = limpiar_precio_pnp(o_el.text)
-                    p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
-                
-                # 3. Filtrar por tu límite de Supabase y capturar la imagen
-                if 0 < p_o <= limite:
-                    img_el = t.find('img')
-                    img_url = ""
-                    if img_el:
-                        # VTEX Legacy a veces oculta la imagen real en data-src para optimizar carga
-                        img_url = img_el.get('data-src') or img_el.get('src') or ""
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
-                    
-                    productos.append({
-                        "nombre": f"OECHSLE - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url
-                    })
-            except Exception:
-                continue
-                
+        # Buscamos un recorte de código justo donde debería haber una palabra clave
+        idx = html_text.lower().find('parlante')
+        if idx == -1: 
+            idx = html_text.lower().find('price')
+        if idx == -1:
+            idx = html_text.lower().find('__state__')
+            
+        start = max(0, idx - 500)
+        end = min(len(html_text), idx + 2500)
+        
+        with st.expander("🔍 Ver fragmento clave del código fuente (Donde deberían estar los productos)"):
+            st.code(html_text[start:end], language="html")
+            
+        with st.expander("🔍 Ver inicio del código fuente (Scripts globales y marcas)"):
+            st.code(html_text[:2000], language="html")
+
+        # Alerta rápida de sospecha tecnológica
+        if "__STATE__" in html_text:
+            st.info("💡 ¡DATO CLAVE DETECTADO! El HTML contiene '__STATE__'. Oechsle podría estar usando VTEX IO moderno en lugar de Legacy.")
+        
+        st.error("🛑 DIAGNÓSTICO OECHSLE TERMINADO. Por favor, abre los expansores, toma una captura de pantalla o copia el código que aparezca y envíamelo.")
+        
     except Exception as e:
-        print(f"Error en el motor Oechsle: {e}")
-        
-    return productos
+        st.error(f"🛑 Fallo en la conexión con Oechsle: {e}")
+
+    return [] # Retornamos vacío para no romper el radar central
+
+
 def motor_tradicional_general(url, limite, headers):
     productos = []
     try:
