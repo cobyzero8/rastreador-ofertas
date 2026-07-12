@@ -449,56 +449,51 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA profesional: Extracción desde la base de datos interna (VTEX __STATE__)"""
+    """Motor CARSA Final: Extracción completa de enlaces, fotos y precios."""
     productos = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    }
     
     try:
-        resp = requests.get(url, headers=headers, timeout=20, verify=False)
-        if resp.status_code != 200: return []
+        session = requests.Session()
+        resp = session.get(url, headers=headers, timeout=20, verify=False)
         
-        # Buscamos el JSON de estado oculto
-        start_marker = '__STATE__ = '
-        idx_start = resp.text.find(start_marker)
-        if idx_start == -1: return []
+        if resp.status_code != 200:
+            return []
+
+        # Usamos expresiones regulares para extraer todo el bloque de datos de golpe
+        # Esto busca: Nombre, Link, Imagen y el ID necesario para buscar el precio
+        matches = re.finditer(r'"productId":"([^"]+)","productName":"([^"]+)".*?"linkText":"([^"]+)".*?"items":\[\{.*?"imageUrl":"([^"]+)"', resp.text)
         
-        idx_end = resp.text.find(';</script>', idx_start)
-        data = json.loads(resp.text[idx_start + len(start_marker):idx_end])
-        
-        # Procesamos los productos
-        for key, val in data.items():
-            if isinstance(val, dict) and val.get('__typename') == 'Product':
-                # Extraemos datos básicos
-                nombre = val.get('productName')
-                link_text = val.get('linkText')
+        for match in matches:
+            prod_id, nombre, link_text, img_url = match.groups()
+            
+            # Buscar el precio dentro del mismo código HTML usando el ID
+            price_match = re.search(fr'"{prod_id}.commertialOffer".*?"Price":(\d+\.?\d*)', resp.text)
+            precio = float(price_match.group(1)) if price_match else 0.0
+            
+            if 0 < precio <= limite:
+                # Limpiar la URL de la imagen y construir el link directo
+                link_final = f"https://www.carsa.pe/{link_text}/p"
+                img_final = img_url.replace("\\", "") 
                 
-                # Buscamos el precio en los ítems anidados
-                precio = 0.0
-                try:
-                    # Accedemos a la estructura de precios de VTEX
-                    precio = float(val['items'][0]['sellers'][0]['commertialOffer']['Price'])
-                except: continue
-                
-                # Buscamos la imagen
-                img = ""
-                try:
-                    img = val['items'][0]['images'][0]['imageUrl']
-                except: pass
-                
-                if nombre and 0 < precio <= limite:
-                    productos.append({
-                        "nombre": f"CARSA - {nombre.upper()}",
-                        "precio": precio,
-                        "precio_regular": precio,
-                        "link": f"https://www.carsa.pe/{link_text}/p",
-                        "img": img
-                    })
-                    
+                productos.append({
+                    "nombre": f"CARSA - {nombre}",
+                    "precio": precio,
+                    "precio_regular": precio,
+                    "link": link_final,
+                    "img": img_final
+                })
+            
     except Exception as e:
-        print(f"Error técnico en CARSA: {e}")
+        # Si algo falla, el log nos ayudará a saber por qué, pero el resto de tiendas sigue funcionando
+        print(f"Error en motor CARSA: {e}")
         
     return productos
-    
+
+
 def motor_tradicional_general(url, limite, headers):
     productos = []
     try:
