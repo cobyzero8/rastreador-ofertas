@@ -447,7 +447,77 @@ def motor_platanitos(url, limite):
             except Exception: continue
     except Exception: pass
     return productos
-
+def motor_carsa(url, limite):
+    """Motor aislado exclusivo para CARSA (carsa.pe)"""
+    productos = []
+    try:
+        headers = {
+            "User-Agent": random.choice(LISTA_USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-PE,es;q=0.9"
+        }
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        if resp.status_code != 200: return []
+        
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Buscar contenedores de productos genéricos típicos de Carsa
+        tarjetas = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(product-item|product-card|item-card|vitrine|grid-item)', re.I))
+        
+        for t in tarjetas:
+            try:
+                # 1. Enlace
+                a_el = t.find('a', href=True)
+                if not a_el: continue
+                link_final = urljoin("https://www.carsa.pe", a_el['href'])
+                
+                # 2. Nombre
+                tit_el = t.find(['h2', 'h3', 'a', 'span', 'div'], class_=re.compile(r'(name|title|product-item-link)', re.I))
+                nombre = tit_el.text.strip().upper() if tit_el else ""
+                if not nombre: nombre = a_el.text.strip().upper()
+                if len(nombre) < 4: continue
+                
+                # 3. Precios (Extracción por Regex Difuso)
+                textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                if not textos_precios: continue
+                
+                nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                if not nums: continue
+                
+                p_o = nums[0]
+                p_r = nums[-1] if len(nums) > 1 else p_o
+                
+                if 0 < p_o <= limite:
+                    # 4. Imagen
+                    img_tags = t.find_all('img')
+                    img = ""
+                    for img_el in img_tags:
+                        src = img_el.get('data-src') or img_el.get('src') or ""
+                        if src and 'data:image' not in str(src).lower() and 'pixel' not in str(src).lower():
+                            img = src
+                            break
+                    if str(img).startswith('//'): img = 'https:' + str(img)
+                    
+                    productos.append({
+                        "nombre": f"CARSA - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img
+                    })
+            except Exception: continue
+                
+    except Exception as e:
+        safe_log(f"Aviso en motor CARSA: {e}", "caption")
+        
+    vistos = set()
+    productos_unicos = []
+    for p in productos:
+        if p['link'] not in vistos:
+            vistos.add(p['link'])
+            productos_unicos.append(p)
+            
+    return productos_unicos
 def motor_tradicional_general(url, limite, headers):
     productos = []
     try:
@@ -482,7 +552,8 @@ def escanear_tienda(url, limite):
     dominio = urlparse(url).netloc.lower()
     
     # Ruteo seguro y aislado por tienda
-    if "thn.pe" in dominio: return motor_thn(url, limite)
+    if "carsa.pe" in dominio: return motor_carsa(url, limite) # <--- LA NUEVA LÍNEA AÑADIDA
+    elif "thn.pe" in dominio: return motor_thn(url, limite)
     elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
     elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
     elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
