@@ -449,8 +449,12 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA: Extracción Quirúrgica de VTEX IO con Telemetría Integrada"""
+    """Motor CARSA: Telemetría Absoluta para evitar fallos silenciosos"""
     productos = []
+    
+    # 1. Log inicial para confirmar que el router sí envió la URL aquí
+    safe_log(f"📡 [Diag CARSA] Iniciando escaneo en: {url}", "info")
+    
     try:
         headers = {
             "User-Agent": random.choice(LISTA_USER_AGENTS),
@@ -459,32 +463,51 @@ def motor_carsa(url, limite):
         }
         
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        
+        # 2. Log vital: Ver qué responde el servidor realmente
+        safe_log(f"📡 [Diag CARSA] Respuesta del servidor: Código {resp.status_code} | Peso: {len(resp.text)} letras", "info")
+        
         if resp.status_code != 200: 
+            safe_log(f"🛑 [Diag CARSA] Bloqueo detectado. El servidor denegó el acceso (Error {resp.status_code}).", "error")
             return []
             
         html_text = resp.text
         estado_json = None
         
-        # 1. BÚSQUEDA DEL JSON __STATE__ (A prueba de balas)
-        idx_var = html_text.find('data-varname="__STATE__"')
+        # 3. BÚSQUEDA DEL JSON __STATE__
+        idx_var = html_text.find('__STATE__')
         if idx_var != -1:
-            idx_script = html_text.find('<script>', idx_var)
-            idx_script_end = html_text.find('</script>', idx_script)
-            if idx_script != -1 and idx_script_end != -1:
-                json_str = html_text[idx_script+8:idx_script_end].strip()
-                try:
-                    import base64
-                    # VTEX a veces codifica el JSON en Base64 por seguridad
-                    if not json_str.startswith('{') and not json_str.startswith('['):
-                        json_str = base64.b64decode(json_str).decode('utf-8')
-                    estado_json = json.loads(json_str)
-                    safe_log(f"📡 [Diag CARSA] ¡JSON de inventario encontrado y decodificado! ({len(estado_json)} bloques de datos)", "info")
-                except Exception as e:
-                    safe_log(f"📡 [Diag CARSA] Error decodificando JSON: {e}", "error")
+            safe_log("📡 [Diag CARSA] Marca __STATE__ detectada en el código. Extrayendo bloque...", "info")
+            
+            # Método A: template data-varname
+            if 'data-varname="__STATE__"' in html_text:
+                idx_script = html_text.find('<script>', idx_var)
+                idx_script_end = html_text.find('</script>', idx_script)
+                if idx_script != -1 and idx_script_end != -1:
+                    json_str = html_text[idx_script+8:idx_script_end].strip()
+                    try:
+                        estado_json = json.loads(json_str)
+                        safe_log(f"📡 [Diag CARSA] ¡JSON decodificado exitosamente! (Método A)", "success")
+                    except Exception as e:
+                        safe_log(f"🛑 [Diag CARSA] Falla decodificando Método A: {e}", "error")
+            
+            # Método B: variable global (Si el A falla)
+            if not estado_json:
+                marcador = '__STATE__ = '
+                idx_m = html_text.find(marcador)
+                if idx_m != -1:
+                    idx_end = html_text.find('</script>', idx_m)
+                    json_str = html_text[idx_m + len(marcador):idx_end].strip()
+                    if json_str.endswith(';'): json_str = json_str[:-1]
+                    try:
+                        estado_json = json.loads(json_str)
+                        safe_log(f"📡 [Diag CARSA] ¡JSON decodificado exitosamente! (Método B)", "success")
+                    except Exception as e:
+                        safe_log(f"🛑 [Diag CARSA] Falla decodificando Método B: {e}", "error")
         else:
-            safe_log(f"📡 [Diag CARSA] No se detectó la etiqueta base de VTEX. Activando Plan B...", "warning")
+            safe_log("🛑 [Diag CARSA] No existe __STATE__ en este HTML. La estructura vino vacía.", "error")
 
-        # 2. ENSAMBLAJE DE MEMORIA
+        # 4. ENSAMBLAJE DE DATOS
         if estado_json:
             productos_memoria = {}
             for key, val in estado_json.items():
@@ -518,9 +541,10 @@ def motor_carsa(url, limite):
                         img = val.get('imageUrl', '')
                         if img: productos_memoria[prod_id]['img'] = img
 
-            # 3. Aplicar Filtro de Precios del Usuario
             pre_count = len(productos_memoria)
             count_limit = 0
+            
+            # 5. APLICAR FILTRO DE PRECIO MAXIMO
             for prod_id, info in productos_memoria.items():
                 if info.get('nombre') and info.get('precio', 0) > 0:
                     p_o = info['precio']
@@ -539,48 +563,10 @@ def motor_carsa(url, limite):
                             "img": img
                         })
             
-            safe_log(f"📡 [Diag CARSA] Modelos de Audífonos detectados en código: {pre_count}. Modelos que cumplen tu límite (< S/.{limite}): {count_limit}", "info")
-
-        # 4. FALLBACK DE EXTRACCIÓN HTML SEGURA (En caso de que el JSON falle)
-        if not productos:
-            safe_log(f"📡 [Diag CARSA] Pasando a escáner visual por recortes de HTML...", "warning")
-            # Cortamos solo la galería para no saturar la memoria y evitar Segfaults
-            idx_gal = html_text.find('gallery-layout')
-            if idx_gal == -1: idx_gal = html_text.find('vtex-search-result')
-            
-            if idx_gal != -1:
-                chunk = html_text[max(0, idx_gal - 2000) : min(len(html_text), idx_gal + 150000)]
-                soup = BeautifulSoup(chunk, 'html.parser')
-                tarjetas = soup.find_all(['div', 'section', 'article'], class_=re.compile(r'(product-summary|galleryItem|product-card)', re.I))
-                for t in tarjetas:
-                    try:
-                        a_el = t.find('a', href=True)
-                        if not a_el: continue
-                        link_final = urljoin("https://www.carsa.pe", a_el['href'])
-                        if '/p' not in link_final: continue
-                        
-                        tit_el = t.find(['h2', 'h3', 'span'], class_=re.compile(r'(name|title|brand)', re.I))
-                        nombre = tit_el.text.strip().upper() if tit_el else a_el.text.strip().upper()
-                        if len(nombre) < 4: continue
-                        
-                        precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                        if not precios: continue
-                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios if limpiar_precio_pnp(p) > 0])))
-                        if not nums: continue
-                        p_o = nums[0]
-                        
-                        if 0 < p_o <= limite:
-                            img = ""
-                            for img_el in t.find_all('img'):
-                                src = img_el.get('src') or ""
-                                if src and 'data:image' not in str(src).lower():
-                                    img = src
-                                    break
-                            productos.append({"nombre": f"CARSA - {nombre}", "precio": p_o, "precio_regular": p_o, "link": link_final, "img": img})
-                    except Exception: continue
+            safe_log(f"📡 [Diag CARSA] Modelos encontrados: {pre_count}. Modelos que cumplen límite (< S/.{limite}): {count_limit}", "info")
 
     except Exception as e:
-        safe_log(f"Aviso en motor CARSA: {e}", "error")
+        safe_log(f"🛑 [Diag CARSA] Excepción fatal en el código: {e}", "error")
 
     vistos = set()
     productos_unicos = []
