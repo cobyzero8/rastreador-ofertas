@@ -448,68 +448,73 @@ def motor_platanitos(url, limite):
     except Exception: pass
     return productos
 def motor_carsa(url, limite):
-    """Motor aislado exclusivo para CARSA (carsa.pe)"""
+    """Motor aislado CARSA: Conexión directa a la API de VTEX para evadir la pantalla vacía de React"""
     productos = []
     try:
+        # 1. Diseccionar la URL de tu navegador para extraer filtros
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        
+        # Extraemos la ruta de búsqueda (ej: /sony/audifonos/jbl)
+        ruta = parsed_url.path
+        if ruta == '/' or ruta == '': 
+            ruta = '/audifonos'
+            
+        # 2. Construir la URL del servidor oculto de VTEX
+        api_url = f"https://www.carsa.pe/api/catalog_system/pub/products/search{ruta}"
+        
+        # 3. Parámetros nativos de VTEX
+        params = {
+            "_from": 0,             # Traer desde el producto 1
+            "_to": 49,              # Hasta el 50
+            "O": "OrderByPriceASC"  # Forzar siempre menor a mayor precio
+        }
+        
+        # Si usaste filtros en la web (como marcas), se inyectan a la API
+        if 'map' in query_params:
+            params['map'] = query_params['map'][0]
+            
         headers = {
             "User-Agent": random.choice(LISTA_USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9"
+            "Accept": "application/json"
         }
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: return []
         
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        safe_log(f"📡 [Diag CARSA] Hack VTEX: Consultando API interna en {ruta} ...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
         
-        # Buscar contenedores de productos genéricos típicos de Carsa
-        tarjetas = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(product-item|product-card|item-card|vitrine|grid-item)', re.I))
-        
-        for t in tarjetas:
-            try:
-                # 1. Enlace
-                a_el = t.find('a', href=True)
-                if not a_el: continue
-                link_final = urljoin("https://www.carsa.pe", a_el['href'])
-                
-                # 2. Nombre
-                tit_el = t.find(['h2', 'h3', 'a', 'span', 'div'], class_=re.compile(r'(name|title|product-item-link)', re.I))
-                nombre = tit_el.text.strip().upper() if tit_el else ""
-                if not nombre: nombre = a_el.text.strip().upper()
-                if len(nombre) < 4: continue
-                
-                # 3. Precios (Extracción por Regex Difuso)
-                textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                if not textos_precios: continue
-                
-                nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                if not nums: continue
-                
-                p_o = nums[0]
-                p_r = nums[-1] if len(nums) > 1 else p_o
-                
-                if 0 < p_o <= limite:
-                    # 4. Imagen
-                    img_tags = t.find_all('img')
-                    img = ""
-                    for img_el in img_tags:
-                        src = img_el.get('data-src') or img_el.get('src') or ""
-                        if src and 'data:image' not in str(src).lower() and 'pixel' not in str(src).lower():
-                            img = src
-                            break
-                    if str(img).startswith('//'): img = 'https:' + str(img)
+        if resp.status_code == 200:
+            data = resp.json()
+            for item in data:
+                try:
+                    nombre = str(item.get('productName', '')).strip().upper()
+                    if len(nombre) < 4: continue
                     
-                    productos.append({
-                        "nombre": f"CARSA - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img
-                    })
-            except Exception: continue
+                    link = item.get('link', '')
+                    if not link: link = urljoin("https://www.carsa.pe", f"/{item.get('linkText')}/p")
+                    
+                    # VTEX esconde el precio real dentro del "CommertialOffer" del primer Seller
+                    offer = item["items"][0]["sellers"][0]["commertialOffer"]
+                    p_o = float(offer.get("Price", 0))
+                    p_r = float(offer.get("ListPrice", p_o))
+                    if p_r <= 0: p_r = p_o
+                    
+                    if 0 < p_o <= limite:
+                        img = item["items"][0]["images"][0]["imageUrl"]
+                        if str(img).startswith('//'): img = 'https:' + str(img)
+                        elif str(img).startswith('http://'): img = img.replace('http://', 'https://')
+                        
+                        productos.append({
+                            "nombre": f"CARSA - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link,
+                            "img": str(img).strip()
+                        })
+                except Exception: continue
                 
     except Exception as e:
-        safe_log(f"Aviso en motor CARSA: {e}", "caption")
-        
+        safe_log(f"Aviso en motor CARSA API: {e}", "caption")
+
     vistos = set()
     productos_unicos = []
     for p in productos:
@@ -517,7 +522,11 @@ def motor_carsa(url, limite):
             vistos.add(p['link'])
             productos_unicos.append(p)
             
+    if productos_unicos:
+        safe_log(f"🎯 Motor CARSA: ¡Hack de API exitoso! {len(productos_unicos)} productos puros extraídos.", "success")
+        
     return productos_unicos
+    
 def motor_tradicional_general(url, limite, headers):
     productos = []
     try:
