@@ -448,6 +448,57 @@ def motor_platanitos(url, limite):
     except Exception: pass
     return productos
 
+def motor_hiraoka(url, limite):
+    """Motor HIRAOKA: Extracción de alta precisión para VTEX clásico"""
+    productos = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+    }
+    
+    try:
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        if resp.status_code != 200: return []
+        
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        # Hiraoka usa tarjetas con clase 'product-item' o 'vtex-product-summary'
+        tarjetas = soup.select('.vtex-product-summary-2-x-container')
+        
+        for t in tarjetas:
+            try:
+                # Nombre
+                nombre_el = t.select_one('.vtex-product-summary-2-x-productBrand')
+                if not nombre_el: continue
+                nombre = nombre_el.text.strip().upper()
+                
+                # Precio
+                precio_el = t.select_one('.vtex-product-price-1-x-currencyInteger')
+                if not precio_el: continue
+                precio = float(precio_el.text.replace(',', '').replace('S/', '').strip())
+                
+                # Link
+                link_el = t.select_one('a')
+                link = urljoin("https://hiraoka.com.pe", link_el['href'])
+                
+                # Imagen
+                img_el = t.select_one('img')
+                img = img_el['src'] if img_el else ""
+                
+                if 0 < precio <= limite:
+                    productos.append({
+                        "nombre": f"HIRAOKA - {nombre}",
+                        "precio": precio,
+                        "precio_regular": precio,
+                        "link": link,
+                        "img": img
+                    })
+            except: continue
+            
+    except Exception as e:
+        safe_log(f"Error Hiraoka: {e}", "error")
+        
+    return productos
+        
+
 def motor_carsa(url, limite):
     """Motor CARSA de Alta Fidelidad: Emulación de navegador real"""
     productos = []
