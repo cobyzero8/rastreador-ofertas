@@ -449,47 +449,44 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA Final: Extracción completa de enlaces, fotos y precios."""
+    """Motor CARSA de Alta Fidelidad: Emulación de navegador real"""
     productos = []
+    
+    # Cabeceras que engañan al servidor haciéndole creer que somos un navegador Chrome real
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Referer": "https://www.google.com/",
+        "Connection": "keep-alive"
     }
     
     try:
+        safe_log(f"🚀 [Diag CARSA] Lanzando motor de alta fidelidad a: {url}", "info")
         session = requests.Session()
-        resp = session.get(url, headers=headers, timeout=20, verify=False)
+        resp = session.get(url, headers=headers, timeout=20, allow_redirects=True, verify=False)
+        
+        # SI ESTO NO SALE, EL SERVIDOR NOS ESTÁ CORTANDO EL ACCESO
+        safe_log(f"📡 [Diag CARSA] Código de respuesta: {resp.status_code} | Tamaño: {len(resp.text)}", "info")
         
         if resp.status_code != 200:
+            safe_log(f"🛑 [Diag CARSA] Bloqueo total por Firewall/Anti-Bot. Código {resp.status_code}", "error")
             return []
 
-        # Usamos expresiones regulares para extraer todo el bloque de datos de golpe
-        # Esto busca: Nombre, Link, Imagen y el ID necesario para buscar el precio
-        matches = re.finditer(r'"productId":"([^"]+)","productName":"([^"]+)".*?"linkText":"([^"]+)".*?"items":\[\{.*?"imageUrl":"([^"]+)"', resp.text)
+        # Si llegamos aquí, sí descargamos contenido. Ahora busquemos productos.
+        # Buscamos en el texto del HTML cualquier rastro de JSON de precios
+        matches = re.findall(r'"productName":"([^"]+)".*?"Price":(\d+\.?\d*)', resp.text)
         
-        for match in matches:
-            prod_id, nombre, link_text, img_url = match.groups()
-            
-            # Buscar el precio dentro del mismo código HTML usando el ID
-            price_match = re.search(fr'"{prod_id}.commertialOffer".*?"Price":(\d+\.?\d*)', resp.text)
-            precio = float(price_match.group(1)) if price_match else 0.0
-            
-            if 0 < precio <= limite:
-                # Limpiar la URL de la imagen y construir el link directo
-                link_final = f"https://www.carsa.pe/{link_text}/p"
-                img_final = img_url.replace("\\", "") 
-                
-                productos.append({
-                    "nombre": f"CARSA - {nombre}",
-                    "precio": precio,
-                    "precio_regular": precio,
-                    "link": link_final,
-                    "img": img_final
-                })
+        if not matches:
+            safe_log("🛑 [Diag CARSA] Descarga exitosa, pero no encontramos productos con el buscador de texto.", "error")
+        else:
+            for nombre, precio in matches:
+                p = float(precio)
+                if 0 < p <= limite:
+                    productos.append({"nombre": f"CARSA - {nombre}", "precio": p, "precio_regular": p, "link": url, "img": ""})
+            safe_log(f"✅ [Diag CARSA] Se encontraron {len(matches)} productos. {len(productos)} cumplen el límite.", "success")
             
     except Exception as e:
-        # Si algo falla, el log nos ayudará a saber por qué, pero el resto de tiendas sigue funcionando
-        print(f"Error en motor CARSA: {e}")
+        safe_log(f"🛑 [Diag CARSA] Error crítico: {str(e)}", "error")
         
     return productos
 
