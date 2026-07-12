@@ -449,65 +449,81 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor aislado CARSA (Hack VTEX IO __STATE__): Extrae la memoria de hidratación de React antes del renderizado"""
+    """Motor aislado CARSA: Blindado con Proxies en cascada y Extracción Híbrida VTEX"""
     productos = []
+    texto_html = ""
+    status_code = 0
+    motor_usado = ""
+    
+    # 1. Red Proxy Anti-Bloqueos para evadir firewalls (Igual que en JBL)
+    cadena_proxies = [
+        {"name": "CorsProxy Network (Nodo Directo)", "url": f"https://corsproxy.io/?{quote(url)}", "tipo": "html"},
+        {"name": "CodeTabs Grid (Nodo Secundario)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"}
+    ]
+    
+    # Añadimos un intento directo camuflado por si no hay firewall activo
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+    
     try:
-        headers = {
-            "User-Agent": random.choice(LISTA_USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9"
-        }
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: return []
-        
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # 1. Buscar la memoria oculta __STATE__ de VTEX IO
-        estado_json = None
-        template_state = soup.find('template', attrs={'data-varname': '__STATE__'})
-        if template_state:
-            try: estado_json = json.loads(template_state.text)
-            except: pass
-            
-        if not estado_json:
-            for s in soup.find_all('script'):
-                if s.text and '__STATE__' in s.text:
-                    match = re.search(r'__STATE__\s*=\s*({.*?});', s.text, re.DOTALL)
-                    if match:
-                        try: estado_json = json.loads(match.group(1))
-                        except: pass
+        resp_dir = requests.get(url, headers=headers, timeout=10, verify=False)
+        if resp_dir.status_code == 200 and len(resp_dir.text) > 5000:
+            texto_html = resp_dir.text
+            status_code = 200
+            motor_usado = "Conexión Directa"
+    except Exception: pass
+    
+    # Si la conexión directa falla o devuelve vacío, disparamos los proxies
+    if not texto_html or status_code != 200:
+        for nodo in cadena_proxies:
+            try:
+                resp = requests.get(nodo["url"], timeout=12)
+                if resp.status_code == 200:
+                    texto_html = resp.text
+                    if texto_html and len(texto_html) > 5000:
+                        status_code = 200
+                        motor_usado = nodo["name"]
                         break
+            except Exception: continue
 
-        # 2. Reconstruir los productos uniendo las piezas de la memoria plana
+    safe_log(f"📊 [Diag CARSA] Estado Servidor: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
+
+    if texto_html and len(texto_html) > 5000:
+        soup = BeautifulSoup(texto_html, 'html.parser')
+        
+        # --- ESTRATEGIA A: HACK VTEX __STATE__ (Memoria Oculta) ---
+        estado_json = None
+        for t_state in soup.find_all(['template', 'script']):
+            if t_state.name == 'template' and (t_state.get('data-varname') == '__STATE__' or t_state.get('id') == '__STATE__'):
+                try: estado_json = json.loads(t_state.text)
+                except: pass
+            elif t_state.name == 'script' and t_state.text and '__STATE__' in t_state.text:
+                match = re.search(r'__STATE__\s*=\s*({.*?});', t_state.text, re.DOTALL)
+                if match:
+                    try: estado_json = json.loads(match.group(1))
+                    except: pass
+                    
         if estado_json:
-            safe_log("📡 [Diag CARSA] ¡__STATE__ de VTEX IO detectado! Hackeando memoria interna...", "info")
             productos_memoria = {}
-            
             for key, val in estado_json.items():
                 if not isinstance(val, dict): continue
-                
-                # Pieza 1: Nombres y Enlaces
                 if key.startswith('Product:') and val.get('productName'):
                     prod_id = key.split(':')[-1]
                     if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
                     productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
                     productos_memoria[prod_id]['link'] = val.get('linkText', '')
-                    
-                # Pieza 2: Ofertas y Precios
                 elif '.commertialOffer' in key and 'Price' in val:
-                    # El key tiene la forma: $Product:b692500...items.0.sellers.0.commertialOffer
                     match_id = re.search(r'Product:([a-zA-Z0-9\-]+)', key)
                     if match_id:
                         prod_id = match_id.group(1)
                         if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
                         p_o = float(val.get('Price', 0))
-                        p_r = float(val.get('ListPrice', p_o))
-                        # VTEX suele mandar precios en 0 si no hay stock
                         if p_o > 0:
                             productos_memoria[prod_id]['precio'] = p_o
-                            productos_memoria[prod_id]['precio_regular'] = p_r
-                        
-                # Pieza 3: Fotos en HD
+                            productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
                 elif '.imageUrl' in key or ('imageUrl' in val) or ('.images.0' in key):
                     match_id = re.search(r'Product:([a-zA-Z0-9\-]+)', key)
                     if match_id:
@@ -516,36 +532,57 @@ def motor_carsa(url, limite):
                         img = val.get('imageUrl', '')
                         if img: productos_memoria[prod_id]['img'] = img
 
-            # 3. Ensamblar los productos listos para la app
             for prod_id, info in productos_memoria.items():
                 if info.get('nombre') and info.get('precio', 0) > 0:
                     p_o = info['precio']
                     if 0 < p_o <= limite:
                         link_final = urljoin("https://www.carsa.pe", f"/{info['link']}/p" if info.get('link') else url)
-                        img = info.get('img', '')
-                        if str(img).startswith('//'): img = 'https:' + str(img)
-                        elif str(img).startswith('http://'): img = img.replace('http://', 'https://')
-                        
-                        productos.append({
-                            "nombre": f"CARSA - {info['nombre']}",
-                            "precio": p_o,
-                            "precio_regular": max(info.get('precio_regular', p_o), p_o),
-                            "link": link_final,
-                            "img": img
-                        })
-                        
-    except Exception as e:
-        safe_log(f"Aviso en motor CARSA: {e}", "caption")
+                        productos.append({"nombre": f"CARSA - {info['nombre']}", "precio": p_o, "precio_regular": max(info.get('precio_regular', p_o), p_o), "link": link_final, "img": info.get('img', '')})
+
+        # --- ESTRATEGIA B: EXTRACCIÓN VISUAL (Fallback de Tarjetas) ---
+        if not productos:
+            tarjetas = soup.find_all(['div', 'article', 'li', 'section'], class_=re.compile(r'(product-summary|product-card|vtex-product|item-card|vitrine|grid-item|galleryItem)', re.I))
+            if not tarjetas:
+                tarjetas = soup.select('[class*="galleryItem"], [class*="productSummary"]')
+                
+            for t in tarjetas:
+                try:
+                    a_el = t.find('a', href=True)
+                    if not a_el: continue
+                    link_final = urljoin("https://www.carsa.pe", a_el['href'])
+                    if '/p' not in link_final and len(a_el['href']) < 10: continue
+                    
+                    tit_el = t.find(['h2', 'h3', 'span', 'div'], class_=re.compile(r'(name|title|product-item-link|brand)', re.I))
+                    nombre = tit_el.text.strip().upper() if tit_el else a_el.text.strip().upper()
+                    if len(nombre) < 4: continue
+                    
+                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                    if not textos_precios: continue
+                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                    if not nums: continue
+                    p_o = nums[0]
+                    p_r = nums[-1] if len(nums) > 1 else p_o
+                    
+                    if 0 < p_o <= limite:
+                        img = ""
+                        for img_el in t.find_all('img'):
+                            src = img_el.get('data-src') or img_el.get('src') or ""
+                            if src and 'data:image' not in str(src).lower():
+                                img = src
+                                break
+                        productos.append({"nombre": f"CARSA - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": img})
+                except Exception: continue
 
     vistos = set()
     productos_unicos = []
     for p in productos:
         if p['link'] not in vistos:
             vistos.add(p['link'])
+            if str(p['img']).startswith('//'): p['img'] = 'https:' + str(p['img'])
             productos_unicos.append(p)
             
     if productos_unicos:
-        safe_log(f"🎯 Motor CARSA: ¡Memoria VTEX decodificada! Se ensamblaron {len(productos_unicos)} audífonos.", "success")
+        safe_log(f"🎯 Motor CARSA: ¡Se superó el bloqueo! Se indexaron {len(productos_unicos)} productos con éxito.", "success")
         
     return productos_unicos
     
