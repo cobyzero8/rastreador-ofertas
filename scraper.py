@@ -449,115 +449,75 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA definitivo: Extracción de memoria plana VTEX IO + Puenteo de imágenes HD"""
+    """Motor CARSA: Versión Resiliente (Extracción directa y eficiente)"""
     productos = []
-    safe_log(f"📡 [Diag CARSA] Iniciando escaneo en: {url}", "info")
     
     try:
         headers = {
-            "User-Agent": random.choice(LISTA_USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
         }
-        
-        # Conexión directa (probada como efectiva en tu diagnóstico)
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        safe_log(f"📡 [Diag CARSA] Respuesta: Código {resp.status_code} | Peso: {len(resp.text)} letras", "info")
-        
-        if resp.status_code != 200: 
-            safe_log(f"🛑 [Diag CARSA] Bloqueo detectado (Error {resp.status_code}).", "error")
-            return []
+        if resp.status_code != 200: return []
             
         html_text = resp.text
         estado_json = None
         
-        # 1. Extracción del JSON oculto __STATE__
-        idx_var = html_text.find('__STATE__')
-        if idx_var != -1:
-            marcador = '__STATE__ = '
-            idx_m = html_text.find(marcador)
-            if idx_m != -1:
-                idx_end = html_text.find('</script>', idx_m)
-                json_str = html_text[idx_m + len(marcador):idx_end].strip()
-                if json_str.endswith(';'): json_str = json_str[:-1]
-                try:
-                    estado_json = json.loads(json_str)
-                    safe_log("📡 [Diag CARSA] ¡JSON decodificado exitosamente!", "success")
-                except Exception as e:
-                    safe_log(f"🛑 [Diag CARSA] Falla decodificando JSON: {e}", "error")
-        else:
-            safe_log("🛑 [Diag CARSA] No se detectó la marca __STATE__.", "error")
+        # Extracción del JSON
+        marcador = '__STATE__ = '
+        idx_m = html_text.find(marcador)
+        if idx_m != -1:
+            idx_end = html_text.find('</script>', idx_m)
+            json_str = html_text[idx_m + len(marcador):idx_end].strip().rstrip(';')
+            try: estado_json = json.loads(json_str)
+            except: pass
 
-        # 2. Ensamblaje y Puenteo de imágenes
         if estado_json:
             productos_memoria = {}
-            # Primero: Recolectar nombres y precios base
+            # Pasada única para recolectar TODO (nombre, precio, imagen)
             for key, val in estado_json.items():
                 if not isinstance(val, dict): continue
                 
-                # Nombres
-                if ('Product:' in key or val.get('__typename') == 'Product') and val.get('productName'):
-                    prod_id = val.get('productId') or key.split('Product:')[-1].split('.')[0]
-                    if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                    productos_memoria[prod_id]['nombre'] = str(val.get('productName')).strip().upper()
-                    productos_memoria[prod_id]['link'] = val.get('linkText', '')
-                    
-                # Precios
-                elif 'commertialOffer' in key.lower() or val.get('__typename') == 'CommertialOffer':
-                    if 'Price' in val or 'spotPrice' in val:
-                        partes = key.split('Product:')
-                        if len(partes) > 1:
-                            prod_id = partes[1].split('.')[0]
-                            if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
-                            p_o = float(val.get('Price') or val.get('spotPrice') or 0)
-                            if p_o > 0:
-                                productos_memoria[prod_id]['precio'] = p_o
-                                productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', p_o))
+                # Identificar el ID del producto
+                prod_id = None
+                if 'productId' in val: prod_id = val['productId']
+                elif 'Product:' in key: prod_id = key.split('Product:')[-1].split('.')[0]
+                
+                if not prod_id: continue
+                if prod_id not in productos_memoria: productos_memoria[prod_id] = {}
 
-            # Segundo: Filtrado, Puenteo de imágenes y creación de lista
-            count_limit = 0
+                # Llenar datos
+                if 'productName' in val:
+                    productos_memoria[prod_id]['nombre'] = val['productName'].upper()
+                    productos_memoria[prod_id]['link'] = val.get('linkText', '')
+                
+                if 'Price' in val or 'ListPrice' in val:
+                    productos_memoria[prod_id]['precio'] = float(val.get('Price', 0))
+                    productos_memoria[prod_id]['precio_regular'] = float(val.get('ListPrice', 0))
+                
+                if 'imageUrl' in val:
+                    productos_memoria[prod_id]['img'] = val['imageUrl']
+
+            # Crear lista final
             for prod_id, info in productos_memoria.items():
-                if info.get('nombre') and info.get('precio', 0) > 0:
-                    p_o = info['precio']
-                    if 0 < p_o <= limite:
-                        count_limit += 1
-                        
-                        # Puenteo de imagen: buscar la imagen asociada al ID en todo el JSON
-                        img_url = ""
-                        for key, val in estado_json.items():
-                            if prod_id in key and 'imageUrl' in val:
-                                img_url = val['imageUrl']
-                                break
-                            elif prod_id in key and isinstance(val, dict) and 'items' in val:
-                                try: img_url = val['items'][0]['images'][0]['imageUrl']
-                                except: pass
-                        
-                        link_rel = info.get('link', '')
-                        link_final = urljoin("https://www.carsa.pe", f"/{link_rel}/p" if link_rel else url)
-                        if img_url and img_url.startswith('//'): img_url = 'https:' + img_url
-                        
-                        productos.append({
-                            "nombre": f"CARSA - {info['nombre']}",
-                            "precio": p_o,
-                            "precio_regular": max(info.get('precio_regular', p_o), p_o),
-                            "link": link_final,
-                            "img": img_url
-                        })
-            
-            safe_log(f"📡 [Diag CARSA] Modelos que cumplen límite (< S/.{limite}): {count_limit}", "info")
+                p_o = info.get('precio', 0)
+                if info.get('nombre') and 0 < p_o <= limite:
+                    link_rel = info.get('link', '')
+                    img_url = info.get('img', '')
+                    if img_url and img_url.startswith('//'): img_url = 'https:' + img_url
+                    
+                    productos.append({
+                        "nombre": f"CARSA - {info['nombre']}",
+                        "precio": p_o,
+                        "precio_regular": max(info.get('precio_regular', p_o), p_o),
+                        "link": urljoin("https://www.carsa.pe", f"/{link_rel}/p"),
+                        "img": img_url
+                    })
 
     except Exception as e:
-        safe_log(f"🛑 [Diag CARSA] Excepción fatal: {e}", "error")
-
-    # Eliminación de duplicados
-    vistos = set()
-    productos_unicos = []
-    for p in productos:
-        if p['link'] not in vistos:
-            vistos.add(p['link'])
-            productos_unicos.append(p)
-            
-    return productos_unicos
+        safe_log(f"Error CARSA: {e}", "error")
+        
+    return productos
     
 def motor_tradicional_general(url, limite, headers):
     productos = []
