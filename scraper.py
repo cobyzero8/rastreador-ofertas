@@ -449,58 +449,44 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA: Extracción de emergencia. Ignora el límite para confirmar si extrae la data."""
+    """Motor CARSA de Alta Fidelidad: Emulación de navegador real"""
     productos = []
     
+    # Cabeceras que engañan al servidor haciéndole creer que somos un navegador Chrome real
     headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Referer": "https://www.google.com/",
+        "Connection": "keep-alive"
     }
     
-    resp = requests.get(url, headers=headers, timeout=15, verify=False)
-    html_text = resp.text
-    
-    # Búsqueda manual sin BeautifulSoup para evitar líos
-    start_marker = '__STATE__ = '
-    start_idx = html_text.find(start_marker)
-    if start_idx == -1: return []
-    
-    json_str = html_text[start_idx + len(start_marker):]
-    end_idx = json_str.find(';</script>')
-    if end_idx == -1: return []
-    
     try:
-        data = json.loads(json_str[:end_idx])
-        for key, val in data.items():
-            if not isinstance(val, dict): continue
+        safe_log(f"🚀 [Diag CARSA] Lanzando motor de alta fidelidad a: {url}", "info")
+        session = requests.Session()
+        resp = session.get(url, headers=headers, timeout=20, allow_redirects=True, verify=False)
+        
+        # SI ESTO NO SALE, EL SERVIDOR NOS ESTÁ CORTANDO EL ACCESO
+        safe_log(f"📡 [Diag CARSA] Código de respuesta: {resp.status_code} | Tamaño: {len(resp.text)}", "info")
+        
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Diag CARSA] Bloqueo total por Firewall/Anti-Bot. Código {resp.status_code}", "error")
+            return []
+
+        # Si llegamos aquí, sí descargamos contenido. Ahora busquemos productos.
+        # Buscamos en el texto del HTML cualquier rastro de JSON de precios
+        matches = re.findall(r'"productName":"([^"]+)".*?"Price":(\d+\.?\d*)', resp.text)
+        
+        if not matches:
+            safe_log("🛑 [Diag CARSA] Descarga exitosa, pero no encontramos productos con el buscador de texto.", "error")
+        else:
+            for nombre, precio in matches:
+                p = float(precio)
+                if 0 < p <= limite:
+                    productos.append({"nombre": f"CARSA - {nombre}", "precio": p, "precio_regular": p, "link": url, "img": ""})
+            safe_log(f"✅ [Diag CARSA] Se encontraron {len(matches)} productos. {len(productos)} cumplen el límite.", "success")
             
-            # Buscamos productos que tengan nombre y precio
-            if 'productName' in val:
-                nombre = val['productName']
-                link = val.get('linkText', 'producto')
-                
-                # Buscamos su precio asociado en el diccionario buscando Keys que contengan el ID
-                prod_id = key.split(':')[-1]
-                precio = 0.0
-                for k2, v2 in data.items():
-                    if f"{prod_id}.commertialOffer" in k2 and 'Price' in v2:
-                        precio = float(v2.get('Price', 0))
-                        break
-                
-                # DIAGNÓSTICO: Si encontramos el nombre, lo metemos a la lista aunque supere el límite
-                # para ver si al menos el motor está capturando la info.
-                if nombre:
-                    productos.append({
-                        "nombre": f"CARSA - {nombre.upper()} (S/.{precio})",
-                        "precio": precio,
-                        "precio_regular": precio,
-                        "link": f"https://www.carsa.pe/{link}/p",
-                        "img": ""
-                    })
-                    
     except Exception as e:
-        safe_log(f"Error en extracción total: {e}", "error")
+        safe_log(f"🛑 [Diag CARSA] Error crítico: {str(e)}", "error")
         
     return productos
     
