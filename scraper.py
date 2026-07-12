@@ -46,7 +46,6 @@ LISTA_USER_AGENTS = [
 # 🛠️ HERRAMIENTAS AUXILIARES GLOBALES
 # =======================================================
 def safe_log(texto, tipo="text"):
-    """Función segura para mostrar logs tanto en la App (Streamlit) como en Consola (GitHub)"""
     try:
         if tipo == "text" or tipo == "write": st.write(texto)
         elif tipo == "caption": st.caption(texto)
@@ -184,8 +183,7 @@ def motor_belcorp(url, limite, headers):
                     "link": item["link"], 
                     "img": item["items"][0]["images"][0]["imageUrl"]
                 })
-    except Exception:
-        pass
+    except Exception: pass
     return productos
 
 def motor_conecta_retail(url, limite, headers, tag):
@@ -197,12 +195,10 @@ def motor_conecta_retail(url, limite, headers, tag):
             for t in (soup.select('.product-item') or soup.select('.product-item-info')):
                 try:
                     tit_el = t.select_one('a.product-item-link') or t.select_one('.product-item-name a')
-                    if not tit_el: 
-                        continue
+                    if not tit_el: continue
                     o_el = t.select_one('[data-price-type="finalPrice"] .price') or t.select_one('.special-price .price') or t.select_one('.price-box .price')
                     r_el = t.select_one('[data-price-type="oldPrice"] .price') or t.select_one('.old-price .price')
-                    if not o_el: 
-                        continue
+                    if not o_el: continue
                     p_o = limpiar_precio_pnp(o_el.text)
                     if 0 < p_o <= limite:
                         img_el = t.select_one('.product-image-photo') or t.find('img')
@@ -215,10 +211,8 @@ def motor_conecta_retail(url, limite, headers, tag):
                             "link": urljoin(url, tit_el['href']), 
                             "img": img
                         })
-                except Exception:
-                    continue
-    except Exception:
-        pass
+                except Exception: continue
+    except Exception: pass
     return productos
 
 def motor_falabella(url, limite, headers):
@@ -231,15 +225,11 @@ def motor_falabella(url, limite, headers):
                 resp = requests.get(url, headers=headers, timeout=15, verify=False)
                 texto_html = resp.text
                 status_code = resp.status_code
-            except Exception:
-                pass
-            if status_code == 200 and len(texto_html) > 5000: 
-                break
-            else: 
-                time.sleep(random.uniform(1.5, 3.0))
+            except Exception: pass
+            if status_code == 200 and len(texto_html) > 5000: break
+            else: time.sleep(random.uniform(1.5, 3.0))
         
-        if status_code != 200 or len(texto_html) < 5000: 
-            return []
+        if status_code != 200 or len(texto_html) < 5000: return []
         soup = BeautifulSoup(texto_html, 'html.parser')
         
         fala_prods = []
@@ -256,35 +246,28 @@ def motor_falabella(url, limite, headers):
                         if encontrados:
                             fala_prods = encontrados
                             break
-                except Exception:
-                    continue
+                except Exception: continue
 
         if fala_prods:
             for prod in fala_prods:
                 try:
                     nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or '').strip().upper()
-                    if len(nombre) < 3: 
-                        continue
+                    if len(nombre) < 3: continue
                     
                     p_o, p_r = 0.0, 0.0
                     precios_list = prod.get('prices') or prod.get('price') or []
-                    if isinstance(precios_list, dict): 
-                        precios_list = [precios_list]
+                    if isinstance(precios_list, dict): precios_list = [precios_list]
                     
                     if isinstance(precios_list, list):
                         for pr in precios_list:
-                            if not isinstance(pr, dict): 
-                                continue
+                            if not isinstance(pr, dict): continue
                             tipo_p = str(pr.get('type', '')).lower()
                             val_p = pr.get('price') or pr.get('value')
-                            if isinstance(val_p, list) and len(val_p) > 0: 
-                                val_p = val_p[0]
+                            if isinstance(val_p, list) and len(val_p) > 0: val_p = val_p[0]
                             float_p = safe_float(val_p)
                             
-                            if any(x in tipo_p for x in ['sale', 'event', 'oferta', 'internet', 'current', 'card', 'cmr', 'eventprice']): 
-                                p_o = float_p
-                            elif any(x in tipo_p for x in ['list', 'original', 'regular', 'normal', 'normalprice']): 
-                                p_r = float_p
+                            if any(x in tipo_p for x in ['sale', 'event', 'oferta', 'internet', 'current', 'card', 'cmr', 'eventprice']): p_o = float_p
+                            elif any(x in tipo_p for x in ['list', 'original', 'regular', 'normal', 'normalprice']): p_r = float_p
                         
                         if p_o == 0.0 or p_r <= p_o:
                             valores_aux = []
@@ -308,22 +291,19 @@ def motor_falabella(url, limite, headers):
                         if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
                             url_limpia = link_final.split('?')[0].split('#')[0]
                             match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+                            if match_id: img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'): img = 'https:' + str(img)
                         img = str(img).split(' ')[0].strip().rstrip(',')
                         productos.append({"nombre": f"FALABELLA - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img)})
-                except Exception:
-                    continue
+                except Exception: continue
 
         if not productos:
             items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item|item)', re.I))
             for t in items:
                 try:
                     tit_el = t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], id=re.compile(r'name', re.I)) or t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], class_=re.compile(r'(title|name|description|displayName)', re.I))
-                    if not tit_el or len(tit_el.text.strip()) < 3: 
-                        continue
+                    if not tit_el or len(tit_el.text.strip()) < 3: continue
                     
                     el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
                     el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
@@ -355,14 +335,12 @@ def motor_falabella(url, limite, headers):
                         if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
                             url_limpia = link_final.split('?')[0].split('#')[0]
                             match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id:
-                                img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+                            if match_id: img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'): img = 'https:' + str(img)
                         img = str(img).split(' ')[0].strip().rstrip(',')
                         productos.append({"nombre": f"FALABELLA - {tit_el.text.strip().upper()}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": img})
-                except Exception:
-                    continue
+                except Exception: continue
 
         vistos = set()
         productos_unicos = []
@@ -371,35 +349,26 @@ def motor_falabella(url, limite, headers):
                 vistos.add(p['link'])
                 productos_unicos.append(p)
         return productos_unicos
-    except Exception:
-        pass
+    except Exception: pass
     return productos
 
 def motor_adidas(url, limite):
     productos = []
     texto_html = ""
     status_code = 0
-    
-    headers = {
-        "user-agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9"
-    }
-    
+    headers = {"user-agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)", "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "accept-language": "es-PE,es;q=0.9"}
     try:
         with httpx.Client(http2=True, timeout=15.0, follow_redirects=True) as client:
             resp = client.get(url, headers=headers)
             status_code = resp.status_code
             texto_html = resp.text
-    except Exception:
-        pass
+    except Exception: pass
 
     safe_log(f"📊 [Diag Adidas] Código Estado: {status_code} | Peso HTML: {len(texto_html)} caracteres.", "info")
 
     if texto_html and len(texto_html) > 5000:
         texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
         soup = BeautifulSoup(texto_html, 'html.parser')
-        
         next_script = soup.find('script', id='__NEXT_DATA__')
         if next_script:
             try:
@@ -443,73 +412,65 @@ def motor_adidas(url, limite):
     return productos
 
 def motor_jbl(url, limite, headers_pass):
-    """Motor JBL Experto Blindado: Extractor Brute-Force por Regex sobre HTML crudo para evadir JS diferido"""
+    """Motor JBL Hack: Apunta directamente al controlador interno de Salesforce (Search-UpdateGrid) saltándose el renderizado diferido por JS"""
     productos = []
     texto_html = ""
     status_code = 0
-    motor_usado = ""
+    motor_usado = "Salesforce Grid Controller API Intercept"
     
-    cadena_proxies = [
-        {"name": "CorsProxy Network (Nodo Directo)", "url": f"https://corsproxy.io/?{quote(url)}", "tipo": "html"},
-        {"name": "CodeTabs Grid (Nodo Secundario)", "url": f"https://api.codetabs.com/v1/proxy?url={quote(url, safe='')}", "tipo": "html"},
-        {"name": "AllOrigins Cache Mirror", "url": f"https://api.allorigins.win/get?url={quote(url, safe='')}", "tipo": "json"}
-    ]
+    # Construimos la URL del endpoint interno de Salesforce pasándole los filtros de búsqueda dinámicos ordenados de menor a mayor precio
+    api_endpoint = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid?cgid=speakers&srule=price-low-to-high&sz=36"
+    if "barra-de-sonido" in url.lower() or "soundbar" in url.lower():
+        api_endpoint = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid?cgid=soundbar&srule=price-low-to-high&sz=36"
+    elif "audifono" in url.lower() or "headphone" in url.lower():
+        api_endpoint = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid?cgid=headphones&srule=price-low-to-high&sz=36"
+
+    # Enrutamos la petición de la API a través de CorsProxy para que Cloudflare no la detenga
+    proxy_url = f"https://corsproxy.io/?{quote(api_endpoint)}"
     
-    for nodo in cadena_proxies:
-        try:
-            resp = requests.get(nodo["url"], timeout=8)
-            if resp.status_code == 200:
-                if nodo["tipo"] == "json":
-                    texto_html = resp.json().get('contents', '')
-                else:
-                    texto_html = resp.text
-                if texto_html and len(texto_html) > 5000:
-                    status_code = 200
-                    motor_usado = nodo["name"]
-                    break
-        except Exception:
-            continue
+    try:
+        resp = requests.get(proxy_url, timeout=12)
+        status_code = resp.status_code
+        if status_code == 200 and len(resp.text) > 1000:
+            texto_html = resp.text
+    except Exception as e:
+        safe_log(f"Caída en API Salesforce JBL: {e}", "caption")
 
-    safe_log(f"📊 [Diag JBL] Estado Servidor: {status_code} | Tamaño Código Real: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
+    safe_log(f"📊 [Diag JBL API] Estado Servidor: {status_code} | Tamaño Fragmento: {len(texto_html)} letras | Enrutador: {motor_usado}", "info")
 
-    if texto_html and len(texto_html) > 5000:
-        # --- ESTRATEGIA A: MINERÍA BRUTE-FORCE POR REGEX SOBRE TEXTO PLANO ---
-        # Buscamos enlaces relativos o absolutos de productos que contengan guiones, seguidos de su nombre
-        candidatos_urls = re.findall(r'href="([^"]+?\.html|/[a-zA-Z0-9\-_]+?\?pid=[a-zA-Z0-9_\-]+|/barra-de-sonido[^"]*?)"', texto_html)
-        candidatos_urls = list(set([urljoin("https://www.jbl.com.pe", u) for u in candidatos_urls]))
-        
-        # Filtramos URLs inválidas corporativas
-        urls_validas = []
-        for u in candidatos_urls:
-            u_low = u.lower()
-            if not any(x in u_low for x in ["/pricing", "/cart", "/account", "/login", "/search", "support", "ayuda", "cookies", "terminos", "isrefurbished"]):
-                if "jbl.com.pe" in u_low and len(u_low) > 28:
-                    urls_validas.append(u)
-
-        # Usamos BeautifulSoup para buscar bloques de tarjetas tradicionales como Fallback
+    if texto_html and len(texto_html) > 1000:
         soup = BeautifulSoup(texto_html, 'html.parser')
-        tiles = soup.select('.product-tile, .product, .grid-item, .product-item, .product-card, [data-pid]')
-        
+        # Buscamos las tarjetas de producto reales inyectadas nativamente en la cuadrícula de respuesta
+        tiles = soup.select('.product-tile, .product, .grid-item, .product-item, .product-card, .tile-body')
+        if not tiles:
+            tiles = soup.find_all(['div', 'li'], class_=re.compile(r'(tile|product|card|item)', re.I))
+            
         for t in tiles:
             try:
+                # Extraer enlace y nombre (.pdp-link es el estándar absoluto de Salesforce)
                 link_el = t.select_one('.pdp-link a, .product-name a, a.pdp-link') or t.find('a', href=True)
                 if not link_el or not link_el.get('href'): continue
-                link_prod = urljoin("https://www.jbl.com.pe", link_el['href'])
                 
-                if any(x in link_prod.lower() for x in ["/pricing", "/cart", "/account", "/login", "/search"]):
-                    continue
+                link_prod = urljoin("https://www.jbl.com.pe", link_el['href'])
+                if any(x in link_prod.lower() for x in ["/pricing", "/cart", "/account", "/login"]): continue
                 
                 nombre = link_el.text.strip() or (t.select_one('.product-name, .title, h3') and t.select_one('.product-name, .title, h3').text.strip()) or ""
-                nombre = nombre.upper()
-                if len(nombre) < 4 or "FILTRAR" in nombre: continue
+                nombre = nombre.upper().replace('\n', '').strip()
+                if len(nombre) < 4 or any(x in nombre for x in ["FILTRAR", "COMPRAR", "MENÚ"]): continue
                 
-                # Extraer precios de forma agresiva de la tarjeta
+                # Extraer precios mapeando la clase visual .sales de Salesforce
                 nums = []
+                sales_el = t.select_one('.sales .value, .price .sales, .sales, .price-sales, .value')
+                if sales_el:
+                    val_c = sales_el.get('content') or sales_el.text
+                    val = limpiar_precio_pnp(str(val_c))
+                    if 0 < val <= limite: nums.append(val)
+                    
                 precios_texto = re.findall(r'(?:S/\.?\s*)(\b\d[\d\.,]*\b)', t.text)
                 for p in precios_texto:
                     val = limpiar_precio_pnp(p)
                     if 0 < val <= limite: nums.append(val)
-                
+                        
                 for el in t.find_all(True):
                     for attr in ['data-price', 'data-price-value', 'content', 'price']:
                         if el.has_attr(attr):
@@ -519,32 +480,24 @@ def motor_jbl(url, limite, headers_pass):
                 if not nums: continue
                 nums = sorted(list(set(nums)))
                 p_o = nums[0]
-                p_r = nums[-1]
+                p_r = nums[-1] if len(nums) > 1 else p_o
                 
-                img_el = t.find('img')
-                img = img_el.get('data-src') or img_el.get('src') or "" if img_el else ""
+                # Extraer imagen de producto (.tile-image es la clase nativa de Salesforce)
+                img_el = t.select_one('.tile-image, .product-image img, img')
+                img = ""
+                if img_el:
+                    img = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
                 if str(img).startswith('//'): img = 'https:' + str(img)
+                if not img or len(img) < 10: img = "https://www.jbl.com.pe/dw/image/v2/AAUJ_PRD/on/demandware.static/-/Sites-masterCatalog_Harman/default/dw4fce571a/JBL_Logo.png"
                 
-                productos.append({"nombre": f"JBL - {nombre}", "precio": p_o, "precio_regular": p_r, "link": link_prod, "img": str(img).strip()})
-            except Exception: continue
-
-        # --- TELEMETRÍA DE SEGURIDAD SI LA RECOLECCIÓN DEL DOM DEJO EN 0 ---
-        if not productos and urls_validas:
-            safe_log(f"🕵️‍♂️ [Alerta Debug JBL] El DOM visual falló, pero Regex detectó {len(urls_validas)} enlaces de productos en el HTML crudo. Inyectando bypass dinámico...", "warning")
-            # Inyectamos las URLs encontradas usando metadatos base para que el usuario las vea e indexe
-            for i, link_f in enumerate(urls_validas[:6]):
-                # Creamos un nombre limpio basado en el texto de la URL
-                slug = link_f.split('/')[-1].split('?')[0].replace('.html','').replace('-',' ').upper()
-                if len(slug) < 5: slug = "BARRA DE SONIDO / AUDIFONO COMPATIBLE"
-                
-                # Buscamos precios genéricos cercanos en el HTML para no dejar en 0
                 productos.append({
-                    "nombre": f"JBL - {slug}",
-                    "precio": float(limite - 50.0), # Valor mock referencial bajo el límite para forzar renderizado de diagnóstico
-                    "precio_regular": float(limite),
-                    "link": link_f,
-                    "img": "https://pms-cloud.jbl.com.pe/firewall-bypass-placeholder.png"
+                    "nombre": f"JBL - {nombre}", 
+                    "precio": p_o, 
+                    "precio_regular": max(p_r, p_o), 
+                    "link": link_prod, 
+                    "img": str(img).strip()
                 })
+            except Exception: continue
 
     vistos = set()
     productos_unicos = []
@@ -554,7 +507,7 @@ def motor_jbl(url, limite, headers_pass):
             productos_unicos.append(p)
             
     if productos_unicos: 
-        safe_log(f"🎯 Motor JBL: ¡Se extrajeron exitosamente {len(productos_unicos)} productos!", "success")
+        safe_log(f"🎯 Motor JBL API: ¡Se extrajeron exitosamente {len(productos_unicos)} productos reales de la grilla!", "success")
     return productos_unicos
 
 def motor_platanitos(url, limite):
@@ -696,8 +649,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 
                 if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
                     palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA", "SABANAS", "ALMOHADAS"]
-                    if any(bad in n_u for bad in palabras_prohibidas):
-                        continue
+                    if any(bad in n_u for bad in palabras_prohibidas): continue
                 
                 if n_u in enviados: continue
                 enviados.add(n_u)
@@ -728,8 +680,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 debe_alertar = False
                 if precio_anterior is not None:
                     if p_v < precio_anterior: debe_alertar = True
-                else:
-                    debe_alertar = False
+                else: debe_alertar = False
                 
                 if debe_alertar:
                     emoji = mapa_emojis.get(grupo, "🔥")
