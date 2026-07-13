@@ -394,8 +394,49 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers):
-    """(Motor estacionado temporalmente)"""
-    return []
+    """Motor Forense JBL: Sonda de diagnóstico para Salesforce Commerce Cloud"""
+    import streamlit as st
+    import requests
+    
+    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN JBL: {url}")
+    
+    # Usamos cabeceras limpias para presentarnos ante Salesforce
+    cabeceras = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+
+    try:
+        st.write("📡 Intentando conexión directa con los servidores de JBL Perú...")
+        resp = requests.get(url, headers=cabeceras, timeout=15, verify=False)
+        
+        st.code(f"Código de Estado: {resp.status_code}\nLongitud HTML: {len(resp.text)} caracteres", language="text")
+        
+        html_text = resp.text
+        
+        # Buscamos un recorte donde se hable de precios o productos
+        idx = html_text.lower().find('go 4')
+        if idx == -1: 
+            idx = html_text.lower().find('price')
+        if idx == -1:
+            idx = html_text.lower().find('product')
+            
+        start = max(0, idx - 500)
+        end = min(len(html_text), idx + 2500)
+        
+        with st.expander("🔍 Ver fragmento clave del código fuente (Estructura de productos)"):
+            st.code(html_text[start:end], language="html")
+            
+        with st.expander("🔍 Ver inicio del código fuente (Scripts de Salesforce)"):
+            st.code(html_text[:2000], language="html")
+
+        st.error("🛑 DIAGNÓSTICO JBL TERMINADO. Por favor, abre los expansores, copia el contenido o tómale una captura y envíamelo para armar el extractor definitivo.")
+        
+    except Exception as e:
+        st.error(f"🛑 Fallo en la conexión con JBL: {e}")
+
+    return [] # Devolvemos vacío para que tu app siga corriendo sin problemas
 
 def motor_platanitos(url, limite):
     productos = []
