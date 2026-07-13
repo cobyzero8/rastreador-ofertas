@@ -558,81 +558,71 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Definitivo: Extractor híbrido con telemetría en vivo en Streamlit"""
+    """Motor OECHSLE Profesional: Conexión directa a la API de base de datos de VTEX"""
     productos = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9"
-    }
     
     try:
-        safe_log("📡 [Oechsle] Sincronizando con los servidores de VTEX Portal...", "info")
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: 
-            safe_log(f"🛑 [Oechsle] El servidor rechazó la conexión. Código: {resp.status_code}", "error")
+        safe_log("📡 [Oechsle] Extrayendo parámetros de búsqueda de la URL...", "info")
+        
+        # Analizamos la URL para extraer los filtros exactos (fq, O, etc.)
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        
+        # Construimos la ruta hacia la API oculta de datos de Oechsle
+        api_url = "https://www.oechsle.pe/api/catalog_system/pub/products/search"
+        
+        # Mapeamos los filtros originales para enviárselos directamente a la base de datos
+        params = {}
+        if 'fq' in query_params:
+            params['fq'] = query_params['fq']
+        if 'O' in query_params:
+            params['O'] = query_params['O']
+            
+        # Si la URL no tiene filtros, usamos el final de la ruta como palabra clave de búsqueda
+        if not params:
+            path_parts = [p for p in parsed_url.path.split('/') if p]
+            if path_parts:
+                params['ft'] = path_parts[-1]
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "application/json" # Le exigimos al servidor que nos responda con datos limpios, no con HTML
+        }
+        
+        safe_log("📡 [Oechsle] Conectando directamente con la API de Catálogo...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Oechsle] API inaccesible. Código de error del servidor: {resp.status_code}", "error")
             return []
+            
+        data = resp.json()
+        safe_log(f"🔍 [Oechsle] Base de datos leída. Se encontraron {len(data)} productos en el JSON original.", "info")
         
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # 1. Intentar capturar por clases de diseño de Oechsle
-        tarjetas = soup.select('.product-shelf__item') or soup.select('.product-card') or soup.select('li[vtexid]') or soup.select('.shelf-item')
-        
-        # 2. Respaldo Quirúrgico: Si cambian las clases, rastreamos enlaces que terminen en /p (Obligatorio en VTEX)
-        if not tarjetas:
-            vistos_parents = set()
-            for a in soup.find_all('a', href=True):
-                href = a['href'].lower().split('?')[0]
-                if href.endswith('/p') or '/p/' in href or '-/p' in href:
-                    parent = a.parent
-                    for _ in range(4):
-                        if parent and parent.name in ['div', 'li'] and parent not in vistos_parents:
-                            tarjetas.append(parent)
-                            vistos_parents.add(parent)
-                            break
-                        if parent: parent = parent.parent
-        
-        safe_log(f"🔍 [Oechsle] Se detectaron {len(tarjetas)} bloques de productos en el código HTML.", "info")
-        
-        vistos_links = set()
-        for t in tarjetas:
+        for item in data:
             try:
-                # Extraer Enlace y Nombre
-                tit_el = t.select_one('.product-name a') or t.select_one('.product-shelf__name') or t.select_one('a[href*="/p"]') or t.find('a', href=True)
-                if not tit_el or not tit_el.get('href'): continue
+                nombre = item.get('productName', '').upper()
+                link_final = item.get('link', url)
                 
-                link_final = urljoin("https://www.oechsle.pe", tit_el['href'])
-                if link_final in vistos_links: continue
+                # Navegamos de forma segura en la estructura interna de precios de VTEX
+                items_list = item.get('items', [])
+                if not items_list: continue
                 
-                nombre = tit_el.text.strip().upper()
-                if len(nombre) < 4 or "OECHSLE" in nombre: continue
+                first_item = items_list[0]
+                sellers = first_item.get('sellers', [])
+                if not sellers: continue
                 
-                # Extraer Precios (Mapeo de etiquetas nativas de Oechsle)
-                o_el = t.select_one('.product-shelf__best-price') or t.select_one('.bestPrice') or t.select_one('.skuBestPrice') or t.select_one('.best-price')
-                r_el = t.select_one('.product-shelf__old-price') or t.select_one('.listPrice') or t.select_one('.skuListPrice') or t.select_one('.old-price')
+                offer = sellers[0].get('commertialOffer', {})
+                p_o = float(offer.get('Price', 0.0))
+                p_r = float(offer.get('ListPrice', p_o))
                 
-                p_o, p_r = 0.0, 0.0
-                if o_el:
-                    p_o = limpiar_precio_pnp(o_el.text)
-                    p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
-                    
-                # Respaldo por Texto (Regex) si las etiquetas fallan
-                if p_o == 0.0:
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                    if textos_precios:
-                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                        p_o = nums[0] if nums else 0.0
-                        p_r = nums[-1] if len(nums) > 1 else p_o
+                # Extraemos la imagen en alta definición
+                images = first_item.get('images', [])
+                img_url = images[0].get('imageUrl', '') if images else ""
+                if img_url.startswith('//'): img_url = 'https:' + img_url
                 
-                # Validar filtros de precios e indexar imágenes
+                # Validamos contra el presupuesto asignado en Supabase
                 if 0 < p_o <= limite:
-                    img_el = t.find('img')
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get('data-src') or img_el.get('src') or ""
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
-                    
-                    vistos_links.add(link_final)
                     productos.append({
                         "nombre": f"OECHSLE - {nombre}",
                         "precio": p_o,
@@ -642,15 +632,14 @@ def motor_oechsle(url, limite):
                     })
             except Exception:
                 continue
-        
-        # Reporte final en pantalla para que el usuario sepa qué pasó
-        if productos:
-            safe_log(f"✅ [Oechsle] ¡Éxito! Indexados {len(productos)} parlantes dentro de tu presupuesto.", "success")
-        else:
-            safe_log(f"⚠️ [Oechsle] Catálogo leído correctamente, pero ningún producto está por debajo de S/. {limite:.2f}", "warning")
                 
+        if productos:
+            safe_log(f"✅ [Oechsle] ¡Éxito Total! Indexados {len(productos)} productos que cumplen el presupuesto.", "success")
+        else:
+            safe_log(f"⚠️ [Oechsle] API analizada con éxito, pero ningún producto baja de S/. {limite:.2f}", "warning")
+            
     except Exception as e:
-        safe_log(f"🛑 [Oechsle] Error crítico inesperado: {e}", "error")
+        safe_log(f"🛑 [Oechsle] Error crítico inesperado en el módulo: {e}", "error")
         
     return productos
 
