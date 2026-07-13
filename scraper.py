@@ -394,49 +394,111 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers):
-    """Motor Forense JBL: Sonda de diagnóstico para Salesforce Commerce Cloud"""
-    import streamlit as st
-    import requests
-    
-    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN JBL: {url}")
-    
-    # Usamos cabeceras limpias para presentarnos ante Salesforce
+    """Motor JBL Definitivo: Extractor híbrido de alta precisión para Salesforce Commerce Cloud"""
+    productos = []
     cabeceras = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
-
+    
     try:
-        st.write("📡 Intentando conexión directa con los servidores de JBL Perú...")
+        safe_log("📡 [JBL] Sincronizando con los servidores de Salesforce...", "info")
         resp = requests.get(url, headers=cabeceras, timeout=15, verify=False)
+        if resp.status_code != 200:
+            safe_log(f"🛑 [JBL] Acceso denegado por el servidor. Código: {resp.status_code}", "error")
+            return []
         
-        st.code(f"Código de Estado: {resp.status_code}\nLongitud HTML: {len(resp.text)} caracteres", language="text")
+        soup = BeautifulSoup(resp.text, 'html.parser')
         
-        html_text = resp.text
+        # 1. Intentar capturar directo desde las tarjetas visuales de Salesforce (.product-tile)
+        tarjetas = soup.select('.product-tile') or soup.select('.grid-tile') or soup.find_all(class_=re.compile(r'product-tile', re.I))
+        safe_log(f"🔍 [JBL] Se detectaron {len(tarjetas)} tarjetas visuales en el diseño HTML.", "info")
         
-        # Buscamos un recorte donde se hable de precios o productos
-        idx = html_text.lower().find('go 4')
-        if idx == -1: 
-            idx = html_text.lower().find('price')
-        if idx == -1:
-            idx = html_text.lower().find('product')
+        vistos_links = set()
+        
+        if tarjetas:
+            for t in tarjetas:
+                try:
+                    # Extraer Enlace y Nombre
+                    link_el = t.select_one('.pdp-link a') or t.select_one('.product-name a') or t.select_one('a.link') or t.find('a', href=True)
+                    if not link_el or not link_el.get('href'): continue
+                    
+                    link_final = urljoin("https://www.jbl.com.pe", link_el['href'])
+                    if link_final in vistos_links: continue
+                    
+                    nombre = link_el.text.strip().upper()
+                    if len(nombre) < 3: continue
+                    
+                    # Extraer Precios (Clases nativas de cotización en Salesforce)
+                    o_el = t.select_one('.price .value') or t.select_one('.sales .value') or t.select_one('.price')
+                    r_el = t.select_one('.price .strike-through') or t.select_one('.list .value')
+                    
+                    p_o = limpiar_precio_pnp(o_el.text) if o_el else 0.0
+                    p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
+                    
+                    # Extraer Imagen
+                    img_el = t.find('img')
+                    img_url = ""
+                    if img_el:
+                        img_url = img_el.get('src') or img_el.get('data-src') or ""
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+                    
+                    if 0 < p_o <= limite:
+                        vistos_links.add(link_final)
+                        productos.append({
+                            "nombre": f"JBL - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_url
+                        })
+                except Exception:
+                    continue
+                    
+        # 2. HACK DE RESPALDO QUIRÚRGICO: Si las tarjetas no cargaron, procesamos la mina de oro del DataLayer
+        if not productos:
+            matches = re.findall(r'\{"name":"([^"]+)","id":"([^"]+)",.*?"price":(\d+).*?\}', resp.text)
+            if matches:
+                safe_log(f"⚡ [JBL] Activando extracción por DataLayer interno ({len(matches)} modelos encontrados)...", "info")
+                for name, prod_id, price in matches:
+                    try:
+                        p_o = float(price)
+                        nombre = name.strip().upper()
+                        
+                        if 0 < p_o <= limite:
+                            # Reconstrucción inteligente del enlace directo usando el árbol HTML
+                            slug = nombre.lower().replace(' ', '-')
+                            link_final = f"https://www.jbl.com.pe/{slug}.html"
+                            
+                            # Intentar buscar si el enlace real está impreso en alguna parte de la página
+                            for a_tag in soup.find_all('a', href=True):
+                                if prod_id.lower() in a_tag['href'].lower() or slug[:10] in a_tag['href'].lower():
+                                    link_final = urljoin("https://www.jbl.com.pe", a_tag['href'])
+                                    break
+                                    
+                            if link_final in vistos_links: continue
+                            vistos_links.add(link_final)
+                            
+                            productos.append({
+                                "nombre": f"JBL - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": p_o,
+                                "link": link_final,
+                                "img": "" # Las fotos se vinculan al abrir la ficha, se prioriza precio/link
+                            })
+                    except Exception:
+                        continue
+                        
+        if productos:
+            safe_log(f"✅ [JBL] ¡Éxito Total! Indexados {len(productos)} parlantes JBL dentro de tu presupuesto.", "success")
+        else:
+            safe_log(f"⚠️ [JBL] Catálogo leído correctamente, pero ningún producto está por debajo de S/. {limite:.2f}", "warning")
             
-        start = max(0, idx - 500)
-        end = min(len(html_text), idx + 2500)
-        
-        with st.expander("🔍 Ver fragmento clave del código fuente (Estructura de productos)"):
-            st.code(html_text[start:end], language="html")
-            
-        with st.expander("🔍 Ver inicio del código fuente (Scripts de Salesforce)"):
-            st.code(html_text[:2000], language="html")
-
-        st.error("🛑 DIAGNÓSTICO JBL TERMINADO. Por favor, abre los expansores, copia el contenido o tómale una captura y envíamelo para armar el extractor definitivo.")
-        
     except Exception as e:
-        st.error(f"🛑 Fallo en la conexión con JBL: {e}")
-
-    return [] # Devolvemos vacío para que tu app siga corriendo sin problemas
+        safe_log(f"🛑 [JBL] Error crítico inesperado en el módulo: {e}", "error")
+        
+    return productos
 
 def motor_platanitos(url, limite):
     productos = []
