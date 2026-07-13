@@ -558,7 +558,7 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Definitivo: Extractor híbrido ultra-resiliente para VTEX Legacy"""
+    """Motor OECHSLE Definitivo: Extractor híbrido con telemetría en vivo en Streamlit"""
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -567,35 +567,37 @@ def motor_oechsle(url, limite):
     }
     
     try:
+        safe_log("📡 [Oechsle] Sincronizando con los servidores de VTEX Portal...", "info")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200: return []
+        if resp.status_code != 200: 
+            safe_log(f"🛑 [Oechsle] El servidor rechazó la conexión. Código: {resp.status_code}", "error")
+            return []
         
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 1. Intentar capturar usando las clases reales de la estantería de Oechsle
+        # 1. Intentar capturar por clases de diseño de Oechsle
         tarjetas = soup.select('.product-shelf__item') or soup.select('.product-card') or soup.select('li[vtexid]') or soup.select('.shelf-item')
         
-        # 2. Estrategia de respaldo basada en enlaces (/p) si el diseño de cajas cambia por completo
+        # 2. Respaldo Quirúrgico: Si cambian las clases, rastreamos enlaces que terminen en /p (Obligatorio en VTEX)
         if not tarjetas:
-            tarjetas = []
             vistos_parents = set()
             for a in soup.find_all('a', href=True):
-                href = a['href'].split('?')[0]
+                href = a['href'].lower().split('?')[0]
                 if href.endswith('/p') or '/p/' in href or '-/p' in href:
                     parent = a.parent
                     for _ in range(4):
                         if parent and parent.name in ['div', 'li'] and parent not in vistos_parents:
-                            clasa = "".join(parent.get('class', [])).lower()
-                            if any(k in clasa for k in ['item', 'card', 'shelf', 'prod', 'container']):
-                                tarjetas.append(parent)
-                                vistos_parents.add(parent)
-                                break
+                            tarjetas.append(parent)
+                            vistos_parents.add(parent)
+                            break
                         if parent: parent = parent.parent
+        
+        safe_log(f"🔍 [Oechsle] Se detectaron {len(tarjetas)} bloques de productos en el código HTML.", "info")
         
         vistos_links = set()
         for t in tarjetas:
             try:
-                # Extraer Enlace y Nombre del producto
+                # Extraer Enlace y Nombre
                 tit_el = t.select_one('.product-name a') or t.select_one('.product-shelf__name') or t.select_one('a[href*="/p"]') or t.find('a', href=True)
                 if not tit_el or not tit_el.get('href'): continue
                 
@@ -603,9 +605,9 @@ def motor_oechsle(url, limite):
                 if link_final in vistos_links: continue
                 
                 nombre = tit_el.text.strip().upper()
-                if len(nombre) < 4: continue
+                if len(nombre) < 4 or "OECHSLE" in nombre: continue
                 
-                # Extraer Precios (Mapeando selectores nativos de Oechsle y VTEX estándar)
+                # Extraer Precios (Mapeo de etiquetas nativas de Oechsle)
                 o_el = t.select_one('.product-shelf__best-price') or t.select_one('.bestPrice') or t.select_one('.skuBestPrice') or t.select_one('.best-price')
                 r_el = t.select_one('.product-shelf__old-price') or t.select_one('.listPrice') or t.select_one('.skuListPrice') or t.select_one('.old-price')
                 
@@ -614,17 +616,15 @@ def motor_oechsle(url, limite):
                     p_o = limpiar_precio_pnp(o_el.text)
                     p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
                     
-                # Respaldo por análisis de texto de la tarjeta si las clases fallan
+                # Respaldo por Texto (Regex) si las etiquetas fallan
                 if p_o == 0.0:
                     textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                     if textos_precios:
                         nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
                         p_o = nums[0] if nums else 0.0
                         p_r = nums[-1] if len(nums) > 1 else p_o
-                    else:
-                        continue
                 
-                # Filtrar por límite e indexar la imagen real
+                # Validar filtros de precios e indexar imágenes
                 if 0 < p_o <= limite:
                     img_el = t.find('img')
                     img_url = ""
@@ -642,9 +642,15 @@ def motor_oechsle(url, limite):
                     })
             except Exception:
                 continue
+        
+        # Reporte final en pantalla para que el usuario sepa qué pasó
+        if productos:
+            safe_log(f"✅ [Oechsle] ¡Éxito! Indexados {len(productos)} parlantes dentro de tu presupuesto.", "success")
+        else:
+            safe_log(f"⚠️ [Oechsle] Catálogo leído correctamente, pero ningún producto está por debajo de S/. {limite:.2f}", "warning")
                 
     except Exception as e:
-        print(f"Error en motor Oechsle: {e}")
+        safe_log(f"🛑 [Oechsle] Error crítico inesperado: {e}", "error")
         
     return productos
 
