@@ -747,6 +747,64 @@ def motor_oechsle(url, limite):
         
     return productos
 
+def motor_wong(url, limite):
+    """Motor Forense WONG: Sonda de diagnóstico para VTEX IO (Intelligent Search)"""
+    import streamlit as st
+    import requests
+    from bs4 import BeautifulSoup
+    import json
+    
+    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN WONG: {url}")
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+
+    try:
+        st.write("📡 Intentando conexión directa con los servidores de Wong...")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        
+        st.code(f"Código de Estado: {resp.status_code}\nLongitud HTML: {len(resp.text)} caracteres", language="text")
+        
+        html_text = resp.text
+        
+        # Buscamos la etiqueta __STATE__ de VTEX IO
+        state_idx = html_text.find('__STATE__')
+        
+        if state_idx != -1:
+            st.success("💡 ¡BINGO! Se detectó la etiqueta de base de datos interna '__STATE__' de VTEX IO.")
+            # Extraemos un bloque de texto alrededor del estado para ver cómo vienen estructurados los precios
+            start = max(0, state_idx - 100)
+            end = min(len(html_text), state_idx + 4000)
+            
+            with st.expander("🔍 Ver fragmento clave del JSON de base de datos (__STATE__)"):
+                st.code(html_text[start:end], language="javascript")
+        else:
+            st.error("⚠️ No se encontró la etiqueta '__STATE__'. Buscando alternativas en el HTML...")
+            # Fallback: buscar cualquier rastro de televisores o precios
+            idx = html_text.lower().find('televisor')
+            if idx == -1: 
+                idx = html_text.lower().find('price')
+                
+            start = max(0, idx - 200)
+            end = min(len(html_text), idx + 2000)
+            
+            with st.expander("🔍 Ver fragmento clave del código fuente"):
+                st.code(html_text[start:end], language="html")
+                
+        with st.expander("🔍 Ver cabecera del HTML de Wong"):
+            st.code(html_text[:2000], language="html")
+
+        st.error("🛑 DIAGNÓSTICO WONG TERMINADO. Por favor, abre los expansores (especialmente el de __STATE__ si se puso verde), tómale captura o copia el código y envíamelo.")
+        
+    except Exception as e:
+        st.error(f"🛑 Fallo en la conexión con Wong: {e}")
+
+    return [] # Devolvemos lista vacía para no interferir con las alertas activas
+
+
 def motor_tradicional_general(url, limite, headers):
     productos = []
     try:
@@ -791,6 +849,7 @@ def escanear_tienda(url, limite):
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
+    elif "wong.pe" in dominio: return motor_wong(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
