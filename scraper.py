@@ -748,7 +748,7 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_wong(url, limite):
-    """Motor WONG Definitivo: Extractor quirúrgico con filtro estricto de tecnología y hogar"""
+    """Motor WONG Definitivo: Extractor de alta fidelidad con protección de precios y filtros limpios"""
     import json
     import re
     productos = []
@@ -758,7 +758,7 @@ def motor_wong(url, limite):
         "Accept-Language": "es-PE,es;q=0.9"
     }
     
-    # 🛡️ LISTA ESTRICTA DE PALABRAS CLAVE PERMITIDAS
+    # 🛡️ LISTA DE CATEGORÍAS PERMITIDAS (Búsqueda de coincidencia directa)
     CATEGORIAS_PERMITIDAS = [
         "TV", "TELEVISOR", "SMART TV", "OLED", "QLED", "UHD", "LED", "PULGADAS", "NANOCELL",
         "REFRIGERADORA", "REFRIGERADOR", "FRIGOBAR", "FREEZER",
@@ -792,7 +792,7 @@ def motor_wong(url, limite):
                 except Exception as je:
                     safe_log(f"⚠️ [Wong] Error al parsear JSON del template __STATE__: {je}", "warning")
         
-        # Respaldo: buscar __STATE__ directamente en todo el texto HTML si no está en la etiqueta <template>
+        # Respaldo: buscar __STATE__ directamente en todo el texto HTML
         if not state_data:
             match = re.search(r'__STATE__\s*=\s*({.*?});', resp.text)
             if match:
@@ -805,8 +805,6 @@ def motor_wong(url, limite):
             safe_log("🛑 [Wong] No se pudo encontrar la base de datos interna (__STATE__).", "error")
             return []
         
-        safe_log("⚡ [Wong] Base de datos de VTEX IO decodificada con éxito. Filtrando categorías requeridas...", "info")
-        
         # 1. Identificar productos en la caché de Apollo
         products_by_cache_id = {}
         for key, val in state_data.items():
@@ -815,8 +813,8 @@ def motor_wong(url, limite):
                 nombre = val.get('productName', '').upper()
                 link_rel = val.get('link', '')
                 
-                # 🛡️ FILTRADO QUIRÚRGICO: Solo procesamos si el nombre contiene alguna palabra clave válida
-                if any(re.search(rf"\b{cat}\b", nombre) for cat in CATEGORIAS_PERMITIDAS):
+                # 🛡️ FILTRADO QUIRÚRGICO: Coincidencia directa sin problemas de límites de palabra (\b)
+                if any(cat in nombre for cat in CATEGORIAS_PERMITIDAS):
                     products_by_cache_id[cache_id] = {
                         "nombre": nombre,
                         "link": urljoin("https://www.wong.pe", link_rel),
@@ -825,31 +823,46 @@ def motor_wong(url, limite):
                         "img": ""
                     }
         
+        safe_log(f"⚡ [Wong] Cache decodificada. Se detectaron {len(products_by_cache_id)} productos de tecnología potenciales.", "info")
+        
         # 2. Reconstruir los datos planos (precios e imágenes) cruzando la caché
         for key, val in state_data.items():
             if not isinstance(val, dict): continue
             for cache_id, p_info in products_by_cache_id.items():
                 if cache_id in key:
-                    # Extraer precios
+                    # Extraer precio de oferta
                     for p_key in ['sellingPrice', 'lowPrice', 'Price', 'price']:
                         if p_key in val and val[p_key] is not None:
                             try:
-                                p_info['price'] = float(val[p_key])
-                                break
+                                new_price = float(val[p_key])
+                                # 🛡️ EVITAR SOBREESCRITURA CON CERO: Solo actualiza si encontramos un valor real de precio
+                                if new_price > 0 and (p_info['price'] == 0.0 or new_price < p_info['price']):
+                                    p_info['price'] = new_price
+                                    break
                             except (ValueError, TypeError):
                                 pass
-                    for op_key in ['listPrice', 'highPrice', 'ListPrice', 'listPrice']:
+                                
+                    # Extraer precio regular
+                    for op_key in ['highPrice', 'listPrice', 'ListPrice']:
                         if op_key in val and val[op_key] is not None:
                             try:
-                                p_info['old_price'] = float(val[op_key])
-                                break
+                                new_old_price = float(val[op_key])
+                                if new_old_price > 0 and (p_info['old_price'] == 0.0 or new_old_price > p_info['old_price']):
+                                    p_info['old_price'] = new_old_price
+                                    break
                             except (ValueError, TypeError):
                                 pass
+                                
                     # Extraer imagen
                     if 'imageUrl' in val and val['imageUrl']:
                         p_info['img'] = val['imageUrl']
         
-        # 3. Filtrar por presupuesto y empaquetar ofertas
+        # 3. Registro de depuración rápido (Muestra en pantalla los primeros 3 para asegurar lectura limpia)
+        tech_list = list(products_by_cache_id.values())[:3]
+        for idx, item in enumerate(tech_list):
+            safe_log(f"📋 [Debug Wong {idx+1}] {item['nombre'][:40]}... | Precio: S/. {item['price']}", "info")
+        
+        # 4. Filtrar por presupuesto y empaquetar ofertas
         vistos_links = set()
         for cache_id, p_info in products_by_cache_id.items():
             nombre = p_info['nombre']
