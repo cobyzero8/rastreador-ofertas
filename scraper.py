@@ -748,7 +748,7 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_wong(url, limite):
-    """Motor WONG Definitivo: Extractor quirúrgico de alto rendimiento para VTEX IO (__STATE__)"""
+    """Motor WONG Definitivo: Extractor quirúrgico con filtro estricto de tecnología y hogar"""
     import json
     import re
     productos = []
@@ -757,6 +757,19 @@ def motor_wong(url, limite):
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
+    
+    # 🛡️ LISTA ESTRICTA DE PALABRAS CLAVE PERMITIDAS
+    CATEGORIAS_PERMITIDAS = [
+        "TV", "TELEVISOR", "SMART TV", "OLED", "QLED", "UHD", "LED", "PULGADAS", "NANOCELL",
+        "REFRIGERADORA", "REFRIGERADOR", "FRIGOBAR", "FREEZER",
+        "LAVADORA", "SECADORA", "LAVASECA",
+        "CELULAR", "SMARTPHONE", "MOVIL", "MÓVIL",
+        "BARRA DE SONIDO", "SOUNDBAR",
+        "PARLANTE", "ALTAVOZ", "SPEAKER", "BLUETOOTH",
+        "AUDIFONOS", "AUDÍFONOS", "AURICULARES", "HEADPHONES",
+        "CAMA", "COLCHON", "COLCHÓN", "TARIMA",
+        "COCINA", "HORNO", "ENCIMERA"
+    ]
     
     try:
         safe_log("📡 [Wong] Sincronizando con los servidores de Cencosud...", "info")
@@ -792,7 +805,7 @@ def motor_wong(url, limite):
             safe_log("🛑 [Wong] No se pudo encontrar la base de datos interna (__STATE__).", "error")
             return []
         
-        safe_log("⚡ [Wong] Base de datos de VTEX IO decodificada con éxito. Procesando caché...", "info")
+        safe_log("⚡ [Wong] Base de datos de VTEX IO decodificada con éxito. Filtrando categorías requeridas...", "info")
         
         # 1. Identificar productos en la caché de Apollo
         products_by_cache_id = {}
@@ -802,13 +815,15 @@ def motor_wong(url, limite):
                 nombre = val.get('productName', '').upper()
                 link_rel = val.get('link', '')
                 
-                products_by_cache_id[cache_id] = {
-                    "nombre": nombre,
-                    "link": urljoin("https://www.wong.pe", link_rel),
-                    "price": 0.0,
-                    "old_price": 0.0,
-                    "img": ""
-                }
+                # 🛡️ FILTRADO QUIRÚRGICO: Solo procesamos si el nombre contiene alguna palabra clave válida
+                if any(re.search(rf"\b{cat}\b", nombre) for cat in CATEGORIAS_PERMITIDAS):
+                    products_by_cache_id[cache_id] = {
+                        "nombre": nombre,
+                        "link": urljoin("https://www.wong.pe", link_rel),
+                        "price": 0.0,
+                        "old_price": 0.0,
+                        "img": ""
+                    }
         
         # 2. Reconstruir los datos planos (precios e imágenes) cruzando la caché
         for key, val in state_data.items():
@@ -834,7 +849,7 @@ def motor_wong(url, limite):
                     if 'imageUrl' in val and val['imageUrl']:
                         p_info['img'] = val['imageUrl']
         
-        # 3. Filtrar y empaquetar ofertas
+        # 3. Filtrar por presupuesto y empaquetar ofertas
         vistos_links = set()
         for cache_id, p_info in products_by_cache_id.items():
             nombre = p_info['nombre']
@@ -860,9 +875,9 @@ def motor_wong(url, limite):
                 })
                 
         if productos:
-            safe_log(f"✅ [Wong] ¡Éxito Total! Se indexaron {len(productos)} ofertas que cumplen el presupuesto.", "success")
+            safe_log(f"✅ [Wong] ¡Filtros aplicados! Se indexaron {len(productos)} productos tecnológicos válidos.", "success")
         else:
-            safe_log(f"⚠️ [Wong] Catálogo decodificado correctamente, pero ningún producto baja de S/. {limite:.2f}", "warning")
+            safe_log(f"⚠️ [Wong] Catálogo analizado, pero ningún equipo tecnológico baja de S/. {limite:.2f}", "warning")
             
     except Exception as e:
         safe_log(f"🛑 [Wong] Error crítico inesperado en el módulo: {e}", "error")
