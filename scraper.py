@@ -558,7 +558,7 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Profesional: Conexión directa a la API de base de datos de VTEX"""
+    """Motor OECHSLE Profesional: Conexión directa a la API de base de datos de VTEX (Soporte 200/206)"""
     productos = []
     
     try:
@@ -586,13 +586,14 @@ def motor_oechsle(url, limite):
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-            "Accept": "application/json" # Le exigimos al servidor que nos responda con datos limpios, no con HTML
+            "Accept": "application/json"
         }
         
         safe_log("📡 [Oechsle] Conectando directamente con la API de Catálogo...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
         
-        if resp.status_code != 200:
+        # 💡 CORRECCIÓN DE INGENIERÍA: Validamos tanto 200 como 206 (Partial Content es éxito en VTEX)
+        if resp.status_code not in [200, 206]:
             safe_log(f"🛑 [Oechsle] API inaccesible. Código de error del servidor: {resp.status_code}", "error")
             return []
             
@@ -604,7 +605,7 @@ def motor_oechsle(url, limite):
                 nombre = item.get('productName', '').upper()
                 link_final = item.get('link', url)
                 
-                # Navegamos de forma segura en la estructura interna de precios de VTEX
+                # Navegamos en la estructura interna de precios de VTEX
                 items_list = item.get('items', [])
                 if not items_list: continue
                 
@@ -642,7 +643,6 @@ def motor_oechsle(url, limite):
         safe_log(f"🛑 [Oechsle] Error crítico inesperado en el módulo: {e}", "error")
         
     return productos
-
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
