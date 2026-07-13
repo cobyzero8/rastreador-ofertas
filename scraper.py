@@ -748,61 +748,126 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_wong(url, limite):
-    """Motor Forense WONG: Sonda de diagnóstico para VTEX IO (Intelligent Search)"""
-    import streamlit as st
-    import requests
-    from bs4 import BeautifulSoup
+    """Motor WONG Definitivo: Extractor quirúrgico de alto rendimiento para VTEX IO (__STATE__)"""
     import json
-    
-    st.warning(f"🕵️‍♂️ INICIANDO DIAGNÓSTICO FORENSE EN WONG: {url}")
-    
+    import re
+    productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
-
+    
     try:
-        st.write("📡 Intentando conexión directa con los servidores de Wong...")
+        safe_log("📡 [Wong] Sincronizando con los servidores de Cencosud...", "info")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Wong] Servidor denegó el acceso. Código: {resp.status_code}", "error")
+            return []
         
-        st.code(f"Código de Estado: {resp.status_code}\nLongitud HTML: {len(resp.text)} caracteres", language="text")
+        soup = BeautifulSoup(resp.text, 'html.parser')
         
-        html_text = resp.text
+        # Buscamos la etiqueta de plantilla __STATE__ nativa de VTEX IO
+        template_el = soup.find('template', {'data-varname': '__STATE__'})
+        state_data = None
         
-        # Buscamos la etiqueta __STATE__ de VTEX IO
-        state_idx = html_text.find('__STATE__')
+        if template_el:
+            script_el = template_el.find('script')
+            if script_el:
+                try:
+                    state_data = json.loads(script_el.string)
+                except Exception as je:
+                    safe_log(f"⚠️ [Wong] Error al parsear JSON del template __STATE__: {je}", "warning")
         
-        if state_idx != -1:
-            st.success("💡 ¡BINGO! Se detectó la etiqueta de base de datos interna '__STATE__' de VTEX IO.")
-            # Extraemos un bloque de texto alrededor del estado para ver cómo vienen estructurados los precios
-            start = max(0, state_idx - 100)
-            end = min(len(html_text), state_idx + 4000)
+        # Respaldo: buscar __STATE__ directamente en todo el texto HTML si no está en la etiqueta <template>
+        if not state_data:
+            match = re.search(r'__STATE__\s*=\s*({.*?});', resp.text)
+            if match:
+                try:
+                    state_data = json.loads(match.group(1))
+                except Exception:
+                    pass
+        
+        if not state_data:
+            safe_log("🛑 [Wong] No se pudo encontrar la base de datos interna (__STATE__).", "error")
+            return []
+        
+        safe_log("⚡ [Wong] Base de datos de VTEX IO decodificada con éxito. Procesando caché...", "info")
+        
+        # 1. Identificar productos en la caché de Apollo
+        products_by_cache_id = {}
+        for key, val in state_data.items():
+            if key.startswith('Product:') and isinstance(val, dict):
+                cache_id = val.get('cacheId') or key.split('Product:')[1]
+                nombre = val.get('productName', '').upper()
+                link_rel = val.get('link', '')
+                
+                products_by_cache_id[cache_id] = {
+                    "nombre": nombre,
+                    "link": urljoin("https://www.wong.pe", link_rel),
+                    "price": 0.0,
+                    "old_price": 0.0,
+                    "img": ""
+                }
+        
+        # 2. Reconstruir los datos planos (precios e imágenes) cruzando la caché
+        for key, val in state_data.items():
+            if not isinstance(val, dict): continue
+            for cache_id, p_info in products_by_cache_id.items():
+                if cache_id in key:
+                    # Extraer precios
+                    for p_key in ['sellingPrice', 'lowPrice', 'Price', 'price']:
+                        if p_key in val and val[p_key] is not None:
+                            try:
+                                p_info['price'] = float(val[p_key])
+                                break
+                            except (ValueError, TypeError):
+                                pass
+                    for op_key in ['listPrice', 'highPrice', 'ListPrice', 'listPrice']:
+                        if op_key in val and val[op_key] is not None:
+                            try:
+                                p_info['old_price'] = float(val[op_key])
+                                break
+                            except (ValueError, TypeError):
+                                pass
+                    # Extraer imagen
+                    if 'imageUrl' in val and val['imageUrl']:
+                        p_info['img'] = val['imageUrl']
+        
+        # 3. Filtrar y empaquetar ofertas
+        vistos_links = set()
+        for cache_id, p_info in products_by_cache_id.items():
+            nombre = p_info['nombre']
+            p_o = p_info['price']
+            p_r = p_info['old_price'] if p_info['old_price'] > 0 else p_o
+            link_final = p_info['link']
+            img_url = p_info['img']
             
-            with st.expander("🔍 Ver fragmento clave del JSON de base de datos (__STATE__)"):
-                st.code(html_text[start:end], language="javascript")
+            if not nombre or p_o == 0.0 or link_final in vistos_links:
+                continue
+                
+            # Validar límites de presupuesto
+            if 0 < p_o <= limite:
+                if img_url.startswith('//'): img_url = 'https:' + img_url
+                
+                vistos_links.add(link_final)
+                productos.append({
+                    "nombre": f"WONG - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url
+                })
+                
+        if productos:
+            safe_log(f"✅ [Wong] ¡Éxito Total! Se indexaron {len(productos)} ofertas que cumplen el presupuesto.", "success")
         else:
-            st.error("⚠️ No se encontró la etiqueta '__STATE__'. Buscando alternativas en el HTML...")
-            # Fallback: buscar cualquier rastro de televisores o precios
-            idx = html_text.lower().find('televisor')
-            if idx == -1: 
-                idx = html_text.lower().find('price')
-                
-            start = max(0, idx - 200)
-            end = min(len(html_text), idx + 2000)
+            safe_log(f"⚠️ [Wong] Catálogo decodificado correctamente, pero ningún producto baja de S/. {limite:.2f}", "warning")
             
-            with st.expander("🔍 Ver fragmento clave del código fuente"):
-                st.code(html_text[start:end], language="html")
-                
-        with st.expander("🔍 Ver cabecera del HTML de Wong"):
-            st.code(html_text[:2000], language="html")
-
-        st.error("🛑 DIAGNÓSTICO WONG TERMINADO. Por favor, abre los expansores (especialmente el de __STATE__ si se puso verde), tómale captura o copia el código y envíamelo.")
-        
     except Exception as e:
-        st.error(f"🛑 Fallo en la conexión con Wong: {e}")
-
-    return [] # Devolvemos lista vacía para no interferir con las alertas activas
+        safe_log(f"🛑 [Wong] Error crítico inesperado en el módulo: {e}", "error")
+        
+    return productos
 
 
 def motor_tradicional_general(url, limite, headers):
