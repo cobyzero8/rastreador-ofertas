@@ -393,34 +393,62 @@ def motor_adidas(url, limite):
     """(Motor estacionado temporalmente)"""
     return []
 
-def motor_jbl(url, limite, headers):
-    """Motor JBL Definitivo: Extractor híbrido de alta precisión para Salesforce Commerce Cloud"""
+def motor_jbl(url, limite, headers=None):
+    """Motor JBL Definitivo V2: Extractor híbrido con precalentamiento de sesión para bypass de error 403"""
+    import requests
+    import re
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
+    
     productos = []
+    
+    # Cabeceras premium para imitar a la perfección un navegador Chrome real
     cabeceras = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Ch-Ua": '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0"
     }
     
     try:
-        safe_log("📡 [JBL] Sincronizando con los servidores de Salesforce...", "info")
-        resp = requests.get(url, headers=cabeceras, timeout=15, verify=False)
+        safe_log("📡 [JBL] Abriendo túnel de sesión seguro...", "info")
+        session = requests.Session()
+        session.headers.update(cabeceras)
+        
+        # 🕵️‍♂️ PASO 1: Obtener pase de abordaje (Cookies orgánicas de Salesforce)
+        safe_log("🔑 [JBL] Solicitando credenciales de sesión en la portada de JBL...", "info")
+        session.get("https://www.jbl.com.pe/", timeout=10)
+        
+        # 🕵️‍♂️ PASO 2: Patrullar la categoría con las cookies cargadas
+        safe_log("📡 [JBL] Accediendo a la categoría con sesión autorizada...", "info")
+        resp = session.get(url, timeout=15)
+        
         if resp.status_code != 200:
             safe_log(f"🛑 [JBL] Acceso denegado por el servidor. Código: {resp.status_code}", "error")
             return []
-        
+            
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 1. Intentar capturar directo desde las tarjetas visuales de Salesforce (.product-tile)
+        # 1. Extracción por tarjetas visuales de Salesforce (.product-tile)
         tarjetas = soup.select('.product-tile') or soup.select('.grid-tile') or soup.find_all(class_=re.compile(r'product-tile', re.I))
-        safe_log(f"🔍 [JBL] Se detectaron {len(tarjetas)} tarjetas visuales en el diseño HTML.", "info")
+        safe_log(f"🔍 [JBL] Se detectaron {len(tarjetas)} tarjetas visuales en el HTML.", "info")
         
         vistos_links = set()
         
         if tarjetas:
             for t in tarjetas:
                 try:
-                    # Extraer Enlace y Nombre
+                    # Enlace y Nombre
                     link_el = t.select_one('.pdp-link a') or t.select_one('.product-name a') or t.select_one('a.link') or t.find('a', href=True)
                     if not link_el or not link_el.get('href'): continue
                     
@@ -430,14 +458,14 @@ def motor_jbl(url, limite, headers):
                     nombre = link_el.text.strip().upper()
                     if len(nombre) < 3: continue
                     
-                    # Extraer Precios (Clases nativas de cotización en Salesforce)
+                    # Precios
                     o_el = t.select_one('.price .value') or t.select_one('.sales .value') or t.select_one('.price')
                     r_el = t.select_one('.price .strike-through') or t.select_one('.list .value')
                     
                     p_o = limpiar_precio_pnp(o_el.text) if o_el else 0.0
                     p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
                     
-                    # Extraer Imagen
+                    # Imagen
                     img_el = t.find('img')
                     img_url = ""
                     if img_el:
@@ -456,7 +484,7 @@ def motor_jbl(url, limite, headers):
                 except Exception:
                     continue
                     
-        # 2. HACK DE RESPALDO QUIRÚRGICO: Si las tarjetas no cargaron, procesamos la mina de oro del DataLayer
+        # 2. Respaldo: Si el renderizado visual falló, procesamos la caché del DataLayer
         if not productos:
             matches = re.findall(r'\{"name":"([^"]+)","id":"([^"]+)",.*?"price":(\d+).*?\}', resp.text)
             if matches:
@@ -467,11 +495,9 @@ def motor_jbl(url, limite, headers):
                         nombre = name.strip().upper()
                         
                         if 0 < p_o <= limite:
-                            # Reconstrucción inteligente del enlace directo usando el árbol HTML
                             slug = nombre.lower().replace(' ', '-')
                             link_final = f"https://www.jbl.com.pe/{slug}.html"
                             
-                            # Intentar buscar si el enlace real está impreso en alguna parte de la página
                             for a_tag in soup.find_all('a', href=True):
                                 if prod_id.lower() in a_tag['href'].lower() or slug[:10] in a_tag['href'].lower():
                                     link_final = urljoin("https://www.jbl.com.pe", a_tag['href'])
@@ -485,15 +511,15 @@ def motor_jbl(url, limite, headers):
                                 "precio": p_o,
                                 "precio_regular": p_o,
                                 "link": link_final,
-                                "img": "" # Las fotos se vinculan al abrir la ficha, se prioriza precio/link
+                                "img": ""
                             })
                     except Exception:
                         continue
                         
         if productos:
-            safe_log(f"✅ [JBL] ¡Éxito Total! Indexados {len(productos)} parlantes JBL dentro de tu presupuesto.", "success")
+            safe_log(f"✅ [JBL] ¡Éxito! Se indexaron {len(productos)} audífonos JBL en tu presupuesto.", "success")
         else:
-            safe_log(f"⚠️ [JBL] Catálogo leído correctamente, pero ningún producto está por debajo de S/. {limite:.2f}", "warning")
+            safe_log(f"⚠️ [JBL] Catálogo leído correctamente, pero ningún producto baja de S/. {limite:.2f}", "warning")
             
     except Exception as e:
         safe_log(f"🛑 [JBL] Error crítico inesperado en el módulo: {e}", "error")
