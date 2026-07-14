@@ -394,44 +394,49 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers=None):
-    """Motor JBL Definitivo V3: Bypass de DataDome usando suplantación de firma SSL Chrome (curl_cffi)"""
+    """Motor JBL Definitivo V4: Bypass de DataDome con alineación estricta de Firma TLS y Headers"""
     import re
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     
-    # 🛡️ SISTEMA HÍBRIDO AUTOCURATIVO:
-    # Intentamos cargar curl_cffi para clonar la firma TLS de Chrome.
-    # Si aún no se instala, usamos requests como fallback seguro para evitar caídas del app.
+    # 🛡️ CARGA HÍBRIDA DE MOTOR TLS
     try:
         from curl_cffi import requests as requests_tls
         use_tls_client = True
-        safe_log("🛡️ [JBL] Inicializando túnel TLS con suplantación de firma Chrome (DataDome Bypass)...", "info")
+        safe_log("🛡️ [JBL] Iniciando túnel TLS puro (Alineación estricta Chrome)...", "info")
     except ImportError:
         import requests as requests_tls
         use_tls_client = False
-        safe_log("⚠️ [JBL] 'curl-cffi' no detectado en el entorno. Usando requests estándar (Altas probabilidades de bloqueo 403).", "warning")
-        safe_log("💡 Tip: Agrega 'curl-cffi' a tu archivo requirements.txt para activar el bypass automático.", "info")
+        safe_log("⚠️ [JBL] 'curl-cffi' no detectado. Usando requests estándar.", "warning")
 
     productos = []
     
-    cabeceras = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    # 💡 REGLA DE ORO: Si usamos 'impersonate', NO enviamos User-Agent ni cabeceras de navegador manuales.
+    # curl_cffi inyectará de forma automática las cabeceras exactas que corresponden a la firma SSL.
+    cabeceras_limpias = {
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "Connection": "keep-alive"
     }
     
     try:
-        # 📡 Consulta al servidor imitando la firma criptográfica de un navegador real
         if use_tls_client:
-            resp = requests_tls.get(url, headers=cabeceras, impersonate="chrome", timeout=15, verify=False)
+            # Consultamos de forma nativa dejando que la firma y los headers se alineen solos
+            resp = requests_tls.get(
+                url, 
+                headers=cabeceras_limpias, 
+                impersonate="chrome", 
+                timeout=15, 
+                verify=False
+            )
         else:
-            resp = requests_tls.get(url, headers=cabeceras, timeout=15, verify=False)
+            # Fallback tradicional si no está la librería instalada
+            headers_fallback = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            }
+            resp = requests_tls.get(url, headers=headers_fallback, timeout=15, verify=False)
             
         if resp.status_code == 403:
-            safe_log("🛑 [JBL] Acceso Denegado 403 persistente (Firma SSL bloqueada por DataDome).", "error")
+            safe_log("🛑 [JBL] Acceso Denegado 403 persistente (Firma alineada pero IP de AWS/Streamlit Cloud bloqueada por DataDome).", "error")
             return []
         elif resp.status_code != 200:
             safe_log(f"🛑 [JBL] Error de conexión con el servidor. Código: {resp.status_code}", "error")
