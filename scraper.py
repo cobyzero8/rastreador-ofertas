@@ -394,137 +394,72 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers=None):
-    """Motor JBL Definitivo V2: Extractor híbrido con precalentamiento de sesión para bypass de error 403"""
+    """Motor Forense JBL: Sonda de telemetría de red profunda para identificar la causa raíz del Error 403"""
+    import streamlit as st
     import requests
-    import re
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
     
-    productos = []
+    st.warning("🕵️‍♂️ INICIANDO AUDITORÍA FORENSE DE RED EN JBL")
     
-    # Cabeceras premium para imitar a la perfección un navegador Chrome real
     cabeceras = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Ch-Ua": '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0"
+        "Upgrade-Insecure-Requests": "1"
     }
     
+    reporte = []
+    
     try:
-        safe_log("📡 [JBL] Abriendo túnel de sesión seguro...", "info")
         session = requests.Session()
         session.headers.update(cabeceras)
         
-        # 🕵️‍♂️ PASO 1: Obtener pase de abordaje (Cookies orgánicas de Salesforce)
-        safe_log("🔑 [JBL] Solicitando credenciales de sesión en la portada de JBL...", "info")
-        session.get("https://www.jbl.com.pe/", timeout=10)
+        # 🧪 TEST 1: Conexión a la portada principal (Home Page)
+        st.write("📡 Test 1: Conectando con la raíz (https://www.jbl.com.pe/)...")
+        r_home = session.get("https://www.jbl.com.pe/", timeout=10, verify=False)
         
-        # 🕵️‍♂️ PASO 2: Patrullar la categoría con las cookies cargadas
-        safe_log("📡 [JBL] Accediendo a la categoría con sesión autorizada...", "info")
-        resp = session.get(url, timeout=15)
+        reporte.append(f"🏠 Portada principal - Estado HTTP: {r_home.status_code}")
+        reporte.append(f"🏠 Cookies generadas: {dict(session.cookies)}")
         
-        if resp.status_code != 200:
-            safe_log(f"🛑 [JBL] Acceso denegado por el servidor. Código: {resp.status_code}", "error")
-            return []
+        # Analizar cabeceras de respuesta para identificar el WAF (Cloudflare, Akamai, Imperva, etc.)
+        headers_home = dict(r_home.headers)
+        waf_detectado = "Servidor Estándar"
+        for k, v in headers_home.items():
+            k_lower = k.lower()
+            if 'server' in k_lower or 'cf-' in k_lower or 'akamai' in k_lower or 'x-cache' in k_lower:
+                waf_detectado = f"{k}: {v}"
+                
+        reporte.append(f"🛡️ Servidor / WAF detectado en Home: {waf_detectado}")
+        
+        # 🧪 TEST 2: Conexión a la URL final de categoría
+        st.write(f"📡 Test 2: Conectando a la URL final de categoría...")
+        r_cat = session.get(url, timeout=10, verify=False)
+        
+        reporte.append(f"📦 URL de Categoría - Estado HTTP: {r_cat.status_code}")
+        reporte.append(f"📦 Tamaño de respuesta HTML: {len(r_cat.text)} caracteres")
+        
+        # 📊 Mostrar reporte en pantalla
+        st.info("📋 RESULTADOS DE LA TELEMETRÍA DE RED:")
+        for linea in reporte:
+            st.code(linea, language="text")
             
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # 1. Extracción por tarjetas visuales de Salesforce (.product-tile)
-        tarjetas = soup.select('.product-tile') or soup.select('.grid-tile') or soup.find_all(class_=re.compile(r'product-tile', re.I))
-        safe_log(f"🔍 [JBL] Se detectaron {len(tarjetas)} tarjetas visuales en el HTML.", "info")
-        
-        vistos_links = set()
-        
-        if tarjetas:
-            for t in tarjetas:
-                try:
-                    # Enlace y Nombre
-                    link_el = t.select_one('.pdp-link a') or t.select_one('.product-name a') or t.select_one('a.link') or t.find('a', href=True)
-                    if not link_el or not link_el.get('href'): continue
-                    
-                    link_final = urljoin("https://www.jbl.com.pe", link_el['href'])
-                    if link_final in vistos_links: continue
-                    
-                    nombre = link_el.text.strip().upper()
-                    if len(nombre) < 3: continue
-                    
-                    # Precios
-                    o_el = t.select_one('.price .value') or t.select_one('.sales .value') or t.select_one('.price')
-                    r_el = t.select_one('.price .strike-through') or t.select_one('.list .value')
-                    
-                    p_o = limpiar_precio_pnp(o_el.text) if o_el else 0.0
-                    p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
-                    
-                    # Imagen
-                    img_el = t.find('img')
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get('src') or img_el.get('data-src') or ""
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
-                    
-                    if 0 < p_o <= limite:
-                        vistos_links.add(link_final)
-                        productos.append({
-                            "nombre": f"JBL - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url
-                        })
-                except Exception:
-                    continue
-                    
-        # 2. Respaldo: Si el renderizado visual falló, procesamos la caché del DataLayer
-        if not productos:
-            matches = re.findall(r'\{"name":"([^"]+)","id":"([^"]+)",.*?"price":(\d+).*?\}', resp.text)
-            if matches:
-                safe_log(f"⚡ [JBL] Activando extracción por DataLayer interno ({len(matches)} modelos encontrados)...", "info")
-                for name, prod_id, price in matches:
-                    try:
-                        p_o = float(price)
-                        nombre = name.strip().upper()
-                        
-                        if 0 < p_o <= limite:
-                            slug = nombre.lower().replace(' ', '-')
-                            link_final = f"https://www.jbl.com.pe/{slug}.html"
-                            
-                            for a_tag in soup.find_all('a', href=True):
-                                if prod_id.lower() in a_tag['href'].lower() or slug[:10] in a_tag['href'].lower():
-                                    link_final = urljoin("https://www.jbl.com.pe", a_tag['href'])
-                                    break
-                                    
-                            if link_final in vistos_links: continue
-                            vistos_links.add(link_final)
-                            
-                            productos.append({
-                                "nombre": f"JBL - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": p_o,
-                                "link": link_final,
-                                "img": ""
-                            })
-                    except Exception:
-                        continue
-                        
-        if productos:
-            safe_log(f"✅ [JBL] ¡Éxito! Se indexaron {len(productos)} audífonos JBL en tu presupuesto.", "success")
-        else:
-            safe_log(f"⚠️ [JBL] Catálogo leído correctamente, pero ningún producto baja de S/. {limite:.2f}", "warning")
+        with st.expander("🔍 Ver todas las cabeceras de respuesta (Home)"):
+            st.json(headers_home)
+            
+        with st.expander("🔍 Ver todas las cabeceras de respuesta (Categoría)"):
+            st.json(dict(r_cat.headers))
+            
+        # Conclusión automatizada del sistema
+        if r_home.status_code == 403:
+            st.error("🚨 DIAGNÓSTICO: El bloqueo ocurre desde la portada principal. El WAF de JBL está identificando y bloqueando la firma SSL/TLS nativa de la librería 'requests' de Python.")
+        elif r_cat.status_code == 403:
+            st.error("🚨 DIAGNÓSTICO: La portada pasa perfectamente, pero la categoría se bloquea. Falta un parámetro dinámico, Referer o cookies específicas de seguimiento.")
             
     except Exception as e:
-        safe_log(f"🛑 [JBL] Error crítico inesperado en el módulo: {e}", "error")
+        st.error(f"🛑 Fallo grave durante el diagnóstico de red: {e}")
         
-    return productos
+    return [] # Devolvemos lista vacía para no romper el flujo principal
 
 def motor_platanitos(url, limite):
     productos = []
