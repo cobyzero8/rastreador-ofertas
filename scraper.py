@@ -748,39 +748,26 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_wong(url, limite):
-    """Motor WONG Definitivo: Extractor de alta fidelidad con protección de precios y filtros limpios"""
+    """Motor Forense WONG: Sonda de inspección de estructura interna de base de datos"""
     import json
     import re
-    productos = []
+    import streamlit as st
+    
+    st.warning(f"🕵️‍♂️ INICIANDO INSPECCIÓN DE BASE DE DATOS EN WONG: {url}")
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9"
     }
     
-    # 🛡️ LISTA DE CATEGORÍAS PERMITIDAS (Búsqueda de coincidencia directa)
-    CATEGORIAS_PERMITIDAS = [
-        "TV", "TELEVISOR", "SMART TV", "OLED", "QLED", "UHD", "LED", "PULGADAS", "NANOCELL",
-        "REFRIGERADORA", "REFRIGERADOR", "FRIGOBAR", "FREEZER",
-        "LAVADORA", "SECADORA", "LAVASECA",
-        "CELULAR", "SMARTPHONE", "MOVIL", "MÓVIL",
-        "BARRA DE SONIDO", "SOUNDBAR",
-        "PARLANTE", "ALTAVOZ", "SPEAKER", "BLUETOOTH",
-        "AUDIFONOS", "AUDÍFONOS", "AURICULARES", "HEADPHONES",
-        "CAMA", "COLCHON", "COLCHÓN", "TARIMA",
-        "COCINA", "HORNO", "ENCIMERA"
-    ]
-    
     try:
-        safe_log("📡 [Wong] Sincronizando con los servidores de Cencosud...", "info")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
         if resp.status_code != 200:
-            safe_log(f"🛑 [Wong] Servidor denegó el acceso. Código: {resp.status_code}", "error")
+            st.error(f"🛑 Error de conexión con el servidor. Código: {resp.status_code}")
             return []
-        
+            
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Buscamos la etiqueta de plantilla __STATE__ nativa de VTEX IO
         template_el = soup.find('template', {'data-varname': '__STATE__'})
         state_data = None
         
@@ -789,10 +776,9 @@ def motor_wong(url, limite):
             if script_el:
                 try:
                     state_data = json.loads(script_el.string)
-                except Exception as je:
-                    safe_log(f"⚠️ [Wong] Error al parsear JSON del template __STATE__: {je}", "warning")
+                except Exception as e:
+                    st.error(f"Error parseando script template: {e}")
         
-        # Respaldo: buscar __STATE__ directamente en todo el texto HTML
         if not state_data:
             match = re.search(r'__STATE__\s*=\s*({.*?});', resp.text)
             if match:
@@ -800,102 +786,48 @@ def motor_wong(url, limite):
                     state_data = json.loads(match.group(1))
                 except Exception:
                     pass
-        
+                    
         if not state_data:
-            safe_log("🛑 [Wong] No se pudo encontrar la base de datos interna (__STATE__).", "error")
+            st.error("🛑 No se encontró la base de datos __STATE__ en esta página de tecnología.")
             return []
-        
-        # 1. Identificar productos en la caché de Apollo
-        products_by_cache_id = {}
-        for key, val in state_data.items():
-            if key.startswith('Product:') and isinstance(val, dict):
-                cache_id = val.get('cacheId') or key.split('Product:')[1]
-                nombre = val.get('productName', '').upper()
-                link_rel = val.get('link', '')
-                
-                # 🛡️ FILTRADO QUIRÚRGICO: Coincidencia directa sin problemas de límites de palabra (\b)
-                if any(cat in nombre for cat in CATEGORIAS_PERMITIDAS):
-                    products_by_cache_id[cache_id] = {
-                        "nombre": nombre,
-                        "link": urljoin("https://www.wong.pe", link_rel),
-                        "price": 0.0,
-                        "old_price": 0.0,
-                        "img": ""
-                    }
-        
-        safe_log(f"⚡ [Wong] Cache decodificada. Se detectaron {len(products_by_cache_id)} productos de tecnología potenciales.", "info")
-        
-        # 2. Reconstruir los datos planos (precios e imágenes) cruzando la caché
-        for key, val in state_data.items():
-            if not isinstance(val, dict): continue
-            for cache_id, p_info in products_by_cache_id.items():
-                if cache_id in key:
-                    # Extraer precio de oferta
-                    for p_key in ['sellingPrice', 'lowPrice', 'Price', 'price']:
-                        if p_key in val and val[p_key] is not None:
-                            try:
-                                new_price = float(val[p_key])
-                                # 🛡️ EVITAR SOBREESCRITURA CON CERO: Solo actualiza si encontramos un valor real de precio
-                                if new_price > 0 and (p_info['price'] == 0.0 or new_price < p_info['price']):
-                                    p_info['price'] = new_price
-                                    break
-                            except (ValueError, TypeError):
-                                pass
-                                
-                    # Extraer precio regular
-                    for op_key in ['highPrice', 'listPrice', 'ListPrice']:
-                        if op_key in val and val[op_key] is not None:
-                            try:
-                                new_old_price = float(val[op_key])
-                                if new_old_price > 0 and (p_info['old_price'] == 0.0 or new_old_price > p_info['old_price']):
-                                    p_info['old_price'] = new_old_price
-                                    break
-                            except (ValueError, TypeError):
-                                pass
-                                
-                    # Extraer imagen
-                    if 'imageUrl' in val and val['imageUrl']:
-                        p_info['img'] = val['imageUrl']
-        
-        # 3. Registro de depuración rápido (Muestra en pantalla los primeros 3 para asegurar lectura limpia)
-        tech_list = list(products_by_cache_id.values())[:3]
-        for idx, item in enumerate(tech_list):
-            safe_log(f"📋 [Debug Wong {idx+1}] {item['nombre'][:40]}... | Precio: S/. {item['price']}", "info")
-        
-        # 4. Filtrar por presupuesto y empaquetar ofertas
-        vistos_links = set()
-        for cache_id, p_info in products_by_cache_id.items():
-            nombre = p_info['nombre']
-            p_o = p_info['price']
-            p_r = p_info['old_price'] if p_info['old_price'] > 0 else p_o
-            link_final = p_info['link']
-            img_url = p_info['img']
             
-            if not nombre or p_o == 0.0 or link_final in vistos_links:
-                continue
-                
-            # Validar límites de presupuesto
-            if 0 < p_o <= limite:
-                if img_url.startswith('//'): img_url = 'https:' + img_url
-                
-                vistos_links.add(link_final)
-                productos.append({
-                    "nombre": f"WONG - {nombre}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url
-                })
-                
-        if productos:
-            safe_log(f"✅ [Wong] ¡Filtros aplicados! Se indexaron {len(productos)} productos tecnológicos válidos.", "success")
-        else:
-            safe_log(f"⚠️ [Wong] Catálogo analizado, pero ningún equipo tecnológico baja de S/. {limite:.2f}", "warning")
+        st.success(f"✅ Base de datos decodificada. Contiene {len(state_data)} elementos en caché.")
+        
+        # 🧪 EXPERIMENTO 1: Ver las primeras 30 llaves para entender el patrón de indexación
+        primeras_llaves = list(state_data.keys())[:30]
+        with st.expander("🔑 1. Ver primeras 30 llaves de la base de datos (Estructura de Índices)"):
+            st.write(primeras_llaves)
             
+        # 🧪 EXPERIMENTO 2: Buscar llaves relacionadas con "Product" o productos
+        llaves_producto = [k for k in state_data.keys() if "Product" in k or "product" in k]
+        with st.expander(f"📦 2. Llaves que contienen la palabra 'Product' ({len(llaves_producto)} encontradas)"):
+            st.write(llaves_producto[:15])
+            if llaves_producto:
+                st.write("Estructura de un objeto de producto de ejemplo:")
+                st.json(state_data[llaves_producto[0]])
+                
+        # 🧪 EXPERIMENTO 3: Buscar coincidencias de TV (TCL, Samsung, LG, Televisor) en el contenido
+        coincidencias = {}
+        for k, v in state_data.items():
+            if isinstance(v, dict):
+                v_str = str(v).upper()
+                if any(brand in v_str for brand in ["TCL", "SAMSUNG", "LG", "TELEVISOR"]):
+                    coincidencias[k] = v
+                    if len(coincidencias) >= 5:
+                        break
+                        
+        with st.expander("📺 3. Muestra de objetos internos que contienen marcas de TV"):
+            if coincidencias:
+                st.json(coincidencias)
+            else:
+                st.write("No se encontró ninguna mención a TCL, Samsung, LG o Televisor en los diccionarios.")
+                
+        st.error("🛑 AUDITORÍA COMPLETADA. Por favor, abre estos tres expansores, cópiame el texto o tómale una captura de pantalla para ajustar el extractor definitivo.")
+        
     except Exception as e:
-        safe_log(f"🛑 [Wong] Error crítico inesperado en el módulo: {e}", "error")
+        st.error(f"🛑 Fallo grave en el diagnóstico de Wong: {e}")
         
-    return productos
+    return []
 
 
 def motor_tradicional_general(url, limite, headers):
