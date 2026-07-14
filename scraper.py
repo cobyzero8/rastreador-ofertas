@@ -661,232 +661,156 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Híbrido Avanzado (V2): API Autocurativa con soporte para consultas dinámicas y JSON-LD"""
+    """Motor OECHSLE Híbrido V3: Preservación de Query String nativa para evitar Bloqueos de Codificación (Error 400)"""
     import json
     import re
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, parse_qs, urljoin
+    from urllib.parse import urlparse, urljoin
     
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9"
+        "Accept": "application/json"
     }
     
-    api_exitosa = False
-    
-    # 📡 CAPA 1 y 2: Intentar consulta directa a la API de Catálogo de forma segura
     try:
+        safe_log("📡 [Oechsle] Analizando estructura del radar...", "info")
+        
         parsed_url = urlparse(url)
-        query_params = parse_qs(parsed_url.query)
+        raw_query = parsed_url.query
         
-        api_url = "https://www.oechsle.pe/api/catalog_system/pub/products/search"
-        params = {}
+        # 💡 SOLUCIÓN AL RADAR DE SONIDO: Mapeamos 'query=' a 'ft=' directamente para la API de VTEX
+        if 'query=' in raw_query:
+            raw_query = raw_query.replace('query=', 'ft=')
         
-        # Capa 1: Si tiene fq, lo usamos directamente
-        if 'fq' in query_params:
-            params['fq'] = query_params['fq']
-            if 'O' in query_params:
-                params['O'] = query_params['O']
-            safe_log("📡 [Oechsle API] Detectados filtros 'fq' explícitos. Consultando base de datos...", "info")
+        # 💡 SOLUCIÓN AL ERROR 400 DE TELEVISORES:
+        # VTEX rechaza parámetros codificados con '+' para espacios, exige estrictamente '%20'.
+        # Al usar la query string nativa del navegador directamente, evitamos que python re-codifique el enlace.
+        has_category_filter = 'fq=C:' in raw_query or 'fq=C%3A' in raw_query
+        
+        if has_category_filter:
+            api_url = f"https://www.oechsle.pe/api/catalog_system/pub/products/search?{raw_query}"
         else:
-            # Capa 2: Si es una búsqueda libre (?query=barra de sonido) o una URL limpia
-            path_parts = [p for p in parsed_url.path.split('/') if p]
+            category_path = parsed_url.path.rstrip('/')
+            if category_path and not category_path.startswith('/'):
+                category_path = '/' + category_path
+            api_url = f"https://www.oechsle.pe/api/catalog_system/pub/products/search{category_path}?{raw_query}"
             
-            # 💡 HACK DE PRECISIÓN (Radar #11): Mapeamos 'query' a 'ft' directamente para VTEX API
-            if 'query' in query_params:
-                params['ft'] = query_params['query']
-                safe_log(f"📡 [Oechsle API] Mapeando parámetro de consulta directa 'ft={query_params['query'][0]}'...", "info")
-            elif path_parts:
-                params['ft'] = path_parts[-1]
-                safe_log(f"📡 [Oechsle API] URL limpia. Usando término de búsqueda 'ft={path_parts[-1]}' para evitar bloqueo...", "info")
+        # Agregamos la paginación estándar al final de la URL preservando la codificación nativa
+        if '_from=' not in api_url:
+            api_url += "&_from=0&_to=49"
+            
+        safe_log("📡 [Oechsle] Conectando con la base de datos oficial...", "info")
+        resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
         
-        if params:
-            params['_from'] = '0'
-            params['_to'] = '49'
+        # Si la API responde exitosamente (200 o 206)
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+            safe_log(f"🔍 [Oechsle] Base de datos leída con éxito. Se procesaron {len(data)} productos.", "info")
             
-            api_headers = headers.copy()
-            api_headers["Accept"] = "application/json"
+            for item in data:
+                try:
+                    nombre = item.get('productName', '').upper()
+                    link_final = item.get('link', url)
+                    
+                    items_list = item.get('items', [])
+                    if not items_list: continue
+                    first_item = items_list[0]
+                    
+                    sellers = first_item.get('sellers', [])
+                    if not sellers: continue
+                    offer = sellers[0].get('commertialOffer', {})
+                    
+                    p_o = float(offer.get('Price', 0.0))
+                    p_r = float(offer.get('ListPrice', p_o))
+                    
+                    images = first_item.get('images', [])
+                    img_url = images[0].get('imageUrl', '') if images else ""
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+                    
+                    if 0 < p_o <= limite:
+                        productos.append({
+                            "nombre": f"OECHSLE - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_url
+                        })
+                except Exception:
+                    continue
+        else:
+            safe_log(f"⚠️ [Oechsle API] Código {resp.status_code} recibido. Activando contingencia de rescate...", "warning")
             
-            resp = requests.get(api_url, headers=api_headers, params=params, timeout=12, verify=False)
-            
-            if resp.status_code in [200, 206]:
-                data = resp.json()
-                safe_log(f"🔍 [Oechsle API] Conexión establecida. Se encontraron {len(data)} productos en el JSON.", "info")
-                
-                for item in data:
-                    try:
-                        nombre = item.get('productName', '').upper()
-                        link_final = item.get('link', url)
-                        
-                        items_list = item.get('items', [])
-                        if not items_list: continue
-                        first_item = items_list[0]
-                        
-                        sellers = first_item.get('sellers', [])
-                        if not sellers: continue
-                        offer = sellers[0].get('commertialOffer', {})
-                        
-                        p_o = float(offer.get('Price', 0.0))
-                        p_r = float(offer.get('ListPrice', p_o))
-                        
-                        images = first_item.get('images', [])
-                        img_url = images[0].get('imageUrl', '') if images else ""
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
-                        
-                        if 0 < p_o <= limite:
-                            productos.append({
-                                "nombre": f"OECHSLE - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url
-                            })
-                    except Exception:
-                        continue
-                api_exitosa = True
-            else:
-                safe_log(f"⚠️ [Oechsle API] Código {resp.status_code} recibido. Activando contingencia de rescate...", "warning")
-                
     except Exception as e:
         safe_log(f"⚠️ [Oechsle API] Error durante la consulta directa: {e}. Activando contingencia...", "warning")
         
-    # 🛡️ CAPA 3: Contingencia de Rescate (Si la API falló, extraemos del HTML con JSON-LD o selectores)
-    if not api_exitosa or not productos:
-        safe_log("🛡️ [Oechsle] Activando contingencia HTML: Leyendo metadatos estructurados...", "info")
+    # 🛡️ CAPA DE RESPALDO (Si la API falla por cualquier motivo, extrae directamente del HTML)
+    if not productos:
+        safe_log("🛡️ [Oechsle] Activando plan de contingencia HTML...", "info")
         try:
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            if resp.status_code != 200:
-                safe_log(f"🛑 [Oechsle HTML] El servidor rechazó el HTML. Código: {resp.status_code}", "error")
-                return []
+            html_headers = headers.copy()
+            html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
                 
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # A. Extracción por JSON-LD (Estructuras de Google SEO)
-            json_ld_prods = []
-            scripts = soup.find_all('script', type='application/ld+json')
-            for script in scripts:
-                try:
-                    if not script.string: continue
-                    data = json.loads(script.string)
-                    
-                    if isinstance(data, dict) and data.get('@type') == 'ItemList':
-                        items = data.get('itemListElement', [])
-                        for item in items:
-                            prod = item.get('item', {})
-                            if isinstance(prod, dict) and prod.get('@type') == 'Product':
-                                json_ld_prods.append(prod)
-                    elif isinstance(data, dict) and data.get('@type') == 'Product':
-                        json_ld_prods.append(data)
-                except Exception:
-                    continue
-                    
-            if json_ld_prods:
-                safe_log(f"⚡ [Oechsle HTML] Detectados {len(json_ld_prods)} productos mediante microdatos JSON-LD.", "info")
-                vistos_links = set()
-                for prod in json_ld_prods:
+                # Buscamos metadatos JSON-LD
+                json_ld_prods = []
+                scripts = soup.find_all('script', type='application/ld+json')
+                for script in scripts:
                     try:
-                        nombre = prod.get('name', '').upper()
-                        link_final = prod.get('url', '')
-                        if not link_final: continue
-                        link_final = urljoin("https://www.oechsle.pe", link_final)
-                        
-                        if link_final in vistos_links: continue
-                        
-                        offers = prod.get('offers', {})
-                        p_o = 0.0
-                        if isinstance(offers, dict):
-                            p_o = float(offers.get('price', 0.0))
-                        elif isinstance(offers, list) and offers:
-                            p_o = float(offers[0].get('price', 0.0))
-                            
-                        img_url = prod.get('image', '')
-                        if isinstance(img_url, list) and img_url:
-                            img_url = img_url[0]
-                            
-                        if 0 < p_o <= limite:
-                            vistos_links.add(link_final)
-                            productos.append({
-                                "nombre": f"OECHSLE - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": p_o,
-                                "link": link_final,
-                                "img": img_url
-                            })
+                        if not script.string: continue
+                        data = json.loads(script.string)
+                        if isinstance(data, dict) and data.get('@type') == 'ItemList':
+                            items = data.get('itemListElement', [])
+                            for item in items:
+                                prod = item.get('item', {})
+                                if isinstance(prod, dict) and prod.get('@type') == 'Product':
+                                    json_ld_prods.append(prod)
+                        elif isinstance(data, dict) and data.get('@type') == 'Product':
+                            json_ld_prods.append(data)
                     except Exception:
                         continue
                         
-            # B. Extracción clásica por selectores (Si los metadatos estructurados no estuvieran presentes)
-            if not productos:
-                tarjetas = soup.select('.product-shelf__item') or soup.select('.product-card') or soup.select('li[vtexid]') or soup.select('.shelf-item')
-                
-                if not tarjetas:
-                    vistos_parents = set()
-                    for a in soup.find_all('a', href=True):
-                        href = a['href'].lower().split('?')[0]
-                        if href.endswith('/p') or '/p/' in href or '-/p' in href:
-                            parent = a.parent
-                            for _ in range(4):
-                                if parent and parent.name in ['div', 'li'] and parent not in vistos_parents:
-                                    tarjetas.append(parent)
-                                    vistos_parents.add(parent)
-                                    break
-                                if parent: parent = parent.parent
-                                
-                safe_log(f"🔍 [Oechsle HTML] Se detectaron {len(tarjetas)} bloques de productos en el diseño visual.", "info")
-                
-                vistos_links = set()
-                for t in tarjetas:
-                    try:
-                        tit_el = t.select_one('.product-name a') or t.select_one('.product-shelf__name') or t.select_one('a[href*="/p"]') or t.find('a', href=True)
-                        if not tit_el or not tit_el.get('href'): continue
-                        
-                        link_final = urljoin("https://www.oechsle.pe", tit_el['href'])
-                        if link_final in vistos_links: continue
-                        
-                        nombre = tit_el.text.strip().upper()
-                        if len(nombre) < 4 or "OECHSLE" in nombre: continue
-                        
-                        o_el = t.select_one('.product-shelf__best-price') or t.select_one('.bestPrice') or t.select_one('.skuBestPrice') or t.select_one('.best-price')
-                        r_el = t.select_one('.product-shelf__old-price') or t.select_one('.listPrice') or t.select_one('.skuListPrice') or t.select_one('.old-price')
-                        
-                        p_o, p_r = 0.0, 0.0
-                        if o_el:
-                            p_o = limpiar_precio_pnp(o_el.text)
-                            p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
+                if json_ld_prods:
+                    vistos_links = set()
+                    for prod in json_ld_prods:
+                        try:
+                            nombre = prod.get('name', '').upper()
+                            link_final = prod.get('url', '')
+                            if not link_final: continue
+                            link_final = urljoin("https://www.oechsle.pe", link_final)
                             
-                        if p_o == 0.0:
-                            textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                            if textos_precios:
-                                nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                                p_o = nums[0] if nums else 0.0
-                                p_r = nums[-1] if len(nums) > 1 else p_o
-                                
-                        if 0 < p_o <= limite:
-                            img_el = t.find('img')
-                            img_url = ""
-                            if img_el:
-                                img_url = img_el.get('data-src') or img_el.get('src') or ""
-                            if img_url.startswith('//'): img_url = 'https:' + img_url
+                            if link_final in vistos_links: continue
                             
-                            vistos_links.add(link_final)
-                            productos.append({
-                                "nombre": f"OECHSLE - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url
-                            })
-                    except Exception:
-                        continue
+                            offers = prod.get('offers', {})
+                            p_o = 0.0
+                            if isinstance(offers, dict):
+                                p_o = float(offers.get('price', 0.0))
+                            elif isinstance(offers, list) and offers:
+                                p_o = float(offers[0].get('price', 0.0))
+                                
+                            img_url = prod.get('image', '')
+                            if isinstance(img_url, list) and img_url:
+                                img_url = img_url[0]
+                                
+                            if 0 < p_o <= limite:
+                                vistos_links.add(link_final)
+                                productos.append({
+                                    "nombre": f"OECHSLE - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": p_o,
+                                    "link": link_final,
+                                    "img": img_url
+                                })
+                        except Exception:
+                            continue
         except Exception as he:
-            safe_log(f"🛑 [Oechsle HTML] Fallo crítico en contingencia HTML: {he}", "error")
+            safe_log(f"🛑 [Oechsle HTML] Error en contingencia: {he}", "error")
             
-    # Reporte final para el usuario
     if productos:
-        safe_log(f"✅ [Oechsle] ¡Éxito! Se indexaron {len(productos)} productos que cumplen el presupuesto.", "success")
+        safe_log(f"✅ [Oechsle] ¡Éxito! Se encontraron {len(productos)} ofertas que cumplen el presupuesto.", "success")
     else:
         safe_log(f"⚠️ [Oechsle] Búsqueda finalizada, pero ningún equipo baja de S/. {limite:.2f}", "warning")
         
