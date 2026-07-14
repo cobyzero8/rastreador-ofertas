@@ -394,8 +394,9 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers=None):
-    """Motor JBL Definitivo V4: Bypass de DataDome con alineación estricta de Firma TLS y Headers"""
+    """Motor JBL Definitivo V5: Bypass de DataDome con Firma TLS y soporte de Proxy integrado"""
     import re
+    import streamlit as st
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     
@@ -403,7 +404,7 @@ def motor_jbl(url, limite, headers=None):
     try:
         from curl_cffi import requests as requests_tls
         use_tls_client = True
-        safe_log("🛡️ [JBL] Iniciando túnel TLS puro (Alineación estricta Chrome)...", "info")
+        safe_log("🛡️ [JBL] Inicializando túnel TLS con firma Chrome...", "info")
     except ImportError:
         import requests as requests_tls
         use_tls_client = False
@@ -411,33 +412,56 @@ def motor_jbl(url, limite, headers=None):
 
     productos = []
     
-    # 💡 REGLA DE ORO: Si usamos 'impersonate', NO enviamos User-Agent ni cabeceras de navegador manuales.
-    # curl_cffi inyectará de forma automática las cabeceras exactas que corresponden a la firma SSL.
+    # Alineación automática de cabeceras de curl_cffi
     cabeceras_limpias = {
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
         "Connection": "keep-alive"
     }
     
+    # 🔌 CONFIGURACIÓN DEL PROXY:
+    # El bot buscará un proxy en los Secrets de tu Streamlit bajo el nombre "PROXY_JBL".
+    # Formato esperado: "http://usuario:contraseña@ip:puerto" o simplemente "http://ip:puerto"
+    proxies = None
+    proxy_configurado = False
+    
+    try:
+        # Intentamos obtener el proxy desde los Secrets de Streamlit
+        proxy_url = st.secrets.get("PROXY_JBL") if "PROXY_JBL" in st.secrets else None
+        if proxy_url:
+            proxies = {
+                "http": proxy_url,
+                "https": proxy_url
+            }
+            proxy_configurado = True
+            safe_log("📡 [JBL] Enrutando conexión a través de Proxy autorizado...", "info")
+    except Exception:
+        pass
+
     try:
         if use_tls_client:
-            # Consultamos de forma nativa dejando que la firma y los headers se alineen solos
+            # Consultamos usando la firma de Chrome y el proxy asignado (si existe)
             resp = requests_tls.get(
                 url, 
                 headers=cabeceras_limpias, 
                 impersonate="chrome", 
-                timeout=15, 
+                proxies=proxies,
+                timeout=20, 
                 verify=False
             )
         else:
-            # Fallback tradicional si no está la librería instalada
+            # Fallback tradicional sin curl_cffi
             headers_fallback = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
             }
-            resp = requests_tls.get(url, headers=headers_fallback, timeout=15, verify=False)
+            resp = requests_tls.get(url, headers=headers_fallback, proxies=proxies, timeout=20, verify=False)
             
         if resp.status_code == 403:
-            safe_log("🛑 [JBL] Acceso Denegado 403 persistente (Firma alineada pero IP de AWS/Streamlit Cloud bloqueada por DataDome).", "error")
+            if not proxy_configurado:
+                safe_log("🛑 [JBL] Acceso Denegado 403. Confirmado: DataDome bloqueó la IP de AWS. Se requiere configurar un proxy en st.secrets.", "error")
+            else:
+                safe_log("🛑 [JBL] Acceso Denegado 403. El proxy configurado también ha sido identificado o bloqueado.", "error")
             return []
+            
         elif resp.status_code != 200:
             safe_log(f"🛑 [JBL] Error de conexión con el servidor. Código: {resp.status_code}", "error")
             return []
