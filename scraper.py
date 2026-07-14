@@ -661,41 +661,41 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Profesional: Conexión directa a la API de base de datos de VTEX (Soporte 200/206)"""
+    """Motor OECHSLE Profesional: Conexión directa a la API de base de datos de VTEX (Soporte de Rutas de Categorías + 200/206)"""
+    import requests
+    from urllib.parse import urlparse, parse_qs, urljoin
     productos = []
     
     try:
-        safe_log("📡 [Oechsle] Extrayendo parámetros de búsqueda de la URL...", "info")
+        safe_log("📡 [Oechsle] Extrayendo parámetros de búsqueda y ruta de la URL...", "info")
         
-        # Analizamos la URL para extraer los filtros exactos (fq, O, etc.)
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
         
-        # Construimos la ruta hacia la API oculta de datos de Oechsle
-        api_url = "https://www.oechsle.pe/api/catalog_system/pub/products/search"
+        # 🛡️ SOLUCIÓN AL ERROR 400: Mapeamos la ruta de categoría directamente al endpoint de la API
+        # En VTEX, la búsqueda oficial por categoría se hace en la ruta: /search/categoria/subcategoria
+        category_path = parsed_url.path.rstrip('/')
+        api_url = f"https://www.oechsle.pe/api/catalog_system/pub/products/search{category_path}"
         
-        # Mapeamos los filtros originales para enviárselos directamente a la base de datos
+        # Mapeamos los filtros originales si es que existen en la URL
         params = {}
         if 'fq' in query_params:
             params['fq'] = query_params['fq']
         if 'O' in query_params:
             params['O'] = query_params['O']
             
-        # Si la URL no tiene filtros, usamos el final de la ruta como palabra clave de búsqueda
-        if not params:
-            path_parts = [p for p in parsed_url.path.split('/') if p]
-            if path_parts:
-                params['ft'] = path_parts[-1]
+        # Agregamos paginación estándar por seguridad para evitar límites o errores del indexador
+        params['_from'] = '0'
+        params['_to'] = '49'
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
             "Accept": "application/json"
         }
         
-        safe_log("📡 [Oechsle] Conectando directamente con la API de Catálogo...", "info")
+        safe_log(f"📡 [Oechsle] Conectando directamente con la API de Catálogo en: {category_path}...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
         
-        # 💡 CORRECCIÓN DE INGENIERÍA: Validamos tanto 200 como 206 (Partial Content es éxito en VTEX)
         if resp.status_code not in [200, 206]:
             safe_log(f"🛑 [Oechsle] API inaccesible. Código de error del servidor: {resp.status_code}", "error")
             return []
@@ -747,87 +747,6 @@ def motor_oechsle(url, limite):
         
     return productos
 
-def motor_wong(url, limite):
-    """Motor Forense WONG: Sonda de inspección de estructura interna de base de datos"""
-    import json
-    import re
-    import streamlit as st
-    
-    st.warning(f"🕵️‍♂️ INICIANDO INSPECCIÓN DE BASE DE DATOS EN WONG: {url}")
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9"
-    }
-    
-    try:
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200:
-            st.error(f"🛑 Error de conexión con el servidor. Código: {resp.status_code}")
-            return []
-            
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        template_el = soup.find('template', {'data-varname': '__STATE__'})
-        state_data = None
-        
-        if template_el:
-            script_el = template_el.find('script')
-            if script_el:
-                try:
-                    state_data = json.loads(script_el.string)
-                except Exception as e:
-                    st.error(f"Error parseando script template: {e}")
-        
-        if not state_data:
-            match = re.search(r'__STATE__\s*=\s*({.*?});', resp.text)
-            if match:
-                try:
-                    state_data = json.loads(match.group(1))
-                except Exception:
-                    pass
-                    
-        if not state_data:
-            st.error("🛑 No se encontró la base de datos __STATE__ en esta página de tecnología.")
-            return []
-            
-        st.success(f"✅ Base de datos decodificada. Contiene {len(state_data)} elementos en caché.")
-        
-        # 🧪 EXPERIMENTO 1: Ver las primeras 30 llaves para entender el patrón de indexación
-        primeras_llaves = list(state_data.keys())[:30]
-        with st.expander("🔑 1. Ver primeras 30 llaves de la base de datos (Estructura de Índices)"):
-            st.write(primeras_llaves)
-            
-        # 🧪 EXPERIMENTO 2: Buscar llaves relacionadas con "Product" o productos
-        llaves_producto = [k for k in state_data.keys() if "Product" in k or "product" in k]
-        with st.expander(f"📦 2. Llaves que contienen la palabra 'Product' ({len(llaves_producto)} encontradas)"):
-            st.write(llaves_producto[:15])
-            if llaves_producto:
-                st.write("Estructura de un objeto de producto de ejemplo:")
-                st.json(state_data[llaves_producto[0]])
-                
-        # 🧪 EXPERIMENTO 3: Buscar coincidencias de TV (TCL, Samsung, LG, Televisor) en el contenido
-        coincidencias = {}
-        for k, v in state_data.items():
-            if isinstance(v, dict):
-                v_str = str(v).upper()
-                if any(brand in v_str for brand in ["TCL", "SAMSUNG", "LG", "TELEVISOR"]):
-                    coincidencias[k] = v
-                    if len(coincidencias) >= 5:
-                        break
-                        
-        with st.expander("📺 3. Muestra de objetos internos que contienen marcas de TV"):
-            if coincidencias:
-                st.json(coincidencias)
-            else:
-                st.write("No se encontró ninguna mención a TCL, Samsung, LG o Televisor en los diccionarios.")
-                
-        st.error("🛑 AUDITORÍA COMPLETADA. Por favor, abre estos tres expansores, cópiame el texto o tómale una captura de pantalla para ajustar el extractor definitivo.")
-        
-    except Exception as e:
-        st.error(f"🛑 Fallo grave en el diagnóstico de Wong: {e}")
-        
-    return []
 
 
 def motor_tradicional_general(url, limite, headers):
@@ -874,7 +793,7 @@ def escanear_tienda(url, limite):
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
-    elif "wong.pe" in dominio: return motor_wong(url, limite)
+    
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
