@@ -4,3 +4,4 @@ beautifulsoup4
 requests
 supabase
 streamlit
+curl-cffi
