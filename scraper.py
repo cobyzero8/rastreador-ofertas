@@ -393,106 +393,61 @@ def motor_adidas(url, limite):
     """(Motor estacionado temporalmente)"""
     return []
 
-def motor_jbl(url, limite, headers=None):
-    """Motor JBL V6: Rescate de API Interna (Search-UpdateGrid) - 100% Gratis y sin Proxies"""
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
-    
-    productos = []
-    url_low = url.lower()
-    
-    # Cabeceras estándar (No requiere suplantación TLS pesada porque la API es flexible)
-    headers_estandar = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Referer": "https://www.jbl.com.pe/"
-    }
-    
-    try:
-        # 🕵️‍♂️ TU LÓGICA DE EXTRACCIÓN DE KEYWORD:
-        # Traducimos la URL compleja del radar en una búsqueda limpia para la API interna
-        keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
-        
-        api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
-        params = {
-            "q": keyword, 
-            "srule": "price-low-to-high", 
-            "sz": "36"  # Jalamos hasta 36 productos de golpe
-        }
-        
-        safe_log(f"📡 [JBL API] Accediendo por backdoor de catálogo con keyword: '{keyword}'...", "info")
-        resp = requests.get(api_url, headers=headers_estandar, params=params, timeout=15, verify=False)
-        
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
+# -------------------------------------------------------
+    # MOTOR 3: JBL (API interna)
+    # -------------------------------------------------------
+    elif "jbl.com.pe" in url_low:
+        try:
+            keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
+            api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
+            params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
             
-            safe_log(f"🔍 [JBL API] Conexión establecida. Procesando {len(items)} productos del catálogo interno...", "info")
-            vistos_links = set()
-            
-            for t in items:
-                try:
-                    # Enlace y Nombre
-                    tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name')
-                    if not tit_el: continue
-                    nombre_prod = tit_el.text.strip().upper()
-                    
-                    # Precios
-                    reg_el = t.select_one('.price .list .value') or t.select_one('del')
-                    precio_el = t.select_one('.price .sales .value') or t.select_one('.sales')
-                    
-                    txt_oferta = precio_el.text if precio_el else t.text
-                    precio_oferta = limpiar_precio_pnp(txt_oferta)
-                    if not precio_oferta: continue
-                    
-                    # 💡 Tu truco de multiplicación de decimales para corregir centavos
-                    if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
-                        precio_oferta = precio_oferta * 1000
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
+                
+                for t in items:
+                    try:
+                        tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name')
+                        if not tit_el: continue
+                        nombre_prod = tit_el.text.strip().upper()
                         
-                    precio_regular = precio_oferta
-                    if reg_el:
-                        precio_regular = limpiar_precio_pnp(reg_el.text)
-                        if 0 < precio_regular < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
-                            precio_regular = precio_regular * 1000
+                        reg_el = t.select_one('.price .list .value') or t.select_one('del')
+                        precio_el = t.select_one('.price .sales .value') or t.select_one('.sales')
+                        
+                        txt_oferta = precio_el.text if precio_el else t.text
+                        precio_oferta = limpiar_precio_pnp(txt_oferta)
+                        if not precio_oferta: continue
+                        
+                        if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
+                            precio_oferta = precio_oferta * 1000
                             
-                    # Filtro de presupuesto
-                    if 0 < precio_oferta <= limite:
-                        link_el = t.find('a', href=True)
-                        enlace_final = urljoin(url, link_el['href']) if link_el else url
+                        precio_regular = precio_oferta
+                        if reg_el:
+                            precio_regular = limpiar_precio_pnp(reg_el.text)
+                            if 0 < precio_regular < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
+                                precio_regular = precio_regular * 1000
                         
-                        if enlace_final in vistos_links: continue
-                        vistos_links.add(enlace_final)
-                        
-                        # Imagen del producto
-                        img_el = t.find('img')
-                        img_final = ""
-                        if img_el:
-                            img_final = img_el.get('data-src') or img_el.get('src') or ''
-                            if img_final.startswith('//'): img_final = 'https:' + img_final
-                            
-                        productos.append({
-                            "nombre": f"JBL - {nombre_prod}", 
-                            "precio": precio_oferta, 
-                            "precio_regular": precio_regular, 
-                            "link": enlace_final, 
-                            "img": img_final
-                        })
-                except Exception:
-                    continue
-        else:
-            safe_log(f"🛑 [JBL API] La puerta trasera respondió con error {resp.status_code}.", "error")
-            
-    except Exception as e:
-        safe_log(f"🛑 [JBL API] Fallo crítico al conectar con la API interna: {e}", "error")
-        
-    if productos:
-        safe_log(f"✅ [JBL API] ¡Éxito! Se capturaron {len(productos)} productos sin usar proxies.", "success")
-    else:
-        safe_log(f"⚠️ [JBL API] No se encontraron ofertas de audífonos bajo el límite de S/. {limite:.2f}", "warning")
-        
-    return productos
+                        if 0 < precio_oferta <= limite:
+                            link_el = t.find('a', href=True)
+                            enlace_final = urljoin(url, link_el['href']) if link_el else url
+                            img_el = t.find('img')
+                            img_final = ""
+                            if img_el:
+                                img_final = img_el.get('data-src') or img_el.get('src') or ''
+                                if img_final.startswith('//'): img_final = 'https:' + img_final
+                                
+                            productos.append({
+                                "nombre": f"JBL - {nombre_prod}", 
+                                "precio": precio_oferta, 
+                                "precio_regular": precio_regular, 
+                                "link": enlace_final, 
+                                "img": img_final
+                            })
+                    except: continue
+        except: pass
+
 def motor_platanitos(url, limite):
     productos = []
     try:
