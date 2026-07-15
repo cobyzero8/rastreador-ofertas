@@ -394,7 +394,7 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers=None):
-    """Motor JBL Definitivo V5: Bypass de DataDome con Firma TLS y soporte de Proxy integrado"""
+    """Motor JBL Definitivo V5.1: Bypass de DataDome con Firma TLS, soporte de Proxy y blindaje anti-sintaxis"""
     import re
     import streamlit as st
     from bs4 import BeautifulSoup
@@ -418,24 +418,26 @@ def motor_jbl(url, limite, headers=None):
         "Connection": "keep-alive"
     }
     
-    # 🔌 CONFIGURACIÓN DEL PROXY:
-    # El bot buscará un proxy en los Secrets de tu Streamlit bajo el nombre "PROXY_JBL".
-    # Formato esperado: "http://usuario:contraseña@ip:puerto" o simplemente "http://ip:puerto"
+    # 🔌 CONFIGURACIÓN DEL PROXY CON FILTRO DE SEGURIDAD
     proxies = None
     proxy_configurado = False
     
     try:
-        # Intentamos obtener el proxy desde los Secrets de Streamlit
         proxy_url = st.secrets.get("PROXY_JBL") if "PROXY_JBL" in st.secrets else None
         if proxy_url:
-            proxies = {
-                "http": proxy_url,
-                "https": proxy_url
-            }
-            proxy_configurado = True
-            safe_log("📡 [JBL] Enrutando conexión a través de Proxy autorizado...", "info")
-    except Exception:
-        pass
+            # 🛡️ FILTRO QUIRÚRGICO: Si el usuario dejó los datos de ejemplo, los ignoramos para no romper curl
+            palabras_ejemplo = ["usuario_proxy", "contraseña_proxy", "ip_del_proxy", "puerto"]
+            if any(p in proxy_url for p in palabras_ejemplo):
+                safe_log("⚠️ [JBL] Se detectó texto de plantilla en PROXY_JBL de st.secrets. Ignorando proxy para evitar error de sintaxis.", "warning")
+            else:
+                proxies = {
+                    "http": proxy_url,
+                    "https": proxy_url
+                }
+                proxy_configurado = True
+                safe_log("📡 [JBL] Enrutando conexión a través de Proxy autorizado...", "info")
+    except Exception as pe:
+        safe_log(f"⚠️ [JBL] Error al validar el formato del proxy: {pe}", "warning")
 
     try:
         if use_tls_client:
@@ -457,7 +459,7 @@ def motor_jbl(url, limite, headers=None):
             
         if resp.status_code == 403:
             if not proxy_configurado:
-                safe_log("🛑 [JBL] Acceso Denegado 403. Confirmado: DataDome bloqueó la IP de AWS. Se requiere configurar un proxy en st.secrets.", "error")
+                safe_log("🛑 [JBL] Acceso Denegado 403. Confirmado: DataDome bloqueó la IP de AWS. Se requiere configurar un proxy REAL en st.secrets.", "error")
             else:
                 safe_log("🛑 [JBL] Acceso Denegado 403. El proxy configurado también ha sido identificado o bloqueado.", "error")
             return []
@@ -554,7 +556,6 @@ def motor_jbl(url, limite, headers=None):
         safe_log(f"🛑 [JBL] Error crítico inesperado en el módulo: {e}", "error")
         
     return productos
-
 def motor_platanitos(url, limite):
     productos = []
     try:
