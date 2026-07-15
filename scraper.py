@@ -394,7 +394,7 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers=None):
-    """Motor JBL (API Interna Definitiva): Extracción ultra-ligera y gratuita mediante backdoor de catálogo"""
+    """Motor JBL V6.1: Backdoor de catálogo con simulación de cabeceras AJAX (XMLHttpRequest)"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
@@ -402,29 +402,33 @@ def motor_jbl(url, limite, headers=None):
     productos = []
     url_low = url.lower()
     
-    # Cabeceras nativas optimizadas para Salesforce Commerce Cloud
-    if not headers:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9",
-            "Referer": "https://www.jbl.com.pe/"
-        }
+    # 💡 LA CLAVE: Cabeceras tácticas para emular una petición AJAX interna real
+    headers_ajax = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html, */*; q=0.01", # Indica que espera un fragmento HTML parcial
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "X-Requested-With": "XMLHttpRequest", # ⚡ CRÍTICO: Le dice a Salesforce que es una petición interna del sistema
+        "Referer": "https://www.jbl.com.pe/audifonos/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "Connection": "keep-alive"
+    }
         
     try:
-        # 🕵️‍♂️ Lógica de Keywords nativa de tu código
+        # Lógica de Keywords nativa de tu código
         keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
         api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
-        params = {"q": keyword, "srule": "price-low-to-high", "sz": "36"} # Aumentamos a 36 para mayor cobertura
+        params = {"q": keyword, "srule": "price-low-to-high", "sz": "36"}
         
-        safe_log(f"📡 [JBL API] Accediendo a base de datos interna mediante consulta: '{keyword}'...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        safe_log(f"📡 [JBL API] Patrullando base de datos interna via AJAX ('{keyword}')...", "info")
+        resp = requests.get(api_url, headers=headers_ajax, params=params, timeout=15, verify=False)
         
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
             
-            safe_log(f"🔍 [JBL API] Catálogo leído. Procesando {len(items)} productos encontrados...", "info")
+            safe_log(f"🔍 [JBL API] Catálogo leído con éxito. Procesando {len(items)} productos...", "info")
             vistos_links = set()
             
             for t in items:
@@ -482,12 +486,11 @@ def motor_jbl(url, limite, headers=None):
         safe_log(f"🛑 [JBL API] Error inesperado en el módulo: {e}", "error")
         
     if productos:
-        safe_log(f"✅ [JBL API] ¡Éxito Total! Se indexaron {len(productos)} ofertas directamente en Supabase.", "success")
+        safe_log(f"✅ [JBL API] ¡Éxito Total! Se indexaron {len(productos)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [JBL API] Catálogo procesado, pero ninguna oferta baja de S/. {limite:.2f}", "warning")
         
     return productos
-
 def motor_platanitos(url, limite):
     productos = []
     try:
