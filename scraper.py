@@ -393,8 +393,8 @@ def motor_adidas(url, limite):
     """(Motor estacionado temporalmente)"""
     return []
 
-def motor_jbl(url, limite, headers=None):
-    """Motor JBL V6.1: Backdoor de catálogo con simulación de cabeceras AJAX (XMLHttpRequest)"""
+def motor_jbl(url, limite, headers):
+    """Motor JBL Original: Tu lógica nativa restaurada al 100% sin modificaciones de red"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
@@ -402,43 +402,25 @@ def motor_jbl(url, limite, headers=None):
     productos = []
     url_low = url.lower()
     
-    # 💡 LA CLAVE: Cabeceras tácticas para emular una petición AJAX interna real
-    headers_ajax = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html, */*; q=0.01", # Indica que espera un fragmento HTML parcial
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "X-Requested-With": "XMLHttpRequest", # ⚡ CRÍTICO: Le dice a Salesforce que es una petición interna del sistema
-        "Referer": "https://www.jbl.com.pe/audifonos/",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "Connection": "keep-alive"
-    }
-        
     try:
-        # Lógica de Keywords nativa de tu código
+        # Tu selector de keywords original
         keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
         api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
-        params = {"q": keyword, "srule": "price-low-to-high", "sz": "36"}
+        params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"} # <-- Volvemos al 24 original
         
-        safe_log(f"📡 [JBL API] Patrullando base de datos interna via AJAX ('{keyword}')...", "info")
-        resp = requests.get(api_url, headers=headers_ajax, params=params, timeout=15, verify=False)
+        safe_log(f"📡 [JBL API] Accediendo con tu configuración nativa para keyword: '{keyword}'...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
         
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
             
-            safe_log(f"🔍 [JBL API] Catálogo leído con éxito. Procesando {len(items)} productos...", "info")
-            vistos_links = set()
-            
             for t in items:
                 try:
-                    # Enlace y Nombre
                     tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name')
                     if not tit_el: continue
                     nombre_prod = tit_el.text.strip().upper()
                     
-                    # Precios
                     reg_el = t.select_one('.price .list .value') or t.select_one('del')
                     precio_el = t.select_one('.price .sales .value') or t.select_one('.sales')
                     
@@ -446,7 +428,7 @@ def motor_jbl(url, limite, headers=None):
                     precio_oferta = limpiar_precio_pnp(txt_oferta)
                     if not precio_oferta: continue
                     
-                    # Corrección de decimales nativa de tu código
+                    # Corrección de decimales original
                     if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
                         precio_oferta = precio_oferta * 1000
                         
@@ -456,13 +438,9 @@ def motor_jbl(url, limite, headers=None):
                         if 0 < precio_regular < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
                             precio_regular = precio_regular * 1000
                     
-                    # Filtro de Presupuesto
                     if 0 < precio_oferta <= limite:
                         link_el = t.find('a', href=True)
                         enlace_final = urljoin(url, link_el['href']) if link_el else url
-                        
-                        if enlace_final in vistos_links: continue
-                        vistos_links.add(enlace_final)
                         
                         img_el = t.find('img')
                         img_final = ""
@@ -477,20 +455,16 @@ def motor_jbl(url, limite, headers=None):
                             "link": enlace_final, 
                             "img": img_final
                         })
-                except Exception: 
+                except: 
                     continue
-        else:
-            safe_log(f"🛑 [JBL API] Acceso denegado en puerto trasero. Código HTTP: {resp.status_code}", "error")
-            
     except Exception as e:
-        safe_log(f"🛑 [JBL API] Error inesperado en el módulo: {e}", "error")
-        
-    if productos:
-        safe_log(f"✅ [JBL API] ¡Éxito Total! Se indexaron {len(productos)} ofertas.", "success")
-    else:
-        safe_log(f"⚠️ [JBL API] Catálogo procesado, pero ninguna oferta baja de S/. {limite:.2f}", "warning")
+        safe_log(f"🛑 [JBL API] Error en la petición: {e}", "error")
         
     return productos
+
+
+
+
 def motor_platanitos(url, limite):
     productos = []
     try:
@@ -848,7 +822,7 @@ def escanear_tienda(url, limite):
     elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
     elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
     elif "adidas" in dominio: return motor_adidas(url, limite)
-    elif "jbl" in dominio: return motor_jbl(url, limite, headers)
+    elif "jbl" in dominio: return motor_jbl(url, limite, headers=headers)
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
