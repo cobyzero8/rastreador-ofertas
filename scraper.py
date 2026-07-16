@@ -814,7 +814,7 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    """Motor Plaza Vea V2.1: Extracción multicategoría optimizada para responder a códigos 200 y 206 (VTEX)"""
+    """Motor Plaza Vea V2.2: Extracción multicategoría optimizada para VTEX (Soporta 206 y corregido commertialOffer)"""
     import requests
     from urllib.parse import urljoin
 
@@ -863,19 +863,19 @@ def motor_plazavea(url, limite, headers=None):
         else:
             keyword = "tecnologia"
 
-        # Consulta directa al buscador VTEX
+        # Consulta directa al buscador VTEX ordenado de menor a mayor precio
         api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
         params = {
             "ft": keyword,
             "O": "OrderByPriceASC",
             "_from": "0",
-            "_to": "49"  # Descarga 50 productos
+            "_to": "49"
         }
 
         safe_log(f"📡 [Plaza Vea API] Buscando en VTEX: '{keyword}'...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
-        # ⚡ CORRECCIÓN CLAVE: Aceptamos tanto 200 como 206 (Partial Content)
+        # ⚡ CORRECCIÓN 1: Aceptamos formalmente los códigos exitosos 200 y 206
         if resp.status_code in [200, 206]:
             data = resp.json()
             safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} productos en stock...", "info")
@@ -898,15 +898,16 @@ def motor_plazavea(url, limite, headers=None):
                     if not sellers:
                         continue
                         
-                    comm_record = sellers[0].get("commertialRecord", {})
+                    # ⚡ CORRECCIÓN 2: Apuntamos al nodo correcto 'commertialOffer' para jalar precio y stock real
+                    offer = sellers[0].get("commertialOffer", {})
                     
-                    # Ignoramos productos que no tengan stock para evitar ofertas falsas
-                    stock = comm_record.get("AvailableQuantity", 0)
+                    # Filtramos productos que no tengan stock para evitar ofertas fantasma
+                    stock = offer.get("AvailableQuantity", 0)
                     if stock <= 0:
                         continue  
                         
-                    precio_oferta = float(comm_record.get("Price", 0))
-                    precio_regular = float(comm_record.get("ListPrice", precio_oferta))
+                    precio_oferta = float(offer.get("Price", 0))
+                    precio_regular = float(offer.get("ListPrice", precio_oferta))
                     
                     if precio_oferta <= 0:
                         continue
@@ -932,7 +933,7 @@ def motor_plazavea(url, limite, headers=None):
     except Exception as e:
         safe_log(f"🛑 [Plaza Vea API] Error crítico inesperado: {e}", "error")
 
-    # Diagnóstico de salida en Streamlit
+    # Diagnóstico de salida en tu panel de Streamlit
     if productos:
         safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas de '{keyword}'.", "success")
     else:
