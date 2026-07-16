@@ -814,7 +814,7 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    """Motor Plaza Vea V2: Extracción multicategoría ultra-veloz usando la API de catálogo de VTEX"""
+    """Motor Plaza Vea V2.1: Extracción multicategoría optimizada para responder a códigos 200 y 206 (VTEX)"""
     import requests
     from urllib.parse import urljoin
 
@@ -830,7 +830,7 @@ def motor_plazavea(url, limite, headers=None):
 
     try:
         # =======================================================
-        # 🕵️‍♂️ DICCIONARIO DE MAPEO MULTICATEGORÍA (Tu nueva configuración)
+        # 🕵️‍♂️ DICCIONARIO DE MAPEO MULTICATEGORÍA
         # =======================================================
         if "barra" in url_low or "soundbar" in url_low:
             keyword = "barra de sonido"
@@ -863,19 +863,20 @@ def motor_plazavea(url, limite, headers=None):
         else:
             keyword = "tecnologia"
 
-        # Consulta directa al buscador VTEX ordenado por precio de menor a mayor (ofertas primero)
+        # Consulta directa al buscador VTEX
         api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
         params = {
             "ft": keyword,
             "O": "OrderByPriceASC",
             "_from": "0",
-            "_to": "49"  # Descarga 50 productos optimizados
+            "_to": "49"  # Descarga 50 productos
         }
 
         safe_log(f"📡 [Plaza Vea API] Buscando en VTEX: '{keyword}'...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
-        if resp.status_code == 200:
+        # ⚡ CORRECCIÓN CLAVE: Aceptamos tanto 200 como 206 (Partial Content)
+        if resp.status_code in [200, 206]:
             data = resp.json()
             safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} productos en stock...", "info")
             vistos_links = set()
