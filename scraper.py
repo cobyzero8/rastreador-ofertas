@@ -972,10 +972,12 @@ def motor_tradicional_general(url, limite, headers):
 # =======================================================
 def escanear_tienda(url, limite):
     headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
+    
+    # ⚡ LA LÍNEA DETECTADA: Volvemos a definir dominio para evitar el NameError
     dominio = urlparse(url).netloc.lower()
     
-    # Ruteo seguro y aislado por tienda
-    if "carsa.pe" in dominio: return motor_carsa(url, limite) # <--- LA NUEVA LÍNEA AÑADIDA
+    # Ruteo seguro y aislado por tienda (Tus motores perfectos siguen intactos)
+    if "carsa.pe" in dominio: return motor_carsa(url, limite)
     elif "thn.pe" in dominio: return motor_thn(url, limite)
     elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
     elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
