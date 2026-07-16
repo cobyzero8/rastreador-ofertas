@@ -394,7 +394,7 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers):
-    """Motor JBL Original: Tu lógica nativa con reportes de diagnóstico obligatorios"""
+    """Motor JBL Original: Tu lógica nativa con evasión de redireccionamientos WAF"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
@@ -403,15 +403,46 @@ def motor_jbl(url, limite, headers):
     url_low = url.lower()
     
     try:
-        # Tu selector de keywords original
-        keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
+        # 🕵️‍♂️ MAPEO INTELIGENTE DE KEYWORDS (Evita que Salesforce intente redireccionarnos)
+        if "barra" in url_low:
+            primary_keyword = "soundbar"  # Trae todas las barras sin activar el redirect a la portada
+            fallback_keyword = "cinema"
+        elif "wireless" in url_low or "audifono" in url_low:
+            primary_keyword = "tws"       # Trae todos los audífonos True Wireless sin desvíos
+            fallback_keyword = "audifonos"
+        elif "parlante" in url_low:
+            primary_keyword = "parlante"  # Este ya funciona perfecto de forma nativa
+            fallback_keyword = "audio"
+        else:
+            primary_keyword = "audio"
+            fallback_keyword = "jbl"
+            
         api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
+        
+        # Primero intentamos con la palabra clave optimizada
+        keyword = primary_keyword
         params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
         
         safe_log(f"📡 [JBL API] Accediendo con tu configuración nativa para keyword: '{keyword}'...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
         
-        # 🔍 EVALUACIÓN TRANSPARENTE DEL ESTADO HTTP
+        # ⚡ CLAVE: allow_redirects=False intercepta las redirecciones antes de que DataDome nos vea
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False, allow_redirects=False)
+        
+        # Si detectamos un intento de redirección (301/302), aplicamos el plan de contingencia
+        if resp.status_code in [301, 302]:
+            safe_log(f"⚠️ [JBL API] El término '{keyword}' causó un desvío. Probando fallback táctico: '{fallback_keyword}'...", "warning")
+            keyword = fallback_keyword
+            params["q"] = keyword
+            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False, allow_redirects=False)
+            
+            # Último recurso: Consulta universal "jbl" que jala todo el catálogo sin redireccionar
+            if resp.status_code in [301, 302]:
+                safe_log(f"⚠️ [JBL API] Segundo desvío. Aplicando consulta universal 'jbl'...", "warning")
+                keyword = "jbl"
+                params["q"] = keyword
+                resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False, allow_redirects=False)
+        
+        # Procesamos únicamente cuando el servidor nos responde con un 200 limpio
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
@@ -432,7 +463,7 @@ def motor_jbl(url, limite, headers):
                     precio_oferta = limpiar_precio_pnp(txt_oferta)
                     if not precio_oferta: continue
                     
-                    # Corrección de decimales original
+                    # Tu corrección de decimales nativa original
                     if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
                         precio_oferta = precio_oferta * 1000
                         
@@ -465,13 +496,12 @@ def motor_jbl(url, limite, headers):
                 except: 
                     continue
         else:
-            # 🚨 SI NO ES 200, AHORA SÍ TE LO COMENTARÁ EN PANTALLA
             safe_log(f"🛑 [JBL API] La petición no tuvo éxito. El servidor respondió con Código HTTP: {resp.status_code}", "error")
             
     except Exception as e:
         safe_log(f"🛑 [JBL API] Error en la petición: {e}", "error")
         
-    # 📊 REPORTE DE CONTROL FINAL
+    # Reporte de control de consola
     if productos:
         safe_log(f"✅ [JBL API] ¡Éxito! Se encontraron e indexaron {len(productos)} ofertas.", "success")
     else:
