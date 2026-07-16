@@ -814,13 +814,12 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    """Motor Plaza Vea V2.2: Extracción multicategoría optimizada para VTEX (Soporta 206 y corregido commertialOffer)"""
+    """Motor Plaza Vea V3: Extracción dinámica y universal sin mapeo de palabras clave (VTEX)"""
     import requests
-    from urllib.parse import urljoin
+    from urllib.parse import urlparse, parse_qs, urljoin
 
     productos = []
-    url_low = url.lower()
-
+    
     if not headers:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -829,56 +828,34 @@ def motor_plazavea(url, limite, headers=None):
         }
 
     try:
-        # =======================================================
-        # 🕵️‍♂️ DICCIONARIO DE MAPEO MULTICATEGORÍA
-        # =======================================================
-        if "barra" in url_low or "soundbar" in url_low:
-            keyword = "barra de sonido"
-        elif "audifono" in url_low or "wireless" in url_low or "auricular" in url_low:
-            keyword = "audifonos"
-        elif "parlante" in url_low or "speaker" in url_low:
-            keyword = "parlante"
-        elif "tv" in url_low or "televisor" in url_low:
-            keyword = "televisor"
-        elif "celular" in url_low or "smartphone" in url_low:
-            keyword = "celular"
-        elif "laptop" in url_low or "notebook" in url_low or "computadora" in url_low:
-            keyword = "laptop"
-        elif "refrigeradora" in url_low or "refrigerador" in url_low:
-            keyword = "refrigeradora"
-        elif "lavadora" in url_low or "secadora" in url_low:
-            keyword = "lavadora"
-        elif "cama" in url_low or "colchon" in url_low or "tarima" in url_low:
-            keyword = "cama"
-        elif "ropero" in url_low or "closet" in url_low or "armario" in url_low:
-            keyword = "ropero"
-        elif "cocina" in url_low:
-            keyword = "cocina"
-        elif "tablet" in url_low or "ipad" in url_low:
-            keyword = "tablet"
-        elif "freidora" in url_low or "airfryer" in url_low:
-            keyword = "freidora de aire"
-        elif "electrodom" in url_low or "licuadora" in url_low or "hervidor" in url_low:
-            keyword = "electrodomesticos"
-        else:
-            keyword = "tecnologia"
+        # ⚡ EXTRACCIÓN DINÁMICA: Extrae la categoría exacta directamente desde la URL
+        parsed_url = urlparse(url)
+        category_path = parsed_url.path.rstrip('/')
+        if category_path and not category_path.startswith('/'):
+            category_path = '/' + category_path
 
-        # Consulta directa al buscador VTEX ordenado de menor a mayor precio
-        api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
+        # Construimos la consulta directa a la API de VTEX usando la ruta del enlace
+        api_url = f"https://www.plazavea.com.pe/api/catalog_system/pub/products/search{category_path}"
+
+        # Mantenemos los ordenamientos y paginaciones por defecto (Menor a mayor precio)
+        query_params = parse_qs(parsed_url.query)
         params = {
-            "ft": keyword,
             "O": "OrderByPriceASC",
             "_from": "0",
             "_to": "49"
         }
+        
+        # Si la URL original ya venía con filtros adicionales, los unimos de forma segura
+        for k, v in query_params.items():
+            params[k] = v[0]
 
-        safe_log(f"📡 [Plaza Vea API] Buscando en VTEX: '{keyword}'...", "info")
+        safe_log(f"📡 [Plaza Vea API] Consultando ruta dinámica de VTEX: '{category_path or '/search'}'...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
-        # ⚡ CORRECCIÓN 1: Aceptamos formalmente los códigos exitosos 200 y 206
+        # Procesamos la respuesta exitosa (Soporta contenido completo 200 y parcial 206)
         if resp.status_code in [200, 206]:
             data = resp.json()
-            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} productos en stock...", "info")
+            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} candidatos...", "info")
             vistos_links = set()
 
             for p in data:
@@ -898,10 +875,10 @@ def motor_plazavea(url, limite, headers=None):
                     if not sellers:
                         continue
                         
-                    # ⚡ CORRECCIÓN 2: Apuntamos al nodo correcto 'commertialOffer' para jalar precio y stock real
+                    # Extraemos los datos de la oferta comercial real (Precio y Stock)
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Filtramos productos que no tengan stock para evitar ofertas fantasma
+                    # Filtro estricto de Stock real para evitar ofertas fantasma
                     stock = offer.get("AvailableQuantity", 0)
                     if stock <= 0:
                         continue  
@@ -912,7 +889,7 @@ def motor_plazavea(url, limite, headers=None):
                     if precio_oferta <= 0:
                         continue
 
-                    # Filtro de presupuesto personalizado por categoría
+                    # Filtro de presupuesto
                     if precio_oferta <= limite:
                         if link_final in vistos_links:
                             continue
@@ -933,11 +910,11 @@ def motor_plazavea(url, limite, headers=None):
     except Exception as e:
         safe_log(f"🛑 [Plaza Vea API] Error crítico inesperado: {e}", "error")
 
-    # Diagnóstico de salida en tu panel de Streamlit
+    # Reporte final para tu consola de Streamlit
     if productos:
-        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas de '{keyword}'.", "success")
+        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas reales en stock.", "success")
     else:
-        safe_log(f"⚠️ [Plaza Vea API] No se encontraron productos de '{keyword}' bajo el límite de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Plaza Vea API] No se encontraron productos de esta categoría bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos
 
