@@ -985,7 +985,7 @@ def escanear_tienda(url, limite):
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
-    elif "plazavea.com.pe" in url_low: return motor_plazavea(url, limite, headers=headers)
+    elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
