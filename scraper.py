@@ -813,6 +813,133 @@ def motor_oechsle(url, limite):
         
     return productos
 
+def motor_plazavea(url, limite, headers=None):
+    """Motor Plaza Vea V2: Extracción multicategoría ultra-veloz usando la API de catálogo de VTEX"""
+    import requests
+    from urllib.parse import urljoin
+
+    productos = []
+    url_low = url.lower()
+
+    if not headers:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.plazavea.com.pe/"
+        }
+
+    try:
+        # =======================================================
+        # 🕵️‍♂️ DICCIONARIO DE MAPEO MULTICATEGORÍA (Tu nueva configuración)
+        # =======================================================
+        if "barra" in url_low or "soundbar" in url_low:
+            keyword = "barra de sonido"
+        elif "audifono" in url_low or "wireless" in url_low or "auricular" in url_low:
+            keyword = "audifonos"
+        elif "parlante" in url_low or "speaker" in url_low:
+            keyword = "parlante"
+        elif "tv" in url_low or "televisor" in url_low:
+            keyword = "televisor"
+        elif "celular" in url_low or "smartphone" in url_low:
+            keyword = "celular"
+        elif "laptop" in url_low or "notebook" in url_low or "computadora" in url_low:
+            keyword = "laptop"
+        elif "refrigeradora" in url_low or "refrigerador" in url_low:
+            keyword = "refrigeradora"
+        elif "lavadora" in url_low or "secadora" in url_low:
+            keyword = "lavadora"
+        elif "cama" in url_low or "colchon" in url_low or "tarima" in url_low:
+            keyword = "cama"
+        elif "ropero" in url_low or "closet" in url_low or "armario" in url_low:
+            keyword = "ropero"
+        elif "cocina" in url_low:
+            keyword = "cocina"
+        elif "tablet" in url_low or "ipad" in url_low:
+            keyword = "tablet"
+        elif "freidora" in url_low or "airfryer" in url_low:
+            keyword = "freidora de aire"
+        elif "electrodom" in url_low or "licuadora" in url_low or "hervidor" in url_low:
+            keyword = "electrodomesticos"
+        else:
+            keyword = "tecnologia"
+
+        # Consulta directa al buscador VTEX ordenado por precio de menor a mayor (ofertas primero)
+        api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
+        params = {
+            "ft": keyword,
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"  # Descarga 50 productos optimizados
+        }
+
+        safe_log(f"📡 [Plaza Vea API] Buscando en VTEX: '{keyword}'...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} productos en stock...", "info")
+            vistos_links = set()
+
+            for p in data:
+                try:
+                    nombre_prod = p.get("productName", "").strip().upper()
+                    link_final = p.get("link", "")
+                    
+                    items = p.get("items", [])
+                    if not items:
+                        continue
+                    
+                    first_item = items[0]
+                    images = first_item.get("images", [])
+                    img_final = images[0].get("imageUrl", "") if images else ""
+                    
+                    sellers = first_item.get("sellers", [])
+                    if not sellers:
+                        continue
+                        
+                    comm_record = sellers[0].get("commertialRecord", {})
+                    
+                    # Ignoramos productos que no tengan stock para evitar ofertas falsas
+                    stock = comm_record.get("AvailableQuantity", 0)
+                    if stock <= 0:
+                        continue  
+                        
+                    precio_oferta = float(comm_record.get("Price", 0))
+                    precio_regular = float(comm_record.get("ListPrice", precio_oferta))
+                    
+                    if precio_oferta <= 0:
+                        continue
+
+                    # Filtro de presupuesto personalizado por categoría
+                    if precio_oferta <= limite:
+                        if link_final in vistos_links:
+                            continue
+                        vistos_links.add(link_final)
+
+                        productos.append({
+                            "nombre": f"Plaza Vea - {nombre_prod}",
+                            "precio": precio_oferta,
+                            "precio_regular": precio_regular,
+                            "link": link_final,
+                            "img": img_final
+                        })
+                except Exception:
+                    continue
+        else:
+            safe_log(f"🛑 [Plaza Vea API] Error de conexión con VTEX. Código HTTP: {resp.status_code}", "error")
+
+    except Exception as e:
+        safe_log(f"🛑 [Plaza Vea API] Error crítico inesperado: {e}", "error")
+
+    # Diagnóstico de salida en Streamlit
+    if productos:
+        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas de '{keyword}'.", "success")
+    else:
+        safe_log(f"⚠️ [Plaza Vea API] No se encontraron productos de '{keyword}' bajo el límite de S/. {limite:.2f}", "warning")
+
+    return productos
+
+
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -854,11 +981,11 @@ def escanear_tienda(url, limite):
     elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
     elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
     elif "adidas" in dominio: return motor_adidas(url, limite)
-    elif "jbl" in dominio: return motor_jbl(url, limite, headers=headers)
+    elif "jbl.com.pe" in dominio: return motor_jbl(url, limite, headers=headers)
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
-    
+    elif "plazavea.com.pe" in url_low: return motor_plazavea(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
