@@ -394,7 +394,7 @@ def motor_adidas(url, limite):
     return []
 
 def motor_jbl(url, limite, headers):
-    """Motor JBL Original: Tu lógica nativa restaurada al 100% sin modificaciones de red"""
+    """Motor JBL Original: Tu lógica nativa con reportes de diagnóstico obligatorios"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
@@ -406,14 +406,18 @@ def motor_jbl(url, limite, headers):
         # Tu selector de keywords original
         keyword = "barra" if "barra" in url_low else "wireless" if "wireless" in url_low else "parlante" if "parlante" in url_low else "audio"
         api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
-        params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"} # <-- Volvemos al 24 original
+        params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
         
         safe_log(f"📡 [JBL API] Accediendo con tu configuración nativa para keyword: '{keyword}'...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
         
+        # 🔍 EVALUACIÓN TRANSPARENTE DEL ESTADO HTTP
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
+            
+            safe_log(f"🔍 [JBL API] Catálogo leído con éxito. Procesando {len(items)} productos...", "info")
+            vistos_links = set()
             
             for t in items:
                 try:
@@ -442,6 +446,9 @@ def motor_jbl(url, limite, headers):
                         link_el = t.find('a', href=True)
                         enlace_final = urljoin(url, link_el['href']) if link_el else url
                         
+                        if enlace_final in vistos_links: continue
+                        vistos_links.add(enlace_final)
+                        
                         img_el = t.find('img')
                         img_final = ""
                         if img_el:
@@ -457,11 +464,20 @@ def motor_jbl(url, limite, headers):
                         })
                 except: 
                     continue
+        else:
+            # 🚨 SI NO ES 200, AHORA SÍ TE LO COMENTARÁ EN PANTALLA
+            safe_log(f"🛑 [JBL API] La petición no tuvo éxito. El servidor respondió con Código HTTP: {resp.status_code}", "error")
+            
     except Exception as e:
         safe_log(f"🛑 [JBL API] Error en la petición: {e}", "error")
         
+    # 📊 REPORTE DE CONTROL FINAL
+    if productos:
+        safe_log(f"✅ [JBL API] ¡Éxito! Se encontraron e indexaron {len(productos)} ofertas.", "success")
+    else:
+        safe_log("⚠️ [JBL API] El proceso terminó sin capturar ningún producto bajo el límite.", "warning")
+        
     return productos
-
 
 
 
