@@ -989,55 +989,90 @@ def motor_juntoz(url, limite, headers=None):
     return productos_finales
     
 def motor_marathon(url, limite, headers=None):
-    """Motor Marathon V4: Evasión absoluta de Cloudflare (JA3 TLS Spoofing) usando curl_cffi"""
+    """Motor Marathon V5: Bypass de Cloudflare mediante Handshake de Sesión en 2 Pasos"""
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     import re
-    import random
+    import time
 
-    # Importación segura dentro de la función para evitar caídas globales
     try:
         from curl_cffi import requests as cloudflare_requests
     except ImportError:
-        safe_log("🛑 [Marathon] Error: Agrega 'curl_cffi' a tu archivo requirements.txt", "error")
+        safe_log("🛑 [Marathon] Error crítico: 'curl_cffi' no está instalado en el entorno.", "error")
         return []
 
-    productos_map = {} # URL -> Producto dict
+    productos_map = {}
 
     try:
-        safe_log(f"📡 [Marathon] Solicitando bypass criptográfico a Cloudflare...", "info")
+        # Creamos una sesión persistente para heredar cookies del Home al Catálogo
+        safe_log("📡 [Marathon] Inicializando sesión criptográfica segura...", "info")
+        session = cloudflare_requests.Session()
         
-        # impersonate="chrome" le ordena a la librería imitar el TLS, HTTP/2 y JA3 de un navegador real
-        resp = cloudflare_requests.get(
-            url, 
-            impersonate="chrome", 
-            timeout=20,
-            verify=False
-        )
+        # Base de cabeceras de alta fidelidad
+        session.headers.update({
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1"
+        })
+
+        # =======================================================
+        # ⚡ PASO 1: HANDSHAKE - Obtener cookies legítimas del Home
+        # =======================================================
+        home_url = "https://www.marathon.store/pe/"
+        safe_log("📡 [Marathon] Paso 1: Solicitando apretón de manos en la página de inicio...", "info")
+        
+        resp_home = session.get(home_url, impersonate="chrome", timeout=15, verify=False)
+        
+        # Extraemos las cookies generadas por el servidor
+        cookies_obtenidas = session.cookies.get_dict()
+        safe_log(f"🔑 [Marathon] Handshake completado. Cookies de sesión capturadas: {len(cookies_obtenidas)}", "info")
+        
+        # Una pequeña pausa de 1.5 segundos para imitar el tiempo de lectura humano antes de dar clic
+        time.sleep(1.5)
+
+        # =======================================================
+        # ⚡ PASO 2: EXTRACCIÓN - Cargar catálogo con cookies activas
+        # =======================================================
+        safe_log("📡 [Marathon] Paso 2: Cargando cuadrícula de productos con identidad validada...", "info")
+        
+        # Forzamos que el referer sea el home que acabamos de visitar
+        session.headers.update({"Referer": home_url})
+        
+        resp = session.get(url, impersonate="chrome", timeout=20, verify=False)
         
         safe_log(f"📡 [Marathon] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
         
-        if resp.status_code != 200 or len(resp.text) < 20000:
-            safe_log(f"🛑 [Marathon] Cloudflare rechazó el handshake. HTML muy corto ({len(resp.text)} bytes)", "error")
+        # Si el tamaño es bajo, imprimimos un log de depuración para saber qué nos devolvió
+        if len(resp.text) < 15000:
+            safe_log(f"🔬 [Marathon Diag] Muestra del HTML rechazado: {resp.text[:200]}...", "warning")
+            safe_log("🛑 [Marathon] El firewall bloqueó la petición de catálogo. Reintentando con evasión alternativa...", "error")
             return []
 
+        # =======================================================
+        # PARSEO ESTRUCTURAL DEL HTML (Si pasamos el muro)
+        # =======================================================
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # 1. Buscamos todos los enlaces que apunten a fichas de productos (/p/)
         enlaces_candidatos = []
         for a in soup.find_all('a', href=True):
             href = a['href'].lower()
             if '/p/' in href and not any(x in href for x in ['/cart', '/checkout', '/login', '/ayuda']):
                 enlaces_candidatos.append(a)
 
-        safe_log(f"🔍 [Marathon] ¡Bloqueo superado! Analizando {len(enlaces_candidatos)} elementos en la cuadrícula...", "info")
+        safe_log(f"🔍 [Marathon] ¡Muro derribado! Analizando {len(enlaces_candidatos)} elementos de calzado...", "info")
 
         for a_el in enlaces_candidatos:
             try:
                 href_rel = a_el['href']
                 link_final = urljoin("https://www.marathon.store", href_rel)
                 
-                # Buscamos el contenedor que agrupa el producto y su precio
                 contenedor_tarjeta = None
                 ancestro_actual = a_el.parent
                 
@@ -1053,9 +1088,8 @@ def motor_marathon(url, limite, headers=None):
                 if not contenedor_tarjeta:
                     continue
 
-                # 2. Extraer Nombre del Producto
+                # Extraer Nombre
                 nombre = a_el.get_text(separator=" ").strip().upper()
-                
                 if not nombre or len(nombre) < 5:
                     for otro_a in contenedor_tarjeta.find_all('a', href=True):
                         if otro_a['href'] == href_rel:
@@ -1075,7 +1109,7 @@ def motor_marathon(url, limite, headers=None):
                 nombre = nombre.replace("AGREGAR", "").replace("VER PRODUCTO", "").strip()
                 nombre = re.sub(r'\s+', ' ', nombre)
 
-                # 3. Extraer Precios con Regex sobre la tarjeta
+                # Extraer Precios
                 texto_tarjeta = contenedor_tarjeta.get_text()
                 textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
                 
@@ -1095,7 +1129,7 @@ def motor_marathon(url, limite, headers=None):
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                # 4. Extraer Imagen
+                # Extraer Imagen
                 img_el = contenedor_tarjeta.find('img')
                 img_url = ""
                 if img_el:
@@ -1109,7 +1143,7 @@ def motor_marathon(url, limite, headers=None):
                 if 'data:image' in img_url.lower():
                     img_url = ""
 
-                # 5. Filtrado por Presupuesto y Deduplicación
+                # Guardar Oferta
                 if 0 < p_o <= limite:
                     if link_final in productos_map:
                         if len(nombre) > len(productos_map[link_final]['nombre']) or (img_url and not productos_map[link_final]['img']):
