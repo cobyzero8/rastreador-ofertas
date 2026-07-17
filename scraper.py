@@ -823,7 +823,7 @@ def motor_plazavea(url, limite, headers=None):
     return productos
 
 def motor_juntoz(url, limite, headers=None):
-    """Motor Juntoz V3: Extractor de alto rendimiento usando la API directa de VTEX (Idéntico a Plaza Vea/Oechsle)"""
+    """Motor Juntoz V3.1: Extractor de alto rendimiento con endpoints de contingencia en cascada (Evita HTTP 404/403)"""
     import requests
     from urllib.parse import urlparse, parse_qs
 
@@ -833,38 +833,32 @@ def motor_juntoz(url, limite, headers=None):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
             "Accept": "application/json",
-            "Referer": "https://juntoz.com/"
+            "Referer": "https://www.juntoz.com/"
         }
 
     try:
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
 
-        # ⚡ Conexión directa al motor VTEX de Juntoz
-        api_url = "https://juntoz.com/api/catalog_system/pub/products/search"
-
-        # Parámetros base de VTEX por defecto
+        # ⚡ Parámetros base de VTEX por defecto
         params = {
             "O": "OrderByPriceASC",
             "_from": "0",
             "_to": "49"
         }
 
-        # ⚡ TRADUCTOR INTELIGENTE DE PARÁMETROS: Juntoz -> VTEX
+        # ⚡ TRADUCTOR DE PARÁMETROS: Juntoz -> VTEX
         fq_list = []
 
-        # 1. Búsqueda por palabra clave
         if 'keywords' in query_params:
             params['ft'] = query_params['keywords'][0]
         elif 'q' in query_params:
             params['ft'] = query_params['q'][0]
 
-        # 2. Filtro de Categoría
         if 'categoryId' in query_params:
             cat_id = query_params['categoryId'][0]
             fq_list.append(f"C:{cat_id}")
 
-        # 3. Filtros de Marca Múltiple (ej. TCL, Samsung, LG)
         if 'brandId' in query_params:
             brand_raw = query_params['brandId'][0]
             brands = brand_raw.split(',')
@@ -872,7 +866,6 @@ def motor_juntoz(url, limite, headers=None):
                 if b.strip():
                     fq_list.append(f"B:{b.strip()}")
 
-        # 4. Orden de precio
         if 'orderBy' in query_params:
             order = query_params['orderBy'][0].lower()
             if order in ['asc', 'orderbypriceasc']:
@@ -880,15 +873,31 @@ def motor_juntoz(url, limite, headers=None):
             elif order in ['desc', 'orderbypricedesc']:
                 params['O'] = 'OrderByPriceDESC'
 
-        # Acoplamos todos los filtros fq recopilados de forma nativa
         if fq_list:
             params['fq'] = fq_list
 
-        safe_log(f"📡 [Juntoz API] Traduciendo parámetros a VTEX...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        # ⚡ ESTRATEGIA EN CASCADA: Si falla el primero por 404, el segundo nos rescatará
+        api_endpoints = [
+            "https://www.juntoz.com/api/catalog_system/pub/products/search",
+            "https://juntoz.vtexcommercestable.com.pe/api/catalog_system/pub/products/search"
+        ]
 
-        # VTEX responde con 200 o 206 (Partial Content)
-        if resp.status_code in [200, 206]:
+        resp = None
+        for api_url in api_endpoints:
+            try:
+                safe_log(f"📡 [Juntoz API] Probando conexión a: {api_url}...", "info")
+                resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+                
+                # Si nos responde con éxito (200 o 206), rompemos el bucle y procesamos
+                if resp.status_code in [200, 206]:
+                    break
+                else:
+                    safe_log(f"⚠️ [Juntoz API] Endpoint retornó HTTP {resp.status_code}. Evaluando siguiente opción...", "warning")
+            except Exception as conn_err:
+                safe_log(f"⚠️ [Juntoz API] No se pudo conectar a {api_url}: {conn_err}", "warning")
+
+        # Procesamos la respuesta del endpoint que haya resultado exitoso
+        if resp and resp.status_code in [200, 206]:
             data = resp.json()
             safe_log(f"🔍 [Juntoz API] Catálogo recibido. Procesando {len(data)} candidatos en stock...", "info")
             vistos_links = set()
@@ -910,10 +919,9 @@ def motor_juntoz(url, limite, headers=None):
                     if not sellers:
                         continue
                         
-                    # Obtenemos los precios reales y stock de la oferta comercial
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Filtro de stock estricto
+                    # Filtro de stock real
                     stock = offer.get("AvailableQuantity", 0)
                     if stock <= 0:
                         continue  
@@ -940,7 +948,8 @@ def motor_juntoz(url, limite, headers=None):
                 except Exception:
                     continue
         else:
-            safe_log(f"🛑 [Juntoz API] Error de conexión con VTEX. Código HTTP: {resp.status_code}", "error")
+            http_code = resp.status_code if resp else "Ninguno"
+            safe_log(f"🛑 [Juntoz API] Error crítico: Todos los endpoints VTEX respondieron con error o caídas. Último HTTP: {http_code}", "error")
 
     except Exception as e:
         safe_log(f"🛑 [Juntoz API] Error crítico inesperado: {e}", "error")
