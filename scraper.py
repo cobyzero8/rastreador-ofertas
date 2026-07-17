@@ -989,111 +989,163 @@ def motor_juntoz(url, limite, headers=None):
     return productos_finales
     
 def motor_marathon(url, limite, headers=None):
-    """Motor Marathon V1: Extracción dinámica y universal para Marathon Sports usando la API nativa de VTEX"""
+    """Motor Marathon V2: Extractor semántico estructural adaptado para SAP Hybris.
+    (Consulta la URL real e indexa productos de forma 100% independiente)"""
     import requests
-    from urllib.parse import urlparse, parse_qs
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
+    import re
+    import random
 
-    productos = []
+    productos_map = {} # URL -> Producto dict
     
     if not headers:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Referer": "https://www.marathon.store/"
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-PE,es;q=0.9",
+            "Referer": "https://www.google.com/"
         }
 
     try:
-        # Extraemos dinámicamente el dominio y la ruta de categoría de la URL ingresada
-        parsed_url = urlparse(url)
-        dominio_real = parsed_url.netloc.lower()
-        category_path = parsed_url.path.rstrip('/')
+        safe_log(f"📡 [Marathon] Conectando con la página web real...", "info")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
         
-        if category_path and not category_path.startswith('/'):
-            category_path = '/' + category_path
-
-        # Construimos el endpoint oficial de su API VTEX de forma dinámica
-        api_url = f"https://{dominio_real}/api/catalog_system/pub/products/search{category_path}"
-
-        # Parámetros base de VTEX por defecto (Ordenamos de menor a mayor precio)
-        query_params = parse_qs(parsed_url.query)
-        params = {
-            "O": "OrderByPriceASC",
-            "_from": "0",
-            "_to": "49"
-        }
+        safe_log(f"📡 [Marathon] Código de respuesta: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
         
-        # Mezclamos de forma inteligente los parámetros repetidos (filtros de marca, tallas fq, etc.)
-        for k, v in query_params.items():
-            params[k] = v if len(v) > 1 else v[0]
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Marathon] Bloqueo o caída del servidor. Código HTTP: {resp.status_code}", "error")
+            return []
 
-        safe_log(f"📡 [Marathon API] Consultando ruta dinámica de VTEX...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # 1. Buscamos todos los enlaces que apunten a fichas de productos (/p/)
+        enlaces_candidatos = []
+        for a in soup.find_all('a', href=True):
+            href = a['href'].lower()
+            # En SAP Hybris, los productos terminan o contienen '/p/' seguido del código de producto
+            if '/p/' in href and not any(x in href for x in ['/cart', '/checkout', '/login', '/ayuda']):
+                enlaces_candidatos.append(a)
 
-        # Soportamos tanto el código 200 como el 206 (Partial Content clásico de VTEX)
-        if resp.status_code in [200, 206]:
-            data = resp.json()
-            safe_log(f"🔍 [Marathon API] Catálogo recibido. Procesando {len(data)} productos en stock...", "info")
-            vistos_links = set()
+        safe_log(f"🔍 [Marathon] Analizando {len(enlaces_candidatos)} elementos estructurales en la cuadrícula...", "info")
 
-            for p in data:
-                try:
-                    nombre_prod = p.get("productName", "").strip().upper()
-                    link_final = p.get("link", "")
-                    
-                    items = p.get("items", [])
-                    if not items:
-                        continue
-                    
-                    first_item = items[0]
-                    images = first_item.get("images", [])
-                    img_final = images[0].get("imageUrl", "") if images else ""
-                    
-                    sellers = first_item.get("sellers", [])
-                    if not sellers:
-                        continue
-                        
-                    # Extraemos los precios y stock real de la oferta comercial estándar
-                    offer = sellers[0].get("commertialOffer", {})
-                    
-                    # Filtro de stock real para evitar falsos positivos
-                    stock = offer.get("AvailableQuantity", 0)
-                    if stock <= 0:
-                        continue  
-                        
-                    precio_oferta = float(offer.get("Price", 0))
-                    precio_regular = float(offer.get("ListPrice", precio_oferta))
-                    
-                    if precio_oferta <= 0:
-                        continue
+        for a_el in enlaces_candidatos:
+            try:
+                href_rel = a_el['href']
+                link_final = urljoin("https://www.marathon.store", href_rel)
+                
+                # Subimos en el árbol de etiquetas (DOM) para encontrar la tarjeta contenedora del producto
+                contenedor_tarjeta = None
+                ancestro_actual = a_el.parent
+                
+                # Buscamos un ancestro común que encierre el bloque del producto con su precio
+                for _ in range(5):
+                    if not ancestro_actual or ancestro_actual.name in ['body', 'html']:
+                        break
+                    texto_ancestro = ancestro_actual.get_text()
+                    if 'S/.' in texto_ancestro or 'S/' in texto_ancestro:
+                        contenedor_tarjeta = ancestro_actual
+                        break
+                    ancestro_actual = ancestro_actual.parent
 
-                    # Filtro de presupuesto personalizado por el usuario
-                    if precio_oferta <= limite:
-                        if link_final in vistos_links:
-                            continue
-                        vistos_links.add(link_final)
-
-                        productos.append({
-                            "nombre": f"Marathon - {nombre_prod}",
-                            "precio": precio_oferta,
-                            "precio_regular": precio_regular,
-                            "link": link_final,
-                            "img": img_final
-                        })
-                except Exception:
+                if not contenedor_tarjeta:
                     continue
-        else:
-            safe_log(f"🛑 [Marathon API] Error de conexión con VTEX. Código HTTP: {resp.status_code}", "error")
+
+                # 2. Extraer Nombre del Producto
+                nombre = a_el.get_text(separator=" ").strip().upper()
+                
+                # Fallback si el enlace es solo la foto, buscamos otro enlace de texto dentro de la misma tarjeta
+                if not nombre or len(nombre) < 5:
+                    for otro_a in contenedor_tarjeta.find_all('a', href=True):
+                        if otro_a['href'] == href_rel:
+                            nombre_otro = otro_a.get_text(separator=" ").strip().upper()
+                            if nombre_otro and len(nombre_otro) >= 5:
+                                nombre = nombre_otro
+                                break
+
+                # Fallback C: Atributo alt de la imagen
+                if not nombre or len(nombre) < 5:
+                    img_el = contenedor_tarjeta.find('img')
+                    if img_el and img_el.get('alt'):
+                        nombre = img_el['alt'].strip().upper()
+
+                if not nombre or len(nombre) < 4:
+                    continue
+                    
+                # Limpiamos textos basura de interacción
+                nombre = nombre.replace("AGREGAR", "").replace("VER PRODUCTO", "").strip()
+                nombre = re.sub(r'\s+', ' ', nombre)
+
+                # 3. Extraer Precios con Expresiones Regulares sobre la tarjeta
+                texto_tarjeta = contenedor_tarjeta.get_text()
+                textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
+                
+                if not textos_precios:
+                    continue
+
+                precios_numeros = []
+                for p_str in textos_precios:
+                    p_num = limpiar_precio_pnp(p_str)
+                    if p_num > 0:
+                        precios_numeros.append(p_num)
+
+                if not precios_numeros:
+                    continue
+
+                # Ordenamos: el más barato es oferta, el más caro es precio de lista
+                precios_unicos = sorted(list(set(precios_numeros)))
+                p_o = precios_unicos[0]
+                p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
+
+                # 4. Extraer Imagen del Producto
+                img_el = contenedor_tarjeta.find('img')
+                img_url = ""
+                if img_el:
+                    img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
+                
+                if img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+                elif img_url and not img_url.startswith('http'):
+                    img_url = urljoin("https://www.marathon.store", img_url)
+
+                if 'data:image' in img_url.lower():
+                    img_url = ""
+
+                # 5. Filtrado por Presupuesto y Deduplicación inteligente
+                if 0 < p_o <= limite:
+                    if link_final in productos_map:
+                        # Si el enlace ya existe, conservamos el registro que tenga el nombre completo o foto válida
+                        if len(nombre) > len(productos_map[link_final]['nombre']) or (img_url and not productos_map[link_final]['img']):
+                            productos_map[link_final] = {
+                                "nombre": f"Marathon - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url or productos_map[link_final]['img']
+                            }
+                    else:
+                        productos_map[link_final] = {
+                            "nombre": f"Marathon - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_url
+                        }
+            except Exception:
+                continue
 
     except Exception as e:
-        safe_log(f"🛑 [Marathon API] Error crítico inesperado: {e}", "error")
+        safe_log(f"🛑 [Marathon] Error crítico inesperado: {e}", "error")
 
-    # Diagnóstico final en tu consola de Streamlit
-    if productos:
-        safe_log(f"✅ [Marathon API] ¡Éxito! Se indexaron {len(productos)} ofertas deportivas reales.", "success")
+    # Lista final depurada
+    productos_finales = list(productos_map.values())
+
+    if productos_finales:
+        safe_log(f"✅ [Marathon] ¡Éxito! Se indexaron {len(productos_finales)} ofertas de calzado/ropa deportiva.", "success")
     else:
-        safe_log(f"⚠️ [Marathon API] No se encontraron ofertas de esta categoría bajo el límite de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Marathon] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
 
-    return productos
+    return productos_finales
 
 
 
