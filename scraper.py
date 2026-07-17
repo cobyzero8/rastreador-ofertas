@@ -393,108 +393,7 @@ def motor_adidas(url, limite):
     """(Motor estacionado temporalmente)"""
     return []
 
-def motor_jbl(url, limite, headers):
-    """Motor JBL Original: Tu lógica nativa con restauración de headers y evasión de redireccionamientos"""
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
-    
-    productos = []
-    url_low = url.lower()
-    
-    # 🕵️‍♂️ MAPEADO DE KEYWORDS QUE EVITAN REDIRECCIONES (Y EVITAN EL 403 DE DATADOME)
-    # 'barra' y 'wireless' provocan redirecciones 302 hacia páginas protegidas.
-    # Usamos sinónimos directos de búsqueda que devuelven el catálogo limpio en 200 OK.
-    if "barra" in url_low:
-        keyword = "cinema"       # Trae la línea "JBL Cinema" (SB180, SB140, etc.) sin redirección
-    elif "wireless" in url_low or "audifono" in url_low:
-        keyword = "auriculares"  # Trae todos los audífonos y auriculares sin redirección
-    elif "parlante" in url_low:
-        keyword = "parlante"     # Este funciona directo en tu código original
-    else:
-        keyword = "jbl"          # Consulta genérica de respaldo
-        
-    api_url = "https://www.jbl.com.pe/on/demandware.store/Sites-JB-PE-Site/es_PE/Search-UpdateGrid"
-    params = {"q": keyword, "srule": "price-low-to-high", "sz": "24"}
-    
-    try:
-        safe_log(f"📡 [JBL API] Accediendo con tus headers de bucle y keyword optimizada: '{keyword}'...", "info")
-        
-        # ⚡ CLAVE: Usamos tus headers originales y bloqueamos redirecciones sospechosas
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False, allow_redirects=False)
-        
-        # Si detectamos un intento de redirección (301, 302), aplicamos un fallback seguro
-        if resp.status_code in [301, 302]:
-            safe_log(f"⚠️ [JBL API] La palabra '{keyword}' intentó redireccionar. Usando fallback seguro 'jbl'...", "warning")
-            params["q"] = "jbl"
-            resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False, allow_redirects=False)
-        
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            items = soup.select('.product-tile') or soup.select('[class*="product-item"]')
-            
-            safe_log(f"🔍 [JBL API] Catálogo leído con éxito. Procesando {len(items)} productos para '{keyword}'...", "info")
-            vistos_links = set()
-            
-            for t in items:
-                try:
-                    tit_el = t.select_one('.pdp-link a') or t.select_one('.product-name')
-                    if not tit_el: continue
-                    nombre_prod = tit_el.text.strip().upper()
-                    
-                    reg_el = t.select_one('.price .list .value') or t.select_one('del')
-                    precio_el = t.select_one('.price .sales .value') or t.select_one('.sales')
-                    
-                    txt_oferta = precio_el.text if precio_el else t.text
-                    precio_oferta = limpiar_precio_pnp(txt_oferta)
-                    if not precio_oferta: continue
-                    
-                    # Tu corrección de decimales nativa original
-                    if 0 < precio_oferta < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
-                        precio_oferta = precio_oferta * 1000
-                        
-                    precio_regular = precio_oferta
-                    if reg_el:
-                        precio_regular = limpiar_precio_pnp(reg_el.text)
-                        if 0 < precio_regular < 10.0 and any(k in nombre_prod for k in ["BARRA", "TV", "PARLANTE", "CINEMA", "SOUNDBAR"]):
-                            precio_regular = precio_regular * 1000
-                    
-                    # Filtro de presupuesto
-                    if 0 < precio_oferta <= limite:
-                        link_el = t.find('a', href=True)
-                        enlace_final = urljoin(url, link_el['href']) if link_el else url
-                        
-                        if enlace_final in vistos_links: continue
-                        vistos_links.add(enlace_final)
-                        
-                        img_el = t.find('img')
-                        img_final = ""
-                        if img_el:
-                            img_final = img_el.get('data-src') or img_el.get('src') or ''
-                            if img_final.startswith('//'): img_final = 'https:' + img_final
-                            
-                        productos.append({
-                            "nombre": f"JBL - {nombre_prod}", 
-                            "precio": precio_oferta, 
-                            "precio_regular": precio_regular, 
-                            "link": enlace_final, 
-                            "img": img_final
-                        })
-                except Exception: 
-                    continue
-        else:
-            safe_log(f"🛑 [JBL API] Acceso denegado en puerto trasero. Código HTTP: {resp.status_code}", "error")
-            
-    except Exception as e:
-        safe_log(f"🛑 [JBL API] Error inesperado en el módulo: {e}", "error")
-        
-    # Reporte de control final en Streamlit
-    if productos:
-        safe_log(f"✅ [JBL API] ¡Éxito! Se indexaron {len(productos)} ofertas bajo el límite de S/. {limite:.2f}", "success")
-    else:
-        safe_log(f"⚠️ [JBL API] Catálogo procesado, pero ninguna oferta baja de S/. {limite:.2f}", "warning")
-        
-    return productos
+
 
 
 def motor_platanitos(url, limite):
@@ -923,7 +822,107 @@ def motor_plazavea(url, limite, headers=None):
 
     return productos
 
+def motor_juntoz(url, limite):
+    """Motor Juntoz V1: Extractor ultra-resistente usando barrido difuso de precios (Regex)"""
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
+    import re
+    import random
 
+    productos = []
+    
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9"
+    }
+
+    try:
+        safe_log("📡 [Juntoz] Conectando con el catálogo...", "info")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Juntoz] Error de respuesta del servidor. Código: {resp.status_code}", "error")
+            return []
+
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Selectores de tarjetas de producto típicos de Juntoz
+        tarjetas = soup.select('.product-item') or soup.select('.product-card') or soup.select('[class*="ProductCard"]') or soup.select('.grid-item')
+
+        for t in tarjetas:
+            try:
+                # 1. Extraer Enlace y Nombre
+                a_el = t.find('a', href=True)
+                if not a_el: 
+                    continue
+                link_final = urljoin("https://juntoz.com", a_el['href'])
+                
+                # Evitamos links de categorías o filtros que a veces se cuelan como tarjetas
+                if "catalog" in link_final or "search" in link_final: 
+                    continue
+                
+                tit_el = t.select_one('.product-title') or t.select_one('.title') or t.find(['h2', 'h3', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
+                nombre = tit_el.text.strip().upper() if tit_el else ""
+                if not nombre: 
+                    nombre = a_el.get('title', '').strip().upper()
+                if len(nombre) < 4: 
+                    continue
+
+                # 2. Barrido Difuso de Precios (Tu patrón exitoso de THN)
+                textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                if not textos_precios: 
+                    continue
+                
+                # Limpiamos y ordenamos los números encontrados de menor a mayor
+                nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                if not nums: 
+                    continue
+                
+                p_o = nums[0]  # El más bajo siempre es la oferta
+                p_r = nums[-1] if len(nums) > 1 else p_o  # El más alto es el precio regular
+                
+                # 3. Filtrar por límite de presupuesto
+                if 0 < p_o <= limite:
+                    # 4. Extraer Imagen
+                    img_tags = t.find_all('img')
+                    img = ""
+                    for img_el in img_tags:
+                        src = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
+                        if src and 'data:image' not in str(src).lower() and 'pixel' not in str(src).lower():
+                            img = src
+                            break
+                    if str(img).startswith('//'): 
+                        img = 'https:' + str(img)
+
+                    productos.append({
+                        "nombre": f"JUNTOZ - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img
+                    })
+            except Exception: 
+                continue
+                
+    except Exception as e:
+        safe_log(f"🛑 [Juntoz] Error crítico inesperado: {e}", "error")
+        
+    # Filtro para eliminar duplicados de enlaces en el mismo barrido
+    vistos = set()
+    productos_unicos = []
+    for p in productos:
+        if p['link'] not in vistos:
+            vistos.add(p['link'])
+            productos_unicos.append(p)
+            
+    if productos_unicos:
+        safe_log(f"✅ [Juntoz] ¡Éxito! Se indexaron {len(productos_unicos)} ofertas bajo el límite.", "success")
+    else:
+        safe_log(f"⚠️ [Juntoz] Catálogo procesado, pero ninguna oferta baja de S/. {limite:.2f}", "warning")
+
+    return productos_unicos
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -967,11 +966,11 @@ def escanear_tienda(url, limite):
     elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
     elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
     elif "adidas" in dominio: return motor_adidas(url, limite)
-    elif "jbl.com.pe" in dominio: return motor_jbl(url, limite, headers=headers)
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
     elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
+    elif "juntoz.com" in dominio: return motor_juntoz(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
