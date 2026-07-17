@@ -814,7 +814,7 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    """Motor Plaza Vea V3: Extracción dinámica y universal sin mapeo de palabras clave (VTEX)"""
+    """Motor Plaza Vea V3.1: Extracción dinámica con soporte estricto para filtros múltiples (Multi-fq)"""
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
 
@@ -828,34 +828,40 @@ def motor_plazavea(url, limite, headers=None):
         }
 
     try:
-        # ⚡ EXTRACCIÓN DINÁMICA: Extrae la categoría exacta directamente desde la URL
+        # Extraemos la ruta de categoría de la URL
         parsed_url = urlparse(url)
         category_path = parsed_url.path.rstrip('/')
         if category_path and not category_path.startswith('/'):
             category_path = '/' + category_path
 
-        # Construimos la consulta directa a la API de VTEX usando la ruta del enlace
-        api_url = f"https://www.plazavea.com.pe/api/catalog_system/pub/products/search{category_path}"
+        # Si es una URL de búsqueda directa ("/busca/"), VTEX prefiere consultar a la raíz de búsqueda
+        if "busca" in category_path:
+            api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
+        else:
+            api_url = f"https://www.plazavea.com.pe/api/catalog_system/pub/products/search{category_path}"
 
-        # Mantenemos los ordenamientos y paginaciones por defecto (Menor a mayor precio)
+        # Obtenemos todos los parámetros de la URL original
         query_params = parse_qs(parsed_url.query)
+        
+        # Parámetros base de ordenamiento y paginación
         params = {
             "O": "OrderByPriceASC",
             "_from": "0",
             "_to": "49"
         }
         
-        # Si la URL original ya venía con filtros adicionales, los unimos de forma segura
+        # ⚡ MEZCLA INTELIGENTE: Preservamos listas completas de parámetros repetidos (como múltiples 'fq')
         for k, v in query_params.items():
-            params[k] = v[0]
+            # Si el parámetro tiene más de un filtro (como fq), pasamos la lista completa. 
+            # De lo contrario, pasamos el valor único como string para no ensuciar la consulta.
+            params[k] = v if len(v) > 1 else v[0]
 
-        safe_log(f"📡 [Plaza Vea API] Consultando ruta dinámica de VTEX: '{category_path or '/search'}'...", "info")
+        safe_log(f"📡 [Plaza Vea API] Consultando VTEX con filtros avanzados de URL...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
-        # Procesamos la respuesta exitosa (Soporta contenido completo 200 y parcial 206)
         if resp.status_code in [200, 206]:
             data = resp.json()
-            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} candidatos...", "info")
+            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido con éxito. Procesando {len(data)} productos...", "info")
             vistos_links = set()
 
             for p in data:
@@ -875,10 +881,9 @@ def motor_plazavea(url, limite, headers=None):
                     if not sellers:
                         continue
                         
-                    # Extraemos los datos de la oferta comercial real (Precio y Stock)
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Filtro estricto de Stock real para evitar ofertas fantasma
+                    # Filtro de stock real
                     stock = offer.get("AvailableQuantity", 0)
                     if stock <= 0:
                         continue  
@@ -910,11 +915,11 @@ def motor_plazavea(url, limite, headers=None):
     except Exception as e:
         safe_log(f"🛑 [Plaza Vea API] Error crítico inesperado: {e}", "error")
 
-    # Reporte final para tu consola de Streamlit
+    # Reporte final
     if productos:
-        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas reales en stock.", "success")
+        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas que cumplen con todos tus filtros.", "success")
     else:
-        safe_log(f"⚠️ [Plaza Vea API] No se encontraron productos de esta categoría bajo el límite de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Plaza Vea API] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos
 
