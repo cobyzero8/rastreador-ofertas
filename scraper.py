@@ -989,73 +989,36 @@ def motor_juntoz(url, limite, headers=None):
     return productos_finales
     
 def motor_marathon(url, limite, headers=None):
-    """Motor Marathon V3: Extractor semántico estructural con evasión de WAF avanzada (Sec-CH Headers)"""
-    import requests
+    """Motor Marathon V4: Evasión absoluta de Cloudflare (JA3 TLS Spoofing) usando curl_cffi"""
     from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, parse_qs, urljoin
+    from urllib.parse import urljoin
     import re
     import random
-    import time
+
+    # Importación segura dentro de la función para evitar caídas globales
+    try:
+        from curl_cffi import requests as cloudflare_requests
+    except ImportError:
+        safe_log("🛑 [Marathon] Error: Agrega 'curl_cffi' a tu archivo requirements.txt", "error")
+        return []
 
     productos_map = {} # URL -> Producto dict
 
-    # Definimos firmas de navegador hiper-realistas para engañar al Firewall (WAF)
-    UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    UA_MOBILE = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-
-    headers_opciones = [
-        {
-            "User-Agent": UA_DESKTOP,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1"
-        },
-        {
-            "User-Agent": UA_MOBILE,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            "Sec-Ch-Ua-Mobile": "?1",
-            "Sec-Ch-Ua-Platform": '"Android"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin"
-        }
-    ]
-
-    resp = None
-    # Probamos en cascada estructural hasta que el firewall ceda el paso
-    for i, h in enumerate(headers_opciones):
-        try:
-            safe_log(f"📡 [Marathon] Intentando conexión con Firma de Navegador #{i+1}...", "info")
-            resp = requests.get(url, headers=h, timeout=15, verify=False)
-            
-            # Si responde 200 y el HTML mide más que la página de bloqueo (6KB), ganamos
-            if resp.status_code == 200 and len(resp.text) > 20000:
-                break
-            else:
-                safe_log(f"⚠️ [Marathon] Firma #{i+1} rechazada (HTTP {resp.status_code} | {len(resp.text)} bytes).", "warning")
-                time.sleep(1)
-        except Exception as e:
-            safe_log(f"⚠️ [Marathon] Error de red con firma #{i+1}: {e}", "warning")
-
     try:
-        if not resp or resp.status_code != 200 or len(resp.text) < 20000:
-            final_code = resp.status_code if resp else "Timeout"
-            final_size = len(resp.text) if resp else 0
-            safe_log(f"🛑 [Marathon] WAF persistente detectado. Código HTTP: {final_code} ({final_size} bytes)", "error")
+        safe_log(f"📡 [Marathon] Solicitando bypass criptográfico a Cloudflare...", "info")
+        
+        # impersonate="chrome" le ordena a la librería imitar el TLS, HTTP/2 y JA3 de un navegador real
+        resp = cloudflare_requests.get(
+            url, 
+            impersonate="chrome", 
+            timeout=20,
+            verify=False
+        )
+        
+        safe_log(f"📡 [Marathon] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
+        
+        if resp.status_code != 200 or len(resp.text) < 20000:
+            safe_log(f"🛑 [Marathon] Cloudflare rechazó el handshake. HTML muy corto ({len(resp.text)} bytes)", "error")
             return []
 
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -1067,14 +1030,14 @@ def motor_marathon(url, limite, headers=None):
             if '/p/' in href and not any(x in href for x in ['/cart', '/checkout', '/login', '/ayuda']):
                 enlaces_candidatos.append(a)
 
-        safe_log(f"🔍 [Marathon] Cortina superada. Analizando {len(enlaces_candidatos)} elementos en la cuadrícula...", "info")
+        safe_log(f"🔍 [Marathon] ¡Bloqueo superado! Analizando {len(enlaces_candidatos)} elementos en la cuadrícula...", "info")
 
         for a_el in enlaces_candidatos:
             try:
                 href_rel = a_el['href']
                 link_final = urljoin("https://www.marathon.store", href_rel)
                 
-                # Buscamos la tarjeta que agrupa el producto y su precio subiendo por el árbol HTML
+                # Buscamos el contenedor que agrupa el producto y su precio
                 contenedor_tarjeta = None
                 ancestro_actual = a_el.parent
                 
