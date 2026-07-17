@@ -989,32 +989,73 @@ def motor_juntoz(url, limite, headers=None):
     return productos_finales
     
 def motor_marathon(url, limite, headers=None):
-    """Motor Marathon V2: Extractor semántico estructural adaptado para SAP Hybris.
-    (Consulta la URL real e indexa productos de forma 100% independiente)"""
+    """Motor Marathon V3: Extractor semántico estructural con evasión de WAF avanzada (Sec-CH Headers)"""
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
+    from urllib.parse import urlparse, parse_qs, urljoin
     import re
     import random
+    import time
 
     productos_map = {} # URL -> Producto dict
-    
-    if not headers:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+
+    # Definimos firmas de navegador hiper-realistas para engañar al Firewall (WAF)
+    UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    UA_MOBILE = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
+    headers_opciones = [
+        {
+            "User-Agent": UA_DESKTOP,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1"
+        },
+        {
+            "User-Agent": UA_MOBILE,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "es-PE,es;q=0.9",
-            "Referer": "https://www.google.com/"
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?1",
+            "Sec-Ch-Ua-Platform": '"Android"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin"
         }
+    ]
+
+    resp = None
+    # Probamos en cascada estructural hasta que el firewall ceda el paso
+    for i, h in enumerate(headers_opciones):
+        try:
+            safe_log(f"📡 [Marathon] Intentando conexión con Firma de Navegador #{i+1}...", "info")
+            resp = requests.get(url, headers=h, timeout=15, verify=False)
+            
+            # Si responde 200 y el HTML mide más que la página de bloqueo (6KB), ganamos
+            if resp.status_code == 200 and len(resp.text) > 20000:
+                break
+            else:
+                safe_log(f"⚠️ [Marathon] Firma #{i+1} rechazada (HTTP {resp.status_code} | {len(resp.text)} bytes).", "warning")
+                time.sleep(1)
+        except Exception as e:
+            safe_log(f"⚠️ [Marathon] Error de red con firma #{i+1}: {e}", "warning")
 
     try:
-        safe_log(f"📡 [Marathon] Conectando con la página web real...", "info")
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        
-        safe_log(f"📡 [Marathon] Código de respuesta: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
-        
-        if resp.status_code != 200:
-            safe_log(f"🛑 [Marathon] Bloqueo o caída del servidor. Código HTTP: {resp.status_code}", "error")
+        if not resp or resp.status_code != 200 or len(resp.text) < 20000:
+            final_code = resp.status_code if resp else "Timeout"
+            final_size = len(resp.text) if resp else 0
+            safe_log(f"🛑 [Marathon] WAF persistente detectado. Código HTTP: {final_code} ({final_size} bytes)", "error")
             return []
 
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -1023,22 +1064,20 @@ def motor_marathon(url, limite, headers=None):
         enlaces_candidatos = []
         for a in soup.find_all('a', href=True):
             href = a['href'].lower()
-            # En SAP Hybris, los productos terminan o contienen '/p/' seguido del código de producto
             if '/p/' in href and not any(x in href for x in ['/cart', '/checkout', '/login', '/ayuda']):
                 enlaces_candidatos.append(a)
 
-        safe_log(f"🔍 [Marathon] Analizando {len(enlaces_candidatos)} elementos estructurales en la cuadrícula...", "info")
+        safe_log(f"🔍 [Marathon] Cortina superada. Analizando {len(enlaces_candidatos)} elementos en la cuadrícula...", "info")
 
         for a_el in enlaces_candidatos:
             try:
                 href_rel = a_el['href']
                 link_final = urljoin("https://www.marathon.store", href_rel)
                 
-                # Subimos en el árbol de etiquetas (DOM) para encontrar la tarjeta contenedora del producto
+                # Buscamos la tarjeta que agrupa el producto y su precio subiendo por el árbol HTML
                 contenedor_tarjeta = None
                 ancestro_actual = a_el.parent
                 
-                # Buscamos un ancestro común que encierre el bloque del producto con su precio
                 for _ in range(5):
                     if not ancestro_actual or ancestro_actual.name in ['body', 'html']:
                         break
@@ -1054,7 +1093,6 @@ def motor_marathon(url, limite, headers=None):
                 # 2. Extraer Nombre del Producto
                 nombre = a_el.get_text(separator=" ").strip().upper()
                 
-                # Fallback si el enlace es solo la foto, buscamos otro enlace de texto dentro de la misma tarjeta
                 if not nombre or len(nombre) < 5:
                     for otro_a in contenedor_tarjeta.find_all('a', href=True):
                         if otro_a['href'] == href_rel:
@@ -1063,7 +1101,6 @@ def motor_marathon(url, limite, headers=None):
                                 nombre = nombre_otro
                                 break
 
-                # Fallback C: Atributo alt de la imagen
                 if not nombre or len(nombre) < 5:
                     img_el = contenedor_tarjeta.find('img')
                     if img_el and img_el.get('alt'):
@@ -1072,11 +1109,10 @@ def motor_marathon(url, limite, headers=None):
                 if not nombre or len(nombre) < 4:
                     continue
                     
-                # Limpiamos textos basura de interacción
                 nombre = nombre.replace("AGREGAR", "").replace("VER PRODUCTO", "").strip()
                 nombre = re.sub(r'\s+', ' ', nombre)
 
-                # 3. Extraer Precios con Expresiones Regulares sobre la tarjeta
+                # 3. Extraer Precios con Regex sobre la tarjeta
                 texto_tarjeta = contenedor_tarjeta.get_text()
                 textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
                 
@@ -1092,12 +1128,11 @@ def motor_marathon(url, limite, headers=None):
                 if not precios_numeros:
                     continue
 
-                # Ordenamos: el más barato es oferta, el más caro es precio de lista
                 precios_unicos = sorted(list(set(precios_numeros)))
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                # 4. Extraer Imagen del Producto
+                # 4. Extraer Imagen
                 img_el = contenedor_tarjeta.find('img')
                 img_url = ""
                 if img_el:
@@ -1111,10 +1146,9 @@ def motor_marathon(url, limite, headers=None):
                 if 'data:image' in img_url.lower():
                     img_url = ""
 
-                # 5. Filtrado por Presupuesto y Deduplicación inteligente
+                # 5. Filtrado por Presupuesto y Deduplicación
                 if 0 < p_o <= limite:
                     if link_final in productos_map:
-                        # Si el enlace ya existe, conservamos el registro que tenga el nombre completo o foto válida
                         if len(nombre) > len(productos_map[link_final]['nombre']) or (img_url and not productos_map[link_final]['img']):
                             productos_map[link_final] = {
                                 "nombre": f"Marathon - {nombre}",
@@ -1137,11 +1171,10 @@ def motor_marathon(url, limite, headers=None):
     except Exception as e:
         safe_log(f"🛑 [Marathon] Error crítico inesperado: {e}", "error")
 
-    # Lista final depurada
     productos_finales = list(productos_map.values())
 
     if productos_finales:
-        safe_log(f"✅ [Marathon] ¡Éxito! Se indexaron {len(productos_finales)} ofertas de calzado/ropa deportiva.", "success")
+        safe_log(f"✅ [Marathon] ¡Éxito! Se indexaron {len(productos_finales)} ofertas deportivas.", "success")
     else:
         safe_log(f"⚠️ [Marathon] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
 
