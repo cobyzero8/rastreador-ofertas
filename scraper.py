@@ -988,195 +988,127 @@ def motor_juntoz(url, limite, headers=None):
 
     return productos_finales
     
-def motor_marathon(url, limite, headers=None):
-    """Motor Marathon V5: Bypass de Cloudflare mediante Handshake de Sesión en 2 Pasos"""
+
+def motor_triathlon(url, limite, headers=None):
+    """Motor Triathlon V1: Extractor estructural de alto rendimiento para Triathlon Sport"""
+    import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     import re
-    import time
+    import random
+
+    productos_map = {} # URL -> Producto dict
+    
+    if not headers:
+        headers = {
+            "User-Agent": random.choice(LISTA_USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-PE,es;q=0.9",
+            "Referer": "https://www.google.com/"
+        }
 
     try:
-        from curl_cffi import requests as cloudflare_requests
-    except ImportError:
-        safe_log("🛑 [Marathon] Error crítico: 'curl_cffi' no está instalado en el entorno.", "error")
-        return []
-
-    productos_map = {}
-
-    try:
-        # Creamos una sesión persistente para heredar cookies del Home al Catálogo
-        safe_log("📡 [Marathon] Inicializando sesión criptográfica segura...", "info")
-        session = cloudflare_requests.Session()
+        safe_log(f"📡 [Triathlon] Conectando con el catálogo...", "info")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
         
-        # Base de cabeceras de alta fidelidad
-        session.headers.update({
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1"
-        })
-
-        # =======================================================
-        # ⚡ PASO 1: HANDSHAKE - Obtener cookies legítimas del Home
-        # =======================================================
-        home_url = "https://www.marathon.store/pe/"
-        safe_log("📡 [Marathon] Paso 1: Solicitando apretón de manos en la página de inicio...", "info")
+        safe_log(f"📡 [Triathlon] Código de respuesta: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
         
-        resp_home = session.get(home_url, impersonate="chrome", timeout=15, verify=False)
-        
-        # Extraemos las cookies generadas por el servidor
-        cookies_obtenidas = session.cookies.get_dict()
-        safe_log(f"🔑 [Marathon] Handshake completado. Cookies de sesión capturadas: {len(cookies_obtenidas)}", "info")
-        
-        # Una pequeña pausa de 1.5 segundos para imitar el tiempo de lectura humano antes de dar clic
-        time.sleep(1.5)
-
-        # =======================================================
-        # ⚡ PASO 2: EXTRACCIÓN - Cargar catálogo con cookies activas
-        # =======================================================
-        safe_log("📡 [Marathon] Paso 2: Cargando cuadrícula de productos con identidad validada...", "info")
-        
-        # Forzamos que el referer sea el home que acabamos de visitar
-        session.headers.update({"Referer": home_url})
-        
-        resp = session.get(url, impersonate="chrome", timeout=20, verify=False)
-        
-        safe_log(f"📡 [Marathon] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
-        
-        # Si el tamaño es bajo, imprimimos un log de depuración para saber qué nos devolvió
-        if len(resp.text) < 15000:
-            safe_log(f"🔬 [Marathon Diag] Muestra del HTML rechazado: {resp.text[:200]}...", "warning")
-            safe_log("🛑 [Marathon] El firewall bloqueó la petición de catálogo. Reintentando con evasión alternativa...", "error")
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Triathlon] Error de acceso. Código HTTP: {resp.status_code}", "error")
             return []
 
-        # =======================================================
-        # PARSEO ESTRUCTURAL DEL HTML (Si pasamos el muro)
-        # =======================================================
         soup = BeautifulSoup(resp.text, 'html.parser')
-        enlaces_candidatos = []
-        for a in soup.find_all('a', href=True):
-            href = a['href'].lower()
-            if '/p/' in href and not any(x in href for x in ['/cart', '/checkout', '/login', '/ayuda']):
-                enlaces_candidatos.append(a)
+        
+        # Selectores comunes de tarjetas de producto en la plataforma de Triathlon
+        tarjetas = soup.select('.product-item') or soup.select('.product-card') or soup.select('[class*="product-item"]') or soup.select('.item-product')
 
-        safe_log(f"🔍 [Marathon] ¡Muro derribado! Analizando {len(enlaces_candidatos)} elementos de calzado...", "info")
-
-        for a_el in enlaces_candidatos:
-            try:
-                href_rel = a_el['href']
-                link_final = urljoin("https://www.marathon.store", href_rel)
-                
-                contenedor_tarjeta = None
-                ancestro_actual = a_el.parent
-                
-                for _ in range(5):
-                    if not ancestro_actual or ancestro_actual.name in ['body', 'html']:
-                        break
-                    texto_ancestro = ancestro_actual.get_text()
-                    if 'S/.' in texto_ancestro or 'S/' in texto_ancestro:
-                        contenedor_tarjeta = ancestro_actual
-                        break
-                    ancestro_actual = ancestro_actual.parent
-
-                if not contenedor_tarjeta:
-                    continue
-
-                # Extraer Nombre
-                nombre = a_el.get_text(separator=" ").strip().upper()
-                if not nombre or len(nombre) < 5:
-                    for otro_a in contenedor_tarjeta.find_all('a', href=True):
-                        if otro_a['href'] == href_rel:
-                            nombre_otro = otro_a.get_text(separator=" ").strip().upper()
-                            if nombre_otro and len(nombre_otro) >= 5:
-                                nombre = nombre_otro
-                                break
-
-                if not nombre or len(nombre) < 5:
-                    img_el = contenedor_tarjeta.find('img')
-                    if img_el and img_el.get('alt'):
-                        nombre = img_el['alt'].strip().upper()
-
-                if not nombre or len(nombre) < 4:
-                    continue
+        if not tarjetas:
+            # Si no encuentra tarjetas por clase, buscamos de forma semántica por enlaces de fichas
+            enlaces_fichas = [a for a in soup.find_all('a', href=True) if '/p/' in a['href'].lower() or '-p' in a['href'].lower()]
+            safe_log(f"🔍 [Triathlon] Modo semántico: Analizando {len(enlaces_fichas)} enlaces en la cuadrícula...", "info")
+            
+            for a_el in enlaces_fichas:
+                try:
+                    href_rel = a_el['href']
+                    link_final = urljoin("https://www.triathlon.com.pe", href_rel)
                     
-                nombre = nombre.replace("AGREGAR", "").replace("VER PRODUCTO", "").strip()
-                nombre = re.sub(r'\s+', ' ', nombre)
-
-                # Extraer Precios
-                texto_tarjeta = contenedor_tarjeta.get_text()
-                textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
-                
-                if not textos_precios:
-                    continue
-
-                precios_numeros = []
-                for p_str in textos_precios:
-                    p_num = limpiar_precio_pnp(p_str)
-                    if p_num > 0:
-                        precios_numeros.append(p_num)
-
-                if not precios_numeros:
-                    continue
-
-                precios_unicos = sorted(list(set(precios_numeros)))
-                p_o = precios_unicos[0]
-                p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
-
-                # Extraer Imagen
-                img_el = contenedor_tarjeta.find('img')
-                img_url = ""
-                if img_el:
-                    img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
-                
-                if img_url.startswith('//'):
-                    img_url = 'https:' + img_url
-                elif img_url and not img_url.startswith('http'):
-                    img_url = urljoin("https://www.marathon.store", img_url)
-
-                if 'data:image' in img_url.lower():
-                    img_url = ""
-
-                # Guardar Oferta
-                if 0 < p_o <= limite:
-                    if link_final in productos_map:
-                        if len(nombre) > len(productos_map[link_final]['nombre']) or (img_url and not productos_map[link_final]['img']):
-                            productos_map[link_final] = {
-                                "nombre": f"Marathon - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url or productos_map[link_final]['img']
-                            }
-                    else:
+                    # Subimos para aislar la tarjeta
+                    contenedor = a_el.parent
+                    for _ in range(4):
+                        if not contenedor or contenedor.name in ['body', 'html']: break
+                        if 'S/.' in contenedor.get_text() or 'S/' in contenedor.get_text(): break
+                        contenedor = contenedor.parent
+                    
+                    if not contenedor: continue
+                    
+                    texto_tarjeta = contenedor.get_text()
+                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
+                    if not textos_precios: continue
+                    
+                    precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                    if not precios_num: continue
+                    
+                    p_o = precios_num[0]
+                    p_r = precios_num[-1] if len(precios_num) > 1 else p_o
+                    
+                    nombre = a_el.get_text().strip().upper()
+                    if not nombre or len(nombre) < 5:
+                        img_el = contenedor.find('img')
+                        nombre = img_el['alt'].strip().upper() if img_el and img_el.get('alt') else "PRODUCTO TRIATHLON"
+                    
+                    if 0 < p_o <= limite:
                         productos_map[link_final] = {
-                            "nombre": f"Marathon - {nombre}",
+                            "nombre": f"Triathlon - {nombre}",
                             "precio": p_o,
                             "precio_regular": max(p_r, p_o),
                             "link": link_final,
-                            "img": img_url
+                            "img": ""
                         }
-            except Exception:
-                continue
+                except Exception: continue
+        else:
+            safe_log(f"🔍 [Triathlon] Procesando {len(tarjetas)} tarjetas de producto detectadas...", "info")
+            for t in tarjetas:
+                try:
+                    a_el = t.find('a', href=True)
+                    if not a_el: continue
+                    link_final = urljoin("https://www.triathlon.com.pe", a_el['href'])
+                    
+                    # Nombre
+                    nombre_el = t.select_one('.product-name') or t.select_one('.title') or t.find(['h2', 'h3', 'span'])
+                    nombre = nombre_el.text.strip().upper() if nombre_el else a_el.get('title', '').strip().upper()
+                    if len(nombre) < 4: continue
+                    
+                    # Precios por Regex
+                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.get_text())
+                    if not textos_precios: continue
+                    
+                    precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                    if not precios_num: continue
+                    
+                    p_o = precios_num[0]
+                    p_r = precios_num[-1] if len(precios_num) > 1 else p_o
+                    
+                    if 0 < p_o <= limite:
+                        productos_map[link_final] = {
+                            "nombre": f"Triathlon - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": ""
+                        }
+                except Exception: continue
 
     except Exception as e:
-        safe_log(f"🛑 [Marathon] Error crítico inesperado: {e}", "error")
+        safe_log(f"🛑 [Triathlon] Error crítico inesperado: {e}", "error")
 
     productos_finales = list(productos_map.values())
 
     if productos_finales:
-        safe_log(f"✅ [Marathon] ¡Éxito! Se indexaron {len(productos_finales)} ofertas deportivas.", "success")
+        safe_log(f"✅ [Triathlon] ¡Éxito! Se indexaron {len(productos_finales)} ofertas deportivas.", "success")
     else:
-        safe_log(f"⚠️ [Marathon] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Triathlon] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
@@ -1228,7 +1160,7 @@ def escanear_tienda(url, limite):
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
     elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
     elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
-    elif "marathon.store" in dominio or "marathon.com.pe" in dominio: return motor_marathon(url, limite, headers=headers)
+    elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
