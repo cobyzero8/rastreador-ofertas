@@ -988,6 +988,116 @@ def motor_juntoz(url, limite, headers=None):
 
     return productos_finales
     
+def motor_marathon(url, limite, headers=None):
+    """Motor Marathon V1: Extracción dinámica y universal para Marathon Sports usando la API nativa de VTEX"""
+    import requests
+    from urllib.parse import urlparse, parse_qs
+
+    productos = []
+    
+    if not headers:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.marathon.store/"
+        }
+
+    try:
+        # Extraemos dinámicamente el dominio y la ruta de categoría de la URL ingresada
+        parsed_url = urlparse(url)
+        dominio_real = parsed_url.netloc.lower()
+        category_path = parsed_url.path.rstrip('/')
+        
+        if category_path and not category_path.startswith('/'):
+            category_path = '/' + category_path
+
+        # Construimos el endpoint oficial de su API VTEX de forma dinámica
+        api_url = f"https://{dominio_real}/api/catalog_system/pub/products/search{category_path}"
+
+        # Parámetros base de VTEX por defecto (Ordenamos de menor a mayor precio)
+        query_params = parse_qs(parsed_url.query)
+        params = {
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"
+        }
+        
+        # Mezclamos de forma inteligente los parámetros repetidos (filtros de marca, tallas fq, etc.)
+        for k, v in query_params.items():
+            params[k] = v if len(v) > 1 else v[0]
+
+        safe_log(f"📡 [Marathon API] Consultando ruta dinámica de VTEX...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+
+        # Soportamos tanto el código 200 como el 206 (Partial Content clásico de VTEX)
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+            safe_log(f"🔍 [Marathon API] Catálogo recibido. Procesando {len(data)} productos en stock...", "info")
+            vistos_links = set()
+
+            for p in data:
+                try:
+                    nombre_prod = p.get("productName", "").strip().upper()
+                    link_final = p.get("link", "")
+                    
+                    items = p.get("items", [])
+                    if not items:
+                        continue
+                    
+                    first_item = items[0]
+                    images = first_item.get("images", [])
+                    img_final = images[0].get("imageUrl", "") if images else ""
+                    
+                    sellers = first_item.get("sellers", [])
+                    if not sellers:
+                        continue
+                        
+                    # Extraemos los precios y stock real de la oferta comercial estándar
+                    offer = sellers[0].get("commertialOffer", {})
+                    
+                    # Filtro de stock real para evitar falsos positivos
+                    stock = offer.get("AvailableQuantity", 0)
+                    if stock <= 0:
+                        continue  
+                        
+                    precio_oferta = float(offer.get("Price", 0))
+                    precio_regular = float(offer.get("ListPrice", precio_oferta))
+                    
+                    if precio_oferta <= 0:
+                        continue
+
+                    # Filtro de presupuesto personalizado por el usuario
+                    if precio_oferta <= limite:
+                        if link_final in vistos_links:
+                            continue
+                        vistos_links.add(link_final)
+
+                        productos.append({
+                            "nombre": f"Marathon - {nombre_prod}",
+                            "precio": precio_oferta,
+                            "precio_regular": precio_regular,
+                            "link": link_final,
+                            "img": img_final
+                        })
+                except Exception:
+                    continue
+        else:
+            safe_log(f"🛑 [Marathon API] Error de conexión con VTEX. Código HTTP: {resp.status_code}", "error")
+
+    except Exception as e:
+        safe_log(f"🛑 [Marathon API] Error crítico inesperado: {e}", "error")
+
+    # Diagnóstico final en tu consola de Streamlit
+    if productos:
+        safe_log(f"✅ [Marathon API] ¡Éxito! Se indexaron {len(productos)} ofertas deportivas reales.", "success")
+    else:
+        safe_log(f"⚠️ [Marathon API] No se encontraron ofertas de esta categoría bajo el límite de S/. {limite:.2f}", "warning")
+
+    return productos
+
+
+
+
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -1036,6 +1146,7 @@ def escanear_tienda(url, limite):
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
     elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
     elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
+    elif "marathon.store" in dominio or "marathon.com.pe" in dominio: return motor_marathon(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
