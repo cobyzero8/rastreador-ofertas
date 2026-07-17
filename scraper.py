@@ -822,182 +822,137 @@ def motor_plazavea(url, limite, headers=None):
 
     return productos
 
-def motor_juntoz(url, limite):
-    """Motor Juntoz V2: Extractor híbrido ultra-avanzado (Next.js JSON State + Fallback HTML)"""
+def motor_juntoz(url, limite, headers=None):
+    """Motor Juntoz V3: Extractor de alto rendimiento usando la API directa de VTEX (Idéntico a Plaza Vea/Oechsle)"""
     import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
-    import json
-    import re
-    import random
+    from urllib.parse import urlparse, parse_qs
 
     productos = []
-    
-    headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Referer": "https://juntoz.com/"
-    }
+
+    if not headers:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://juntoz.com/"
+        }
 
     try:
-        safe_log(f"📡 [Juntoz] Conectando con la URL: {url}...", "info")
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        
-        safe_log(f"📡 [Juntoz] Respuesta del servidor: {resp.status_code} | Tamaño HTML: {len(resp.text)} bytes", "info")
-        
-        if resp.status_code != 200:
-            safe_log(f"🛑 [Juntoz] El servidor denegó el acceso. Código HTTP: {resp.status_code}", "error")
-            return []
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
 
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # =======================================================
-        # ⚡ MÉTODO A: Extracción desde el Payload de Next.js
-        # =======================================================
-        script_next = soup.find('script', id='__NEXT_DATA__')
-        if script_next:
-            safe_log("⚡ [Juntoz] Detectado payload de Next.js. Iniciando parsing recursivo del estado...", "info")
-            try:
-                json_data = json.loads(script_next.string)
-                
-                # Buscador recursivo para ubicar la lista de productos dentro del JSON de Next.js
-                def buscar_productos_en_json(objeto):
-                    if isinstance(objeto, list):
-                        if len(objeto) > 0 and isinstance(objeto[0], dict):
-                            # Si detectamos llaves de producto clásicas, es nuestra lista
-                            if any(k in objeto[0] for k in ['name', 'title', 'productName']) and any(k in objeto[0] for k in ['price', 'salePrice', 'specialPrice']):
-                                return objeto
-                        for elemento in objeto:
-                            res = buscar_productos_en_json(elemento)
-                            if res: return res
-                    elif isinstance(objeto, dict):
-                        for k in ["products", "productList", "items", "results", "records"]:
-                            if k in objeto and isinstance(objeto[k], list):
-                                return objeto[k]
-                        for valor in objeto.values():
-                            res = buscar_productos_en_json(valor)
-                            if res: return res
-                    return None
-                
-                lista_productos = buscar_productos_en_json(json_data)
-                
-                if lista_productos:
-                    safe_log(f"🔍 [Juntoz] ¡Éxito! Encontrados {len(lista_productos)} productos en el JSON de Next.js.", "info")
-                    for p in lista_productos:
-                        try:
-                            if not isinstance(p, dict): continue
-                            
-                            nombre = p.get('name') or p.get('title') or p.get('productName') or p.get('displayName')
-                            if not nombre: continue
-                            nombre = str(nombre).strip().upper()
-                            
-                            # Extraemos precios usando tus funciones auxiliares globales
-                            p_o = safe_float(p.get('specialPrice') or p.get('salePrice') or p.get('price_sale') or p.get('price'))
-                            p_r = safe_float(p.get('regularPrice') or p.get('listPrice') or p.get('price_regular') or p_o)
-                            
-                            # Contingencia numérica si vienen anidados
-                            if p_o <= 0:
-                                valores_aux = []
-                                extraer_numeros_dict(p, valores_aux)
-                                valores_unicos = sorted(list(set(valores_aux)))
-                                if len(valores_unicos) >= 2:
-                                    p_o = valores_unicos[0]
-                                    p_r = valores_unicos[-1]
-                                elif len(valores_unicos) == 1:
-                                    p_o = valores_unicos[0]
-                                    p_r = p_o
-                            
-                            if p_o <= 0: continue
-                            if p_r <= 0: p_r = p_o
-                            
-                            link_rel = p.get('url') or p.get('link') or p.get('slug') or p.get('href') or ''
-                            if not link_rel: continue
-                            link_final = urljoin("https://juntoz.com", str(link_rel))
-                            
-                            img = p.get('image') or p.get('imageUrl') or p.get('thumbnail') or ''
-                            if isinstance(img, list) and len(img) > 0: img = img[0]
-                            if isinstance(img, dict): img = img.get('url') or img.get('src') or ''
-                            if str(img).startswith('//'): img = 'https:' + str(img)
-                            
-                            if p_o <= limite:
-                                productos.append({
-                                    "nombre": f"JUNTOZ - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": max(p_r, p_o),
-                                    "link": link_final,
-                                    "img": str(img)
-                                })
-                        except Exception:
-                            continue
-            except Exception as je:
-                safe_log(f"⚠️ [Juntoz] Fallo al decodificar JSON de Next.js: {je}. Usando fallback...", "warning")
+        # ⚡ Conexión directa al motor VTEX de Juntoz
+        api_url = "https://juntoz.com/api/catalog_system/pub/products/search"
 
-        # =======================================================
-        # 🛡️ MÉTODO B: Fallback HTML Tradicional (Contingencia)
-        # =======================================================
-        if not productos:
-            safe_log("🛡️ [Juntoz] Ejecutando plan de contingencia HTML tradicional...", "info")
-            tarjetas = soup.select('.product-item') or soup.select('.product-card') or soup.select('[class*="ProductCard"]') or soup.select('.grid-item') or soup.select('[class*="product-item"]')
-            
-            for t in tarjetas:
+        # Parámetros base de VTEX por defecto
+        params = {
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"
+        }
+
+        # ⚡ TRADUCTOR INTELIGENTE DE PARÁMETROS: Juntoz -> VTEX
+        fq_list = []
+
+        # 1. Búsqueda por palabra clave
+        if 'keywords' in query_params:
+            params['ft'] = query_params['keywords'][0]
+        elif 'q' in query_params:
+            params['ft'] = query_params['q'][0]
+
+        # 2. Filtro de Categoría
+        if 'categoryId' in query_params:
+            cat_id = query_params['categoryId'][0]
+            fq_list.append(f"C:{cat_id}")
+
+        # 3. Filtros de Marca Múltiple (ej. TCL, Samsung, LG)
+        if 'brandId' in query_params:
+            brand_raw = query_params['brandId'][0]
+            brands = brand_raw.split(',')
+            for b in brands:
+                if b.strip():
+                    fq_list.append(f"B:{b.strip()}")
+
+        # 4. Orden de precio
+        if 'orderBy' in query_params:
+            order = query_params['orderBy'][0].lower()
+            if order in ['asc', 'orderbypriceasc']:
+                params['O'] = 'OrderByPriceASC'
+            elif order in ['desc', 'orderbypricedesc']:
+                params['O'] = 'OrderByPriceDESC'
+
+        # Acoplamos todos los filtros fq recopilados de forma nativa
+        if fq_list:
+            params['fq'] = fq_list
+
+        safe_log(f"📡 [Juntoz API] Traduciendo parámetros a VTEX...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+
+        # VTEX responde con 200 o 206 (Partial Content)
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+            safe_log(f"🔍 [Juntoz API] Catálogo recibido. Procesando {len(data)} candidatos en stock...", "info")
+            vistos_links = set()
+
+            for p in data:
                 try:
-                    a_el = t.find('a', href=True)
-                    if not a_el: continue
-                    link_final = urljoin("https://juntoz.com", a_el['href'])
+                    nombre_prod = p.get("productName", "").strip().upper()
+                    link_final = p.get("link", "")
                     
-                    if "catalog" in link_final or "search" in link_final: continue
+                    items = p.get("items", [])
+                    if not items:
+                        continue
                     
-                    tit_el = t.select_one('.product-title') or t.select_one('.title') or t.find(['h2', 'h3', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
-                    nombre = tit_el.text.strip().upper() if tit_el else ""
-                    if not nombre: nombre = a_el.get('title', '').strip().upper()
-                    if len(nombre) < 4: continue
+                    first_item = items[0]
+                    images = first_item.get("images", [])
+                    img_final = images[0].get("imageUrl", "") if images else ""
+                    
+                    sellers = first_item.get("sellers", [])
+                    if not sellers:
+                        continue
+                        
+                    # Obtenemos los precios reales y stock de la oferta comercial
+                    offer = sellers[0].get("commertialOffer", {})
+                    
+                    # Filtro de stock estricto
+                    stock = offer.get("AvailableQuantity", 0)
+                    if stock <= 0:
+                        continue  
+                        
+                    precio_oferta = float(offer.get("Price", 0))
+                    precio_regular = float(offer.get("ListPrice", precio_oferta))
+                    
+                    if precio_oferta <= 0:
+                        continue
 
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                    if not textos_precios: continue
-                    
-                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                    if not nums: continue
-                    
-                    p_o = nums[0]
-                    p_r = nums[-1] if len(nums) > 1 else p_o
-                    
-                    if 0 < p_o <= limite:
-                        img_tags = t.find_all('img')
-                        img = ""
-                        for img_el in img_tags:
-                            src = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
-                            if src and 'data:image' not in str(src).lower() and 'pixel' not in str(src).lower():
-                                img = src
-                                break
-                        if str(img).startswith('//'): img = 'https:' + str(img)
+                    # Filtro de presupuesto
+                    if precio_oferta <= limite:
+                        if link_final in vistos_links:
+                            continue
+                        vistos_links.add(link_final)
 
                         productos.append({
-                            "nombre": f"JUNTOZ - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
+                            "nombre": f"Juntoz - {nombre_prod}",
+                            "precio": precio_oferta,
+                            "precio_regular": precio_regular,
                             "link": link_final,
-                            "img": img
+                            "img": img_final
                         })
-                except Exception: continue
+                except Exception:
+                    continue
+        else:
+            safe_log(f"🛑 [Juntoz API] Error de conexión con VTEX. Código HTTP: {resp.status_code}", "error")
 
     except Exception as e:
-        safe_log(f"🛑 [Juntoz] Error crítico inesperado: {e}", "error")
+        safe_log(f"🛑 [Juntoz API] Error crítico inesperado: {e}", "error")
 
-    # Eliminación de duplicados redundantes
-    vistos = set()
-    productos_unicos = []
-    for p in productos:
-        if p['link'] not in vistos:
-            vistos.add(p['link'])
-            productos_unicos.append(p)
-            
-    if productos_unicos:
-        safe_log(f"✅ [Juntoz] ¡Éxito! Se indexaron {len(productos_unicos)} ofertas.", "success")
+    # Reporte final para tu consola de Streamlit
+    if productos:
+        safe_log(f"✅ [Juntoz API] ¡Éxito! Se indexaron {len(productos)} ofertas de forma nativa.", "success")
     else:
-        safe_log(f"⚠️ [Juntoz] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Juntoz API] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
-    return productos_unicos
+    return productos
+    
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -1045,7 +1000,7 @@ def escanear_tienda(url, limite):
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
     elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
-    elif "juntoz.com" in dominio: return motor_juntoz(url, limite)
+    elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
