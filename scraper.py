@@ -990,18 +990,19 @@ def motor_juntoz(url, limite, headers=None):
     
 
 def motor_triathlon(url, limite, headers=None):
-    """Motor Triathlon V4: Extractor híbrido de alta precisión para VTEX IO (Corrige bug de sobre-filtrado de marcas)"""
+    """Motor Triathlon V5: Extractor especializado para VTEX IO con sanitización de títulos e imágenes por srcset"""
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, parse_qs, urljoin
+    from urllib.parse import urljoin
     import re
     import random
 
     productos_map = {}
+    vistos_links = set()
     
     if not headers:
         headers = {
-            "User-Agent": random.choice(LISTA_USER_AGENTS),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "es-PE,es;q=0.9",
             "Referer": "https://www.triathlon.com.pe/"
@@ -1017,9 +1018,7 @@ def motor_triathlon(url, limite, headers=None):
 
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # =======================================================
-        # FASE 1: Extracción Estructural por Componentes VTEX IO
-        # =======================================================
+        # Selectores nativos de componentes estructurales de VTEX IO
         tarjetas = (
             soup.select('[class*="product-summary-"]') or 
             soup.select('[class*="vtex-product-summary-"]') or 
@@ -1027,39 +1026,40 @@ def motor_triathlon(url, limite, headers=None):
         )
         
         if tarjetas:
-            safe_log(f"🔍 [Triathlon IO] Analizando {len(tarjetas)} componentes en cuadrícula...", "info")
+            safe_log(f"🔍 [Triathlon IO] Procesando {len(tarjetas)} componentes en cuadrícula...", "info")
             for t in tarjetas:
                 try:
                     link_final = ""
-                    # Buscamos el enlace real de la ficha del producto
+                    # Extraer el enlace real de la ficha de la zapatilla
                     for a in t.find_all('a', href=True):
                         href = a['href'].lower()
-                        # CORRECCIÓN DE BUG: Debe tener la firma /p y no ser ruta de sistema. SÍ permitimos nombres de marcas en el slug.
-                        if '/p' in href and not any(x in href for x in ['/account', '/checkout', '/cart', '/busca', '/login', '/wishlist']):
+                        if '/p' in href and not any(x in href for x in ['/account', '/checkout', '/cart', '/busca', '/login']):
                             link_final = urljoin("https://www.triathlon.com.pe", a['href'])
                             break
                     
                     if not link_final:
                         continue
                         
-                    texto_tarjeta = t.get_text(separator=" ")
+                    # 1. Extracción y Limpieza Quirúrgica del Nombre
+                    nombre_el = t.select_one('[class*="productName"]') or t.select_one('[class*="brandName"]') or t.select_one('[class*="productBrand"]')
+                    raw_nombre = nombre_el.text.strip() if nombre_el else ""
                     
-                    # Intentamos capturar el nombre mediante las clases de marca de VTEX IO
-                    nombre_el = t.select_one('[class*="productBrand"]') or t.select_one('[class*="productName"]') or t.select_one('[class*="brandName"]')
-                    nombre = nombre_el.text.strip().upper() if nombre_el else ""
-                    
-                    # Si el nombre es genérico o muy corto, extraemos la cadena de texto más larga de sus enlaces
-                    if not nombre or len(nombre) < 6:
-                        textos_enlaces = [a.get_text().strip().upper() for a in t.find_all('a') if len(a.get_text().strip()) > 5]
-                        if textos_enlaces:
-                            nombre = max(textos_enlaces, key=len)
-                            
-                    if not nombre or len(nombre) < 4:
+                    if not raw_nombre or len(raw_nombre) < 5 or raw_nombre.upper() in ['ADIDAS', 'PUMA', 'NIKE', 'UNDER ARMOUR']:
+                        # Si es nulo o solo la marca, buscamos la cadena de texto de los enlaces internos
+                        textos_internos = [a.get_text().strip() for a in t.find_all('a') if len(a.get_text().strip()) > 5]
+                        raw_nombre = max(textos_internos, key=len) if textos_internos else "ZAPATILLA SPORT"
+
+                    # ⚡ SANITIZADOR REGEX: Limpia porcentajes (-22%) y precios pegados (S/ 139.90) del título
+                    nombre_limpio = re.sub(r'-\d+%', '', raw_nombre) 
+                    nombre_limpio = re.sub(r'(?:S/\.?\s*)(\d[\d\.,]*)', '', nombre_limpio)
+                    nombre_limpio = nombre_limpio.replace("Antes:", "").replace("Ahora:", "").strip().upper()
+                    nombre_limpio = re.sub(r'\s+', ' ', nombre_limpio)
+
+                    if len(nombre_limpio) < 4:
                         continue
-                        
-                    nombre = re.sub(r'\s+', ' ', nombre)
-                    
-                    # Barrido Regex de precios sobre la tarjeta
+
+                    # 2. Extracción de Precios mediante Texto de la Tarjeta
+                    texto_tarjeta = t.get_text()
                     textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
                     if not textos_precios:
                         continue
@@ -1068,81 +1068,53 @@ def motor_triathlon(url, limite, headers=None):
                     if not precios_num:
                         continue
                         
-                    p_o = precios_num[0] # Oferta
-                    p_r = precios_num[-1] if len(precios_num) > 1 else p_o # Regular
+                    p_o = precios_num[0]   # Precio Oferta Real
+                    p_r = precios_num[-1] if len(precios_num) > 1 else p_o
+
+                    # 3. Extracción de Imagen de Alta Fidelidad (Bypass de Lazy Loading)
+                    img_el = t.find('img')
+                    img_url = ""
+                    if img_el:
+                        # VTEX IO esconde la imagen real en srcset o data-src
+                        srcset = img_el.get('srcset') or img_el.get('data-srcset')
+                        if srcset:
+                            # Tomamos el primer enlace del set de imágenes
+                            urls_set = re.findall(r'(https?://\S+)', srcset)
+                            if urls_set:
+                                img_url = urls_set[0].split('?')[0] # Limpiamos queries de tamaño
+                        
+                        if not img_url:
+                            img_url = img_el.get('data-src') or img_el.get('src') or ""
+
+                    if img_url.startswith('//'):
+                        img_url = 'https:' + img_url
                     
+                    if 'data:image' in img_url.lower() or 'pixel' in img_url.lower():
+                        img_url = ""
+
+                    # 4. Clasificación y Guardado por Presupuesto
                     if 0 < p_o <= limite:
+                        if link_final in vistos_links:
+                            continue
+                        vistos_links.add(link_final)
+                        
                         productos_map[link_final] = {
-                            "nombre": f"Triathlon - {nombre}",
+                            "nombre": f"Triathlon - {nombre_limpio}",
                             "precio": p_o,
                             "precio_regular": max(p_r, p_o),
                             "link": link_final,
-                            "img": ""
+                            "img": img_url
                         }
                 except Exception:
                     continue
 
-        # =======================================================
-        # FASE 2: Escaneo Semántico Global (Rescate de Omisiones)
-        # =======================================================
-        # Buscamos enlaces /p sueltos que el DOM no haya agrupado en las clases anteriores
-        enlaces_globales = soup.find_all('a', href=True)
-        for a_el in enlaces_globales:
-            try:
-                href = a_el['href'].lower()
-                if '/p' in href and not any(x in href for x in ['/account', '/checkout', '/cart', '/busca', '/login']):
-                    link_final = urljoin("https://www.triathlon.com.pe", a_el['href'])
-                    
-                    # Si ya lo pescamos en la Fase 1, lo saltamos
-                    if link_final in productos_map:
-                        continue
-                        
-                    # Escalamos por el DOM para aislar su bloque de precio
-                    contenedor = a_el.parent
-                    for _ in range(5):
-                        if not contenedor or contenedor.name in ['body', 'html']: break
-                        if 'S/.' in contenedor.get_text() or 'S/' in contenedor.get_text(): break
-                        contenedor = contenedor.parent
-                        
-                    if not contenedor:
-                        continue
-                        
-                    texto_cont = contenedor.get_text()
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_cont)
-                    if not textos_precios:
-                        continue
-                        
-                    precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                    if not precios_num:
-                        continue
-                        
-                    p_o = precios_num[0]
-                    p_r = precios_num[-1] if len(precios_num) > 1 else p_o
-                    
-                    nombre = a_el.get_text().strip().upper()
-                    if not nombre or len(nombre) < 6:
-                        nombre_el = contenedor.select_one('[class*="productBrand"]') or contenedor.select_one('[class*="productName"]')
-                        nombre = nombre_el.text.strip().upper() if nombre_el else "ZAPATILLA SPORT"
-                    
-                    if 0 < p_o <= limite:
-                        productos_map[link_final] = {
-                            "nombre": f"Triathlon - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": ""
-                        }
-            except Exception:
-                continue
-
     except Exception as e:
         safe_log(f"🛑 [Triathlon] Error crítico inesperado: {e}", "error")
 
-    # Empaquetamos resultados finales deduplicados
     productos_finales = list(productos_map.values())
 
     if productos_finales:
-        safe_log(f"✅ [Triathlon] ¡Éxito de sincronización! Se indexaron {len(productos_finales)} ofertas completas sin omisiones.", "success")
+        safe_log(f"✅ [Triathlon] Sincronización Exitosa. Indexadas {len(productos_finales)} ofertas con títulos e imágenes limpias.", "success")
     else:
         safe_log(f"⚠️ [Triathlon] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
