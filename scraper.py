@@ -990,8 +990,7 @@ def motor_juntoz(url, limite, headers=None):
     
 
 def motor_triathlon(url, limite, headers=None):
-    """Motor Triathlon V6: Extractor de alta gama mediante VTEX IO Intelligent Search API.
-    (Rompe el límite de carga y extrae el catálogo completo de hasta 100 productos)"""
+    """Motor Triathlon V7: Extractor definitivo Intelligent Search API sin conflictos de variables."""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, parse_qs, urljoin
@@ -1009,7 +1008,7 @@ def motor_triathlon(url, limite, headers=None):
         }
 
     # =======================================================
-    # ⚡ MÉTODO EN CASCADA 1: TRADUCTOR VTEX INTELLIGENT SEARCH (PAGINADO)
+    # ⚡ MÉTODO 1: BUCLE DE PAGINACIÓN INTELLIGENT SEARCH API
     # =======================================================
     try:
         parsed_url = urlparse(url)
@@ -1021,7 +1020,7 @@ def motor_triathlon(url, limite, headers=None):
         if facets_path:
             api_url = f"https://www.triathlon.com.pe/_v/api/intelligent-search/product_search/{facets_path}"
             
-            # Recorremos de la página 1 a la 3 automáticamente (Trae hasta 150 productos del tirón)
+            # Barremos de la página 1 a la 3 para recolectar hasta 150 productos en stock líquido
             for pagina_actual in range(1, 4):
                 api_params = {
                     "page": str(pagina_actual),
@@ -1040,7 +1039,7 @@ def motor_triathlon(url, limite, headers=None):
                     items_api = data.get("products", [])
                     
                     if not items_api:
-                        break # Si la página devuelve una lista vacía, rompemos el bucle prematuramente
+                        break 
                         
                     for p in items_api:
                         try:
@@ -1068,26 +1067,28 @@ def motor_triathlon(url, limite, headers=None):
                                 if link_final in vistos_links: continue
                                 vistos_links.add(link_final)
                                 
+                                # ✅ CORRECCIÓN DE VARIABLE CRÍTICA (precio_oferta en lugar de p_o)
                                 productos_map[link_final] = {
                                     "nombre": f"Triathlon - {nombre_prod}",
-                                    "precio": p_o,
+                                    "precio": precio_oferta,
                                     "precio_regular": max(precio_regular, precio_oferta),
                                     "link": link_final,
                                     "img": img_final
                                 }
-                        except Exception: continue
+                        except Exception: 
+                            continue
                 else:
                     break
             
             if productos_map:
-                safe_log(f"✅ [Triathlon API] ¡Bucle Completado! Indexadas {len(productos_map)} ofertas simulando clics dinámicos.", "success")
+                safe_log(f"✅ [Triathlon API] ¡Sincronización Exitosa! Indexadas {len(productos_map)} ofertas completas simulando paginación.", "success")
                 return list(productos_map.values())
                         
     except Exception as api_err:
-        safe_log(f"⚠️ [Triathlon API] Falló el motor paginado ({api_err}). Usando Fallback...", "warning")
+        safe_log(f"⚠️ [Triathlon API] Error en canal directo ({api_err}). Activando contingencia...", "warning")
 
     # =======================================================
-    # 🛡️ MÉTODO EN CASCADA 2: FALLBACK ESTRUCTURAL HTML V5
+    # 🛡️ MÉTODO 2: CONTINGENCIA HTML ESTRUCTURAL CORREGIDA
     # =======================================================
     try:
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
