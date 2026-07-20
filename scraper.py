@@ -1142,135 +1142,135 @@ def motor_triathlon(url, limite, headers=None):
     return productos_finales
 
 def motor_ripley(url, limite, headers=None):
-    """Motor Ripley V6: Método Ninja con Analizador Semántico Estructural (Inmune a Wrappers de Caché)"""
+    """Motor Ripley V7: Bypass WAF mediante Suplantación de Googlebot (100% Gratuito y Directo)"""
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin, quote, unquote
+    from urllib.parse import urljoin
+    import json
     import re
     import requests
 
     productos_map = {}
     vistos_links = set()
 
-    if not headers:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9,en;q=0.8"
-        }
+    # 💡 LA CLAVE DEFINITIVA: WAFs como Cloudflare jamás bloquean al rastreador oficial de Google.
+    bot_headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "From": "googlebot(at)googlebot.com"
+    }
 
     try:
-        safe_log(f"📡 [Ripley] Modo Ninja: Consultando la caché pasiva de Google...", "info")
+        safe_log(f"📡 [Ripley] Conectando directamente mediante bypass de rastreador oficial...", "info")
+        resp = requests.get(url, headers=bot_headers, timeout=20, verify=False)
         
-        url_segura = quote(url)
-        url_cache = f"https://webcache.googleusercontent.com/search?q=cache:{url_segura}"
+        safe_log(f"📡 [Ripley] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
         
-        resp = requests.get(url_cache, headers=headers, timeout=20, verify=False)
-        
-        # Doble Ninja: Respaldo con Archive.org si Google no tiene caché disponible
-        if resp.status_code != 200 or len(resp.text) < 5000:
-            safe_log(f"⚠️ [Ripley] Caché de Google no disponible. Activando Doble Ninja (Archive.org)...", "warning")
-            url_archive = f"https://archive.org/wayback/available?url={url_segura}"
-            resp_archive_api = requests.get(url_archive, headers=headers, timeout=15)
-            
-            if resp_archive_api.status_code == 200:
-                datos_archive = resp_archive_api.json()
-                instantaneas = datos_archive.get("archived_snapshots", {})
-                if "closest" in instantaneas:
-                    url_snapshot = instantaneas["closest"]["url"]
-                    safe_log(f"📡 [Ripley] Descargando instantánea de Archive.org...", "info")
-                    resp = requests.get(url_snapshot, headers=headers, timeout=20, verify=False)
-                else:
-                    safe_log(f"🛑 [Ripley] Ninguna caché tiene guardada esta categoría todavía.", "error")
-                    return []
-            else:
-                return []
-
-        safe_log(f"📡 [Ripley] Servidor Caché respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
+        if resp.status_code != 200 or len(resp.text) < 15000:
+            safe_log(f"🛑 [Ripley] Respuesta bloqueada o vacía (HTTP {resp.status_code}).", "error")
+            return []
 
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         # =======================================================
-        # ⚡ ANALIZADOR SEMÁNTICO UNIVERSAL (Independiente de Clases CSS)
+        # ⚡ MÉTODO 1: Extracción vía __NEXT_DATA__ (JSON Nativo del SSR)
+        # =======================================================
+        next_data_script = soup.find('script', id='__NEXT_DATA__')
+        if next_data_script and next_data_script.string:
+            try:
+                raw_json = json.loads(next_data_script.string)
+                page_props = raw_json.get('props', {}).get('pageProps', {})
+                products_list = (
+                    page_props.get('initialState', {}).get('products', []) or
+                    page_props.get('products', []) or
+                    page_props.get('initialState', {}).get('catalog', {}).get('products', [])
+                )
+
+                if products_list:
+                    safe_log(f"🔍 [Ripley JSON] Procesando {len(products_list)} productos del servidor...", "info")
+                    for p in products_list:
+                        try:
+                            nombre = p.get('name', '').strip().upper()
+                            link_rel = p.get('url', '') or p.get('singleProductUrl', '')
+                            if not link_rel: continue
+                            link_final = urljoin("https://simple.ripley.com.pe", link_rel)
+
+                            prices = p.get('prices', {})
+                            p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('listPrice') or 0)
+                            p_r = float(prices.get('listPrice') or p_o)
+
+                            img_url = p.get('thumbnailImage') or p.get('fullImage') or ""
+                            if img_url.startswith('//'): img_url = 'https:' + img_url
+
+                            if 0 < p_o <= limite:
+                                if link_final in vistos_links: continue
+                                vistos_links.add(link_final)
+                                productos_map[link_final] = {
+                                    "nombre": f"Ripley - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": max(p_r, p_o),
+                                    "link": link_final,
+                                    "img": img_url
+                                }
+                        except Exception:
+                            continue
+
+                    if productos_map:
+                        safe_log(f"✅ [Ripley] ¡Bypass exitoso! Se indexaron {len(productos_map)} ofertas desde el JSON.", "success")
+                        return list(productos_map.values())
+            except Exception:
+                pass
+
+        # =======================================================
+        # 🛡️ MÉTODO 2: Analizador Estructural HTML (Fallback)
         # =======================================================
         enlaces = soup.find_all('a', href=True)
-        safe_log(f"🔍 [Ripley Ninja] Analizando {len(enlaces)} enlaces estructurales...", "info")
-
         for a_el in enlaces:
             try:
                 href = a_el['href']
-                
-                # Filtramos para asegurar que sea un enlace de producto de Ripley
-                if '/p/' not in href or any(x in href for x in ['/cart', '/checkout', '/account', 'google.com', 'facebook', 'instagram']):
+                if '/p/' not in href or any(x in href for x in ['/cart', '/checkout', '/account']):
                     continue
-                
-                # Limpieza de redirecciones si Google altera el enlace
-                if "url?q=" in href:
-                    match_q = re.search(r'q=([^&]+)', href)
-                    if match_q:
-                        href = unquote(match_q.group(1))
-
-                if "/web/" in href and "ripley.com.pe" in href:
-                    href = href.split("ripley.com.pe")[-1]
 
                 link_final = urljoin("https://simple.ripley.com.pe", href)
 
-                # Buscamos el contenedor ancestro que albergue información de precios
                 contenedor = a_el.parent
                 container_text = ""
                 for _ in range(6):
-                    if not contenedor or contenedor.name in ['body', 'html']:
-                        break
+                    if not contenedor or contenedor.name in ['body', 'html']: break
                     container_text = contenedor.get_text()
-                    if 'S/' in container_text or 'S/.' in container_text:
-                        break
+                    if 'S/' in container_text or 'S/.' in container_text: break
                     contenedor = contenedor.parent
 
-                if not contenedor:
-                    continue
+                if not contenedor: continue
 
-                # Extracción robusta del nombre del producto
                 nombre = a_el.get_text(separator=" ").strip().upper()
                 if len(nombre) < 5:
                     t_elem = contenedor.find(['h2', 'h3', 'span', 'div'], class_=re.compile(r'name|title|details', re.I))
-                    if t_elem:
-                        nombre = t_elem.get_text().strip().upper()
+                    if t_elem: nombre = t_elem.get_text().strip().upper()
 
-                if not nombre or len(nombre) < 5 or any(x in nombre for x in ['RIPLEY', 'INICIO', 'CATEGORIA', 'BARRAS']):
+                if not nombre or len(nombre) < 5 or any(x in nombre for x in ['RIPLEY', 'INICIO', 'CATEGORIA']):
                     continue
 
                 nombre = re.sub(r'\s+', ' ', nombre).replace("AGREGAR", "").strip()
 
-                # Extracción de precios mediante el motor de expresiones regulares
                 textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', container_text)
-                if not textos_precios:
-                    continue
+                if not textos_precios: continue
 
                 precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                if not precios_num:
-                    continue
+                if not precios_num: continue
 
                 p_o = precios_num[0]
                 p_r = precios_num[-1] if len(precios_num) > 1 else p_o
 
-                # Extracción de la imagen del producto
                 img_el = contenedor.find('img')
                 img_url = ""
                 if img_el:
-                    img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
-                
-                if img_url.startswith('//'):
-                    img_url = 'https:' + img_url
-                if "/web/" in img_url and "im.ripley.com" in img_url:
-                    img_url = "https://im.ripley.com.pe" + img_url.split("im.ripley.com.pe")[-1]
-                if not img_url.startswith('http') or 'data:image' in img_url.lower():
-                    img_url = ""
+                    img_url = img_el.get('data-src') or img_el.get('src') or ""
+                if img_url.startswith('//'): img_url = 'https:' + img_url
 
-                # Validación del presupuesto límite configurado
                 if 0 < p_o <= limite:
-                    if link_final in vistos_links:
-                        continue
+                    if link_final in vistos_links: continue
                     vistos_links.add(link_final)
-
                     productos_map[link_final] = {
                         "nombre": f"Ripley - {nombre}",
                         "precio": p_o,
@@ -1282,17 +1282,15 @@ def motor_ripley(url, limite, headers=None):
                 continue
 
     except Exception as e:
-        safe_log(f"🛑 [Ripley] Error crítico en Modo Ninja: {e}", "error")
+        safe_log(f"🛑 [Ripley] Error crítico: {e}", "error")
 
     productos_finales = list(productos_map.values())
-
     if productos_finales:
-        safe_log(f"✅ [Ripley] ¡Modo Ninja Exitoso! Se indexaron {len(productos_finales)} ofertas desde la caché.", "success")
+        safe_log(f"✅ [Ripley] ¡Bypass exitoso! Se indexaron {len(productos_finales)} ofertas de la tienda.", "success")
     else:
-        safe_log(f"⚠️ [Ripley] No se encontraron ofertas bajo el límite de S/. {limite:.2f} en las cachés.", "warning")
+        safe_log(f"⚠️ [Ripley] No se encontraron ofertas bajo el límite de S/. {limite:.2f}.", "warning")
 
     return productos_finales
-
 
 
 
