@@ -1142,11 +1142,12 @@ def motor_triathlon(url, limite, headers=None):
     return productos_finales
 
 def motor_ripley(url, limite, headers=None):
-    """Motor Ripley V2: Bypass de WAF mediante curl_cffi + Extracción híbrida (__NEXT_DATA__ JSON + HTML)"""
+    """Motor Ripley V2.1: Bypass de WAF dinámico y gestión nativa de cabeceras"""
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     import json
     import re
+    import random
 
     try:
         from curl_cffi import requests as cloudflare_requests
@@ -1157,35 +1158,34 @@ def motor_ripley(url, limite, headers=None):
     productos_map = {}
     vistos_links = set()
 
-    # Cabeceras completas requeridas para eludir detección WAF/Cloudflare
+    # 💡 FIX: Dejamos que curl_cffi inyecte automáticamente el User-Agent y Sec-Ch-Ua
+    # acordes a la firma TLS. Solo enviamos cabeceras genéricas de navegación.
     default_headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'accept-language': 'es-ES,es;q=0.9,en;q=0.8',
+        'accept-language': 'es-PE,es-ES;q=0.9,es;q=0.8,en-US;q=0.7,en;q=0.6',
         'cache-control': 'max-age=0',
-        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
+        'referer': 'https://www.google.com/',
         'sec-fetch-dest': 'document',
         'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'none',
+        'sec-fetch-site': 'cross-site',
         'sec-fetch-user': '?1',
-        'upgrade-insecure-requests': '1',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'upgrade-insecure-requests': '1'
     }
 
-    if headers and isinstance(headers, dict):
-        default_headers.update(headers)
+    # Rotación de perfiles para evitar baneos por fingerprinting repetitivo
+    perfiles_seguros = ["chrome124", "chrome120", "safari15_5", "edge101"]
+    perfil = random.choice(perfiles_seguros)
 
     try:
-        safe_log("📡 [Ripley] Conectando con imitación de firma Chrome 120 + Headers completos...", "info")
+        safe_log(f"📡 [Ripley] Conectando con imitación de firma {perfil}...", "info")
         
-        # Uso de impersonate="chrome120" o "chrome124" con cabeceras explícitas
+        # 💡 FIX: Retiramos verify=False porque altera el ClientHello en algunos bindings 
+        # TLS haciéndolos detectables por Akamai/Cloudflare.
         resp = cloudflare_requests.get(
             url, 
             headers=default_headers,
-            impersonate="chrome120", 
-            timeout=25,
-            verify=False
+            impersonate=perfil, 
+            timeout=25
         )
         
         safe_log(f"📡 [Ripley] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
