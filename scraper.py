@@ -1157,14 +1157,34 @@ def motor_ripley(url, limite, headers=None):
     productos_map = {}
     vistos_links = set()
 
+    # Cabeceras completas requeridas para eludir detección WAF/Cloudflare
+    default_headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'accept-language': 'es-ES,es;q=0.9,en;q=0.8',
+        'cache-control': 'max-age=0',
+        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'none',
+        'sec-fetch-user': '?1',
+        'upgrade-insecure-requests': '1',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+
+    if headers and isinstance(headers, dict):
+        default_headers.update(headers)
+
     try:
-        safe_log("📡 [Ripley] Conectando con imitación de firma de navegador Chrome...", "info")
+        safe_log("📡 [Ripley] Conectando con imitación de firma Chrome 120 + Headers completos...", "info")
         
-        # impersonate="chrome" evade el bloqueo HTTP 403 de Ripley
+        # Uso de impersonate="chrome120" o "chrome124" con cabeceras explícitas
         resp = cloudflare_requests.get(
             url, 
-            impersonate="chrome", 
-            timeout=20,
+            headers=default_headers,
+            impersonate="chrome120", 
+            timeout=25,
             verify=False
         )
         
@@ -1183,15 +1203,13 @@ def motor_ripley(url, limite, headers=None):
         if next_data_script and next_data_script.string:
             try:
                 raw_json = json.loads(next_data_script.string)
-                # Navegamos por el árbol de estado de Next.js de Ripley
+                
+                # Búsqueda dinámica en las propiedades de Next.js
+                page_props = raw_json.get('props', {}).get('pageProps', {})
                 products_list = (
-                    raw_json.get('props', {})
-                    .get('pageProps', {})
-                    .get('initialState', {})
-                    .get('products', []) or
-                    raw_json.get('props', {})
-                    .get('pageProps', {})
-                    .get('products', [])
+                    page_props.get('initialState', {}).get('products', []) or
+                    page_props.get('products', []) or
+                    page_props.get('initialState', {}).get('catalog', {}).get('products', [])
                 )
 
                 if products_list:
@@ -1304,7 +1322,6 @@ def motor_ripley(url, limite, headers=None):
         safe_log(f"⚠️ [Ripley] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
