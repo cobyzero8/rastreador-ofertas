@@ -1142,52 +1142,54 @@ def motor_triathlon(url, limite, headers=None):
     return productos_finales
 
 def motor_ripley(url, limite, headers=None):
-    """Motor Ripley V3: Bypass Sigilo Absoluto (Zero Custom Headers + Pre-Flight)"""
+    """Motor Ripley V5: Método 'Ninja' (Extracción pasiva vía Caché - Google / Archive)"""
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, quote
     import json
     import re
+    import requests
     import random
-    import time
-
-    try:
-        from curl_cffi import requests as cloudflare_requests
-    except ImportError:
-        safe_log("🛑 [Ripley] Error: 'curl_cffi' no está disponible en el entorno.", "error")
-        return []
 
     productos_map = {}
     vistos_links = set()
 
-    # Perfiles modernos. Descartamos edge101 por ser muy antiguo.
-    perfiles_seguros = ["chrome120", "chrome124", "safari17_0", "safari15_5"]
-    perfil = random.choice(perfiles_seguros)
+    # Cabeceras estándar e inofensivas
+    if not headers:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-PE,es;q=0.9,en;q=0.8"
+        }
 
     try:
-        safe_log(f"📡 [Ripley] Modo Sigilo Nivel 3. Firma nativa pura: {perfil}...", "info")
+        safe_log(f"📡 [Ripley] Modo Ninja: Consultando la caché pasiva de Google...", "info")
         
-        # 💡 EL SECRETO: Usar Session() y NO ENVIAR HEADERS MANUALES.
-        # Esto garantiza que el orden de los pseudo-headers HTTP/2 sea matemáticamente
-        # idéntico al del navegador que estamos imitando.
-        session = cloudflare_requests.Session(impersonate=perfil)
+        # 1. Intentamos con Google Cache primero
+        url_segura = quote(url)
+        url_cache = f"https://webcache.googleusercontent.com/search?q=cache:{url_segura}"
         
-        # 💡 ESTRATEGIA DE PRE-CALENTAMIENTO (Pre-flight)
-        # Visitamos la portada un segundo para que Cloudflare nos asigne una cookie
-        # de sesión válida (__cf_bm) antes de ir a buscar los productos.
-        try:
-            session.get("https://simple.ripley.com.pe/", timeout=10)
-            time.sleep(random.uniform(0.8, 2.0))
-        except Exception:
-            pass # Ignoramos errores aquí, lo importante es el intento de obtener cookies
+        resp = requests.get(url_cache, headers=headers, timeout=20, verify=False)
+        
+        # 2. DOBLE NINJA: Si Google Cache falla (404) o está vacío, usamos Archive.org
+        if resp.status_code != 200 or len(resp.text) < 5000:
+            safe_log(f"⚠️ [Ripley] Caché de Google no disponible. Activando Doble Ninja (Archive.org)...", "warning")
+            url_archive = f"https://archive.org/wayback/available?url={url_segura}"
+            resp_archive_api = requests.get(url_archive, headers=headers, timeout=15)
+            
+            if resp_archive_api.status_code == 200:
+                datos_archive = resp_archive_api.json()
+                instantaneas = datos_archive.get("archived_snapshots", {})
+                if "closest" in instantaneas:
+                    url_snapshot = instantaneas["closest"]["url"]
+                    safe_log(f"📡 [Ripley] Descargando instantánea de Archive.org...", "info")
+                    resp = requests.get(url_snapshot, headers=headers, timeout=20, verify=False)
+                else:
+                    safe_log(f"🛑 [Ripley] Ninguna caché tiene guardada esta categoría todavía.", "error")
+                    return []
+            else:
+                return []
 
-        # Petición real al catálogo
-        resp = session.get(url, timeout=25)
-        
-        safe_log(f"📡 [Ripley] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
-        
-        if resp.status_code != 200 or len(resp.text) < 15000:
-            safe_log(f"🛑 [Ripley] Bloqueo o catálogo vacío (Código HTTP {resp.status_code}).", "error")
-            return []
+        safe_log(f"📡 [Ripley] Servidor Caché respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
 
         soup = BeautifulSoup(resp.text, 'html.parser')
 
@@ -1206,12 +1208,13 @@ def motor_ripley(url, limite, headers=None):
                 )
 
                 if products_list:
-                    safe_log(f"🔍 [Ripley JSON] Procesando {len(products_list)} productos nativos...", "info")
                     for p in products_list:
                         try:
                             nombre = p.get('name', '').strip().upper()
                             link_rel = p.get('url', '') or p.get('singleProductUrl', '')
                             if not link_rel: continue
+                            
+                            # Aseguramos que el link apunte a ripley y no a google/archive
                             link_final = urljoin("https://simple.ripley.com.pe", link_rel)
 
                             prices = p.get('prices', {})
@@ -1235,27 +1238,31 @@ def motor_ripley(url, limite, headers=None):
                             continue
 
                     if productos_map:
-                        safe_log(f"✅ [Ripley] ¡Éxito! {len(productos_map)} ofertas indexadas (JSON).", "success")
+                        safe_log(f"✅ [Ripley] ¡Modo Ninja Exitoso! {len(productos_map)} ofertas extraídas de la caché.", "success")
                         return list(productos_map.values())
-            except Exception as json_err:
-                safe_log(f"⚠️ [Ripley JSON] Error procesando JSON. Fallback a HTML...", "warning")
+            except Exception:
+                pass
 
         # =======================================================
         # 🛡️ MÉTODO 2: Extracción HTML Estructural (Fallback)
         # =======================================================
-        tarjetas = soup.select('.catalog-product') or soup.select('[class*="catalog-product"]') or soup.select('.product-item')
+        tarjetas = soup.select('.catalog-product') or soup.select('[class*="catalog-product"]')
         if tarjetas:
-            safe_log(f"🔍 [Ripley HTML] Procesando {len(tarjetas)} tarjetas...", "info")
             for t in tarjetas:
                 try:
                     a_el = t.find('a', href=True)
                     if not a_el: continue
-                    link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
+                    
+                    href_crudo = a_el['href']
+                    # Limpiamos si Archive.org inyectó su propia URL en el href
+                    if "/web/" in href_crudo and "ripley.com.pe" in href_crudo:
+                        href_crudo = href_crudo.split("ripley.com.pe")[-1]
+                        
+                    link_final = urljoin("https://simple.ripley.com.pe", href_crudo)
 
-                    nombre_el = t.select_one('.catalog-product-details__name') or t.find(['span', 'h2', 'h3', 'div'])
+                    nombre_el = t.select_one('.catalog-product-details__name') or t.find(['span', 'h2'])
                     nombre = nombre_el.text.strip().upper() if nombre_el else ""
                     if len(nombre) < 4: continue
-                    nombre = re.sub(r'\s+', ' ', nombre)
 
                     texto_tarjeta = t.get_text()
                     textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
@@ -1264,12 +1271,13 @@ def motor_ripley(url, limite, headers=None):
                     precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
                     if not precios_num: continue
 
-                    p_o = precios_num[0]
-                    p_r = precios_num[-1] if len(precios_num) > 1 else p_o
+                    p_o, p_r = precios_num[0], precios_num[-1] if len(precios_num) > 1 else precios_num[0]
 
                     img_el = t.find('img')
                     img_url = img_el.get('data-src') or img_el.get('src') or "" if img_el else ""
                     if img_url.startswith('//'): img_url = 'https:' + img_url
+                    if "/web/" in img_url and "im.ripley.com" in img_url:
+                        img_url = "https://im.ripley.com.pe" + img_url.split("im.ripley.com.pe")[-1]
 
                     if 0 < p_o <= limite:
                         if link_final in vistos_links: continue
@@ -1284,16 +1292,15 @@ def motor_ripley(url, limite, headers=None):
                 except Exception: continue
 
     except Exception as e:
-        safe_log(f"🛑 [Ripley] Error crítico inesperado: {e}", "error")
+        safe_log(f"🛑 [Ripley] Error en bypass ninja: {e}", "error")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_finales)} ofertas.", "success")
+        safe_log(f"✅ [Ripley] ¡Modo Ninja Exitoso! {len(productos_finales)} ofertas extraídas de la caché.", "success")
     else:
-        safe_log(f"⚠️ [Ripley] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Ripley] No se encontraron ofertas bajo el límite de S/. {limite:.2f} en las cachés.", "warning")
 
     return productos_finales
-
 
 
 def motor_tradicional_general(url, limite, headers):
