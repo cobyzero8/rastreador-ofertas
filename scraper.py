@@ -34,7 +34,7 @@ except Exception:
 if SUPABASE_URL and SUPABASE_KEY: 
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else: 
-    raise ValueError("Error crítico: Falta SUPABASE_KEY.")
+    raise ValueError("Error crítico: Falta SUPABASE_KEY en la configuración.")
 
 LISTA_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -158,24 +158,19 @@ def motor_thn(url, limite):
         if resp.status_code != 200: return []
         
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Buscar contenedores de productos genéricos
         tarjetas = soup.find_all(['div', 'article', 'li'], class_=re.compile(r'(product-summary|product-card|item-card|vtex-product|grid-item)', re.I))
         
         for t in tarjetas:
             try:
-                # 1. Enlace
                 a_el = t.find('a', href=True)
                 if not a_el: continue
                 link_final = urljoin("https://www.thn.pe", a_el['href'])
                 
-                # 2. Nombre
                 tit_el = t.find(['h2', 'h3', 'span', 'div'], class_=re.compile(r'(name|title|brand|description)', re.I))
                 nombre = tit_el.text.strip().upper() if tit_el else ""
                 if not nombre: nombre = a_el.text.strip().upper()
                 if len(nombre) < 4: continue
                 
-                # 3. Precios (Regex difuso sobre el contenedor)
                 textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                 if not textos_precios: continue
                 
@@ -186,7 +181,6 @@ def motor_thn(url, limite):
                 p_r = nums[-1] if len(nums) > 1 else p_o
                 
                 if 0 < p_o <= limite:
-                    # 4. Imagen
                     img_tags = t.find_all('img')
                     img = ""
                     for img_el in img_tags:
@@ -393,9 +387,6 @@ def motor_adidas(url, limite):
     """(Motor estacionado temporalmente)"""
     return []
 
-
-
-
 def motor_platanitos(url, limite):
     productos = []
     try:
@@ -461,24 +452,19 @@ def motor_hiraoka(url, limite):
         if resp.status_code != 200: return []
         
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Selectores nativos para la arquitectura de cajas de Hiraoka (Magento 2)
         tarjetas = soup.select('.product-item') or soup.select('.product-item-info') or soup.select('.item.product')
         
         for t in tarjetas:
             try:
-                # 1. Extraer Nombre y Enlace de la Ficha
                 tit_el = t.select_one('.product-item-link') or t.select_one('.product-item-name a') or t.select_one('.product-name a')
                 if not tit_el: continue
                 nombre = tit_el.text.strip().upper()
                 link_final = urljoin("https://hiraoka.com.pe", tit_el['href'])
                 
-                # 2. Extraer Precios de las etiquetas de Infracommerce
                 o_el = t.select_one('[data-price-type="finalPrice"] .price') or t.select_one('.special-price .price') or t.select_one('.price-box .price')
                 r_el = t.select_one('[data-price-type="oldPrice"] .price') or t.select_one('.old-price .price')
                 
                 if not o_el:
-                    # Respaldo difuso por texto si cambian el diseño de precios
                     textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                     if textos_precios:
                         nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
@@ -490,7 +476,6 @@ def motor_hiraoka(url, limite):
                     p_o = limpiar_precio_pnp(o_el.text)
                     p_r = limpiar_precio_pnp(r_el.text) if r_el else p_o
                 
-                # 3. Filtrar por límite e indexar la imagen real del producto
                 if 0 < p_o <= limite:
                     img_el = t.select_one('.product-image-photo') or t.find('img')
                     img_url = ""
@@ -512,13 +497,10 @@ def motor_hiraoka(url, limite):
         print(f"Error en motor Hiraoka: {e}")
         
     return productos
-        
 
 def motor_carsa(url, limite):
     """Motor CARSA de Alta Fidelidad: Emulación de navegador real"""
     productos = []
-    
-    # Cabeceras que engañan al servidor haciéndole creer que somos un navegador Chrome real
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -531,15 +513,12 @@ def motor_carsa(url, limite):
         session = requests.Session()
         resp = session.get(url, headers=headers, timeout=20, allow_redirects=True, verify=False)
         
-        # SI ESTO NO SALE, EL SERVIDOR NOS ESTÁ CORTANDO EL ACCESO
         safe_log(f"📡 [Diag CARSA] Código de respuesta: {resp.status_code} | Tamaño: {len(resp.text)}", "info")
         
         if resp.status_code != 200:
             safe_log(f"🛑 [Diag CARSA] Bloqueo total por Firewall/Anti-Bot. Código {resp.status_code}", "error")
             return []
 
-        # Si llegamos aquí, sí descargamos contenido. Ahora busquemos productos.
-        # Buscamos en el texto del HTML cualquier rastro de JSON de precios
         matches = re.findall(r'"productName":"([^"]+)".*?"Price":(\d+\.?\d*)', resp.text)
         
         if not matches:
@@ -557,7 +536,7 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Híbrido V3: Preservación de Query String nativa para evitar Bloqueos de Codificación (Error 400)"""
+    """Motor OECHSLE Híbrido V3: Preservación de Query String nativa"""
     import json
     import re
     import requests
@@ -576,13 +555,9 @@ def motor_oechsle(url, limite):
         parsed_url = urlparse(url)
         raw_query = parsed_url.query
         
-        # 💡 SOLUCIÓN AL RADAR DE SONIDO: Mapeamos 'query=' a 'ft=' directamente para la API de VTEX
         if 'query=' in raw_query:
             raw_query = raw_query.replace('query=', 'ft=')
         
-        # 💡 SOLUCIÓN AL ERROR 400 DE TELEVISORES:
-        # VTEX rechaza parámetros codificados con '+' para espacios, exige estrictamente '%20'.
-        # Al usar la query string nativa del navegador directamente, evitamos que python re-codifique el enlace.
         has_category_filter = 'fq=C:' in raw_query or 'fq=C%3A' in raw_query
         
         if has_category_filter:
@@ -593,14 +568,12 @@ def motor_oechsle(url, limite):
                 category_path = '/' + category_path
             api_url = f"https://www.oechsle.pe/api/catalog_system/pub/products/search{category_path}?{raw_query}"
             
-        # Agregamos la paginación estándar al final de la URL preservando la codificación nativa
         if '_from=' not in api_url:
             api_url += "&_from=0&_to=49"
             
         safe_log("📡 [Oechsle] Conectando con la base de datos oficial...", "info")
         resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
         
-        # Si la API responde exitosamente (200 o 206)
         if resp.status_code in [200, 206]:
             data = resp.json()
             safe_log(f"🔍 [Oechsle] Base de datos leída con éxito. Se procesaron {len(data)} productos.", "info")
@@ -641,7 +614,6 @@ def motor_oechsle(url, limite):
     except Exception as e:
         safe_log(f"⚠️ [Oechsle API] Error durante la consulta directa: {e}. Activando contingencia...", "warning")
         
-    # 🛡️ CAPA DE RESPALDO (Si la API falla por cualquier motivo, extrae directamente del HTML)
     if not productos:
         safe_log("🛡️ [Oechsle] Activando plan de contingencia HTML...", "info")
         try:
@@ -650,8 +622,6 @@ def motor_oechsle(url, limite):
             resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                
-                # Buscamos metadatos JSON-LD
                 json_ld_prods = []
                 scripts = soup.find_all('script', type='application/ld+json')
                 for script in scripts:
@@ -713,7 +683,7 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    """Motor Plaza Vea V3.1: Extracción dinámica con soporte estricto para filtros múltiples (Multi-fq)"""
+    """Motor Plaza Vea V3.1: Extraction dinámica con soporte para filtros múltiples"""
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
 
@@ -727,40 +697,32 @@ def motor_plazavea(url, limite, headers=None):
         }
 
     try:
-        # Extraemos la ruta de categoría de la URL
         parsed_url = urlparse(url)
         category_path = parsed_url.path.rstrip('/')
         if category_path and not category_path.startswith('/'):
             category_path = '/' + category_path
 
-        # Si es una URL de búsqueda directa ("/busca/"), VTEX prefiere consultar a la raíz de búsqueda
         if "busca" in category_path:
             api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
         else:
             api_url = f"https://www.plazavea.com.pe/api/catalog_system/pub/products/search{category_path}"
 
-        # Obtenemos todos los parámetros de la URL original
         query_params = parse_qs(parsed_url.query)
-        
-        # Parámetros base de ordenamiento y paginación
         params = {
             "O": "OrderByPriceASC",
             "_from": "0",
             "_to": "49"
         }
         
-        # ⚡ MEZCLA INTELIGENTE: Preservamos listas completas de parámetros repetidos (como múltiples 'fq')
         for k, v in query_params.items():
-            # Si el parámetro tiene más de un filtro (como fq), pasamos la lista completa. 
-            # De lo contrario, pasamos el valor único como string para no ensuciar la consulta.
             params[k] = v if len(v) > 1 else v[0]
 
-        safe_log(f"📡 [Plaza Vea API] Consultando VTEX con filtros avanzados de URL...", "info")
+        safe_log(f"📡 [Plaza Vea API] Consultando VTEX con filtros avanzados...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
         if resp.status_code in [200, 206]:
             data = resp.json()
-            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido con éxito. Procesando {len(data)} productos...", "info")
+            safe_log(f"🔍 [Plaza Vea API] Catálogo recibido. Procesando {len(data)} productos...", "info")
             vistos_links = set()
 
             for p in data:
@@ -769,34 +731,27 @@ def motor_plazavea(url, limite, headers=None):
                     link_final = p.get("link", "")
                     
                     items = p.get("items", [])
-                    if not items:
-                        continue
+                    if not items: continue
                     
                     first_item = items[0]
                     images = first_item.get("images", [])
                     img_final = images[0].get("imageUrl", "") if images else ""
                     
                     sellers = first_item.get("sellers", [])
-                    if not sellers:
-                        continue
+                    if not sellers: continue
                         
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Filtro de stock real
                     stock = offer.get("AvailableQuantity", 0)
-                    if stock <= 0:
-                        continue  
+                    if stock <= 0: continue  
                         
                     precio_oferta = float(offer.get("Price", 0))
                     precio_regular = float(offer.get("ListPrice", precio_oferta))
                     
-                    if precio_oferta <= 0:
-                        continue
+                    if precio_oferta <= 0: continue
 
-                    # Filtro de presupuesto
                     if precio_oferta <= limite:
-                        if link_final in vistos_links:
-                            continue
+                        if link_final in vistos_links: continue
                         vistos_links.add(link_final)
 
                         productos.append({
@@ -814,24 +769,22 @@ def motor_plazavea(url, limite, headers=None):
     except Exception as e:
         safe_log(f"🛑 [Plaza Vea API] Error crítico inesperado: {e}", "error")
 
-    # Reporte final
     if productos:
-        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas que cumplen con todos tus filtros.", "success")
+        safe_log(f"✅ [Plaza Vea API] ¡Éxito! Se indexaron {len(productos)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Plaza Vea API] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos
 
 def motor_juntoz(url, limite, headers=None):
-    """Motor Juntoz V4: Extractor de alto rendimiento semántico/estructural 
-    (Completamente independiente de clases CSS y APIs restrictivas)"""
+    """Motor Juntoz V4: Extractor semántico e independiente de clases CSS"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     import re
     import random
 
-    productos_map = {} # URL -> Producto dict
+    productos_map = {}
     
     if not headers:
         headers = {
@@ -845,54 +798,36 @@ def motor_juntoz(url, limite, headers=None):
         safe_log(f"📡 [Juntoz] Descargando catálogo por HTML...", "info")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
         
-        safe_log(f"📡 [Juntoz] Respuesta del servidor: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
-        
         if resp.status_code != 200:
-            safe_log(f"🛑 [Juntoz] Error de respuesta del servidor. Código: {resp.status_code}", "error")
+            safe_log(f"🛑 [Juntoz] Error de servidor. Código: {resp.status_code}", "error")
             return []
 
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # 1. Buscamos todos los enlaces que contengan /p/ o /producto/
         enlaces_productos = []
         for a in soup.find_all('a', href=True):
             href = a['href'].lower()
-            # Validamos que apunte a un producto y no a listados o páginas informativas
             if ('/p/' in href or '/producto/' in href) and not any(x in href for x in ['/politica', '/ayuda', '/terminos', '/catalogo', '/tienda']):
                 enlaces_productos.append(a)
-
-        safe_log(f"🔍 [Juntoz] Encontrados {len(enlaces_productos)} enlaces candidatos. Iniciando análisis estructural...", "info")
 
         for a_el in enlaces_productos:
             try:
                 href_rel = a_el['href']
                 link_final = urljoin("https://juntoz.com", href_rel)
                 
-                # Buscamos el contenedor ancestro más pequeño que tenga información de precios
                 contenedor_tarjeta = None
                 ancestro_actual = a_el.parent
                 
-                # Subimos hasta un máximo de 6 niveles en el árbol DOM
                 for _ in range(6):
-                    if not ancestro_actual or ancestro_actual.name in ['body', 'html']:
-                        break
-                    
+                    if not ancestro_actual or ancestro_actual.name in ['body', 'html']: break
                     texto_ancestro = ancestro_actual.get_text()
-                    # Si el texto del contenedor tiene algún indicio de precio peruano
                     if 'S/.' in texto_ancestro or 'S/' in texto_ancestro:
                         contenedor_tarjeta = ancestro_actual
                         break
-                    
                     ancestro_actual = ancestro_actual.parent
 
-                if not contenedor_tarjeta:
-                    continue
+                if not contenedor_tarjeta: continue
 
-                # 2. Extraer Nombre del Producto
-                # Prioridad A: El texto del propio enlace
                 nombre = a_el.get_text(separator=" ").strip().upper()
-                
-                # Prioridad B: Si el enlace actual no tiene texto (era la imagen), buscamos otro con el mismo href en la tarjeta
                 if not nombre or len(nombre) < 5:
                     for otro_a in contenedor_tarjeta.find_all('a', href=True):
                         if otro_a['href'] == href_rel:
@@ -901,58 +836,37 @@ def motor_juntoz(url, limite, headers=None):
                                 nombre = nombre_otro
                                 break
 
-                # Prioridad C: Atributo alt de la imagen
                 if not nombre or len(nombre) < 5:
                     img_el = contenedor_tarjeta.find('img')
                     if img_el and img_el.get('alt'):
                         nombre = img_el['alt'].strip().upper()
 
-                # Limpieza rápida del nombre
-                if not nombre or len(nombre) < 5:
-                    continue
+                if not nombre or len(nombre) < 5: continue
                 nombre = nombre.replace("AGREGAR A CARRITO", "").replace("AGREGAR", "").strip()
                 nombre = re.sub(r'\s+', ' ', nombre)
 
-                # 3. Extraer Precios usando Regex
                 texto_tarjeta = contenedor_tarjeta.get_text()
                 textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
-                
-                if not textos_precios:
-                    continue
+                if not textos_precios: continue
 
-                # Convertimos y limpiamos usando tu limpiador global
-                precios_numeros = []
-                for p_str in textos_precios:
-                    p_num = limpiar_precio_pnp(p_str)
-                    if p_num > 0:
-                        precios_numeros.append(p_num)
+                precios_numeros = [limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0]
+                if not precios_numeros: continue
 
-                if not precios_numeros:
-                    continue
-
-                # Clasificamos precios: El menor es oferta, el mayor es lista/regular
                 precios_unicos = sorted(list(set(precios_numeros)))
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                # 4. Extraer Imagen
                 img_el = contenedor_tarjeta.find('img')
                 img_url = ""
                 if img_el:
                     img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or img_el.get('data-original') or ""
                 
-                if img_url.startswith('//'):
-                    img_url = 'https:' + img_url
-                elif img_url and not img_url.startswith('http'):
-                    img_url = urljoin("https://juntoz.com", img_url)
+                if img_url.startswith('//'): img_url = 'https:' + img_url
+                elif img_url and not img_url.startswith('http'): img_url = urljoin("https://juntoz.com", img_url)
 
-                # Descartamos trackers o loaders transparentes
-                if 'data:image' in img_url.lower() or 'pixel' in img_url.lower():
-                    img_url = ""
+                if 'data:image' in img_url.lower() or 'pixel' in img_url.lower(): img_url = ""
 
-                # 5. Validación e indexación en el diccionario
                 if 0 < p_o <= limite:
-                    # Deduplicación inteligente: nos quedamos con el registro que tenga mejor nombre o imagen
                     if link_final in productos_map:
                         prod_existente = productos_map[link_final]
                         if len(nombre) > len(prod_existente['nombre']) or (img_url and not prod_existente['img']):
@@ -977,26 +891,20 @@ def motor_juntoz(url, limite, headers=None):
     except Exception as e:
         safe_log(f"🛑 [Juntoz] Error crítico inesperado: {e}", "error")
 
-    # Lista limpia final
     productos_finales = list(productos_map.values())
-
-    # Reporte de diagnóstico
     if productos_finales:
-        safe_log(f"✅ [Juntoz] ¡Éxito! Se indexaron {len(productos_finales)} ofertas mediante análisis estructural HTML.", "success")
+        safe_log(f"✅ [Juntoz] ¡Éxito! Se indexaron {len(productos_finales)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Juntoz] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos_finales
-    
 
 def motor_triathlon(url, limite, headers=None):
-    """Motor Triathlon V8: Paginador Estructural HTML Multi-Página de Alto Rendimiento.
-    (Modifica la URL dinámicamente para absorber las páginas 1, 2 y 3 por completo)"""
+    """Motor Triathlon V8: Paginador Multi-Página de Alto Rendimiento"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, urlunparse, parse_qs, urlencode, urljoin
     import re
-    import random
     import time
 
     productos_map = {}
@@ -1011,48 +919,24 @@ def motor_triathlon(url, limite, headers=None):
         }
 
     try:
-        # Desarmamos la URL original para poder manipular sus parámetros de consulta
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
 
-        # ⚡ BUCLE MAESTRO: Vamos a escanear de la página 1 a la 3 de forma consecutiva
         for page_num in range(1, 4):
-            safe_log(f"📡 [Triathlon] Descargando de forma síncrona la Página {page_num} del catálogo...", "info")
-            
-            # Forzamos e inyectamos de forma segura el parámetro de página en la URL
             query_params['page'] = [str(page_num)]
             new_query = urlencode(query_params, doseq=True)
-            page_url = urlunparse((
-                parsed_url.scheme, 
-                parsed_url.netloc, 
-                parsed_url.path, 
-                parsed_url.params, 
-                new_query, 
-                parsed_url.fragment
-            ))
+            page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            # Realizamos la petición física de la página actual
             resp = requests.get(page_url, headers=headers, timeout=15, verify=False)
-            if resp.status_code != 200:
-                safe_log(f"⚠️ [Triathlon] Fin de catálogo o bloqueo en página {page_num} (HTTP {resp.status_code}).", "warning")
-                break
+            if resp.status_code != 200: break
 
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # Localizamos las tarjetas modulares de VTEX IO
-            tarjetas = (
-                soup.select('[class*="product-summary-"]') or 
-                soup.select('[class*="vtex-product-summary-"]') or 
-                soup.select('[class*="summaryContainer"]')
-            )
+            tarjetas = soup.select('[class*="product-summary-"]') or soup.select('[class*="vtex-product-summary-"]') or soup.select('[class*="summaryContainer"]')
 
-            # Si una página viene completamente vacía de estructuras, rompemos el bucle
-            if not tarjetas:
-                break
+            if not tarjetas: break
                 
             for t in tarjetas:
                 try:
-                    # Extraer el enlace real de destino de la zapatilla
                     link_final = ""
                     for a in t.find_all('a', href=True):
                         href = a['href'].lower()
@@ -1060,10 +944,8 @@ def motor_triathlon(url, limite, headers=None):
                             link_final = urljoin("https://www.triathlon.com.pe", a['href'])
                             break
                     
-                    if not link_final: 
-                        continue
+                    if not link_final: continue
 
-                    # 1. Extracción del Nombre con selectores VTEX IO
                     nombre_el = t.select_one('[class*="productName"]') or t.select_one('[class*="brandName"]') or t.select_one('[class*="productBrand"]')
                     raw_nombre = nombre_el.text.strip() if nombre_el else ""
                     
@@ -1071,49 +953,37 @@ def motor_triathlon(url, limite, headers=None):
                         textos_internos = [a.get_text().strip() for a in t.find_all('a') if len(a.get_text().strip()) > 5]
                         raw_nombre = max(textos_internos, key=len) if textos_internos else "ZAPATILLA SPORT"
 
-                    # Sanitización quirúrgica: Elimina porcentajes y residuos de precios del título
                     nombre_limpio = re.sub(r'-\d+%', '', raw_nombre)
                     nombre_limpio = re.sub(r'(?:S/\.?\s*)(\d[\d\.,]*)', '', nombre_limpio)
                     nombre_limpio = nombre_limpio.replace("Antes:", "").replace("Ahora:", "").strip().upper()
                     nombre_limpio = re.sub(r'\s+', ' ', nombre_limpio)
 
-                    if len(nombre_limpio) < 4: 
-                        continue
+                    if len(nombre_limpio) < 4: continue
 
-                    # 2. Extracción Criptográfica de Precios por Regex
                     texto_tarjeta = t.get_text()
                     textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
-                    if not textos_precios: 
-                        continue
+                    if not textos_precios: continue
                         
                     precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                    if not precios_num: 
-                        continue
+                    if not precios_num: continue
                         
-                    p_o = precios_num[0]  # Oferta
+                    p_o = precios_num[0]
                     p_r = precios_num[-1] if len(precios_num) > 1 else p_o
 
-                    # 3. Extracción de Imagen por srcset (Bypass de Lazy Loading)
                     img_el = t.find('img')
                     img_url = ""
                     if img_el:
                         srcset = img_el.get('srcset') or img_el.get('data-srcset')
                         if srcset:
                             urls_set = re.findall(r'(https?://\S+)', srcset)
-                            if urls_set: 
-                                img_url = urls_set[0].split('?')[0]
-                        if not img_url: 
-                            img_url = img_el.get('data-src') or img_el.get('src') or ""
+                            if urls_set: img_url = urls_set[0].split('?')[0]
+                        if not img_url: img_url = img_el.get('data-src') or img_el.get('src') or ""
 
-                    if img_url.startswith('//'): 
-                        img_url = 'https:' + img_url
-                    if 'data:image' in img_url.lower() or 'pixel' in img_url.lower(): 
-                        img_url = ""
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+                    if 'data:image' in img_url.lower() or 'pixel' in img_url.lower(): img_url = ""
 
-                    # 4. Verificación de Presupuesto e Inserción al Mapa
                     if 0 < p_o <= limite:
-                        if link_final in vistos_links: 
-                            continue
+                        if link_final in vistos_links: continue
                         vistos_links.add(link_final)
                         
                         productos_map[link_final] = {
@@ -1123,177 +993,24 @@ def motor_triathlon(url, limite, headers=None):
                             "link": link_final,
                             "img": img_url
                         }
-                except Exception: 
-                    continue
-            
-            # Una breve pausa de medio segundo entre páginas para mitigar sospechas del servidor
+                except Exception: continue
             time.sleep(0.5)
 
     except Exception as e:
-        safe_log(f"🛑 [Triathlon] Error crítico inesperado en paginación: {e}", "error")
+        safe_log(f"🛑 [Triathlon] Error crítico en paginación: {e}", "error")
 
     productos_finales = list(productos_map.values())
-
     if productos_finales:
-        safe_log(f"✅ [Triathlon] ¡Control total! Se consolidaron {len(productos_finales)} ofertas unificando las páginas del catálogo.", "success")
+        safe_log(f"✅ [Triathlon] ¡Éxito! Se consolidaron {len(productos_finales)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Triathlon] No se encontraron ofertas bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos_finales
 
 def motor_ripley(url, limite, headers=None):
-    """Motor Ripley V7: Bypass WAF mediante Suplantación de Googlebot (100% Gratuito y Directo)"""
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
-    import json
-    import re
-    import requests
-
-    productos_map = {}
-    vistos_links = set()
-
-    # 💡 LA CLAVE DEFINITIVA: WAFs como Cloudflare jamás bloquean al rastreador oficial de Google.
-    bot_headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "From": "googlebot(at)googlebot.com"
-    }
-
-    try:
-        safe_log(f"📡 [Ripley] Conectando directamente mediante bypass de rastreador oficial...", "info")
-        resp = requests.get(url, headers=bot_headers, timeout=20, verify=False)
-        
-        safe_log(f"📡 [Ripley] Servidor respondió: {resp.status_code} | HTML: {len(resp.text)} bytes", "info")
-        
-        if resp.status_code != 200 or len(resp.text) < 15000:
-            safe_log(f"🛑 [Ripley] Respuesta bloqueada o vacía (HTTP {resp.status_code}).", "error")
-            return []
-
-        soup = BeautifulSoup(resp.text, 'html.parser')
-
-        # =======================================================
-        # ⚡ MÉTODO 1: Extracción vía __NEXT_DATA__ (JSON Nativo del SSR)
-        # =======================================================
-        next_data_script = soup.find('script', id='__NEXT_DATA__')
-        if next_data_script and next_data_script.string:
-            try:
-                raw_json = json.loads(next_data_script.string)
-                page_props = raw_json.get('props', {}).get('pageProps', {})
-                products_list = (
-                    page_props.get('initialState', {}).get('products', []) or
-                    page_props.get('products', []) or
-                    page_props.get('initialState', {}).get('catalog', {}).get('products', [])
-                )
-
-                if products_list:
-                    safe_log(f"🔍 [Ripley JSON] Procesando {len(products_list)} productos del servidor...", "info")
-                    for p in products_list:
-                        try:
-                            nombre = p.get('name', '').strip().upper()
-                            link_rel = p.get('url', '') or p.get('singleProductUrl', '')
-                            if not link_rel: continue
-                            link_final = urljoin("https://simple.ripley.com.pe", link_rel)
-
-                            prices = p.get('prices', {})
-                            p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('listPrice') or 0)
-                            p_r = float(prices.get('listPrice') or p_o)
-
-                            img_url = p.get('thumbnailImage') or p.get('fullImage') or ""
-                            if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                            if 0 < p_o <= limite:
-                                if link_final in vistos_links: continue
-                                vistos_links.add(link_final)
-                                productos_map[link_final] = {
-                                    "nombre": f"Ripley - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": max(p_r, p_o),
-                                    "link": link_final,
-                                    "img": img_url
-                                }
-                        except Exception:
-                            continue
-
-                    if productos_map:
-                        safe_log(f"✅ [Ripley] ¡Bypass exitoso! Se indexaron {len(productos_map)} ofertas desde el JSON.", "success")
-                        return list(productos_map.values())
-            except Exception:
-                pass
-
-        # =======================================================
-        # 🛡️ MÉTODO 2: Analizador Estructural HTML (Fallback)
-        # =======================================================
-        enlaces = soup.find_all('a', href=True)
-        for a_el in enlaces:
-            try:
-                href = a_el['href']
-                if '/p/' not in href or any(x in href for x in ['/cart', '/checkout', '/account']):
-                    continue
-
-                link_final = urljoin("https://simple.ripley.com.pe", href)
-
-                contenedor = a_el.parent
-                container_text = ""
-                for _ in range(6):
-                    if not contenedor or contenedor.name in ['body', 'html']: break
-                    container_text = contenedor.get_text()
-                    if 'S/' in container_text or 'S/.' in container_text: break
-                    contenedor = contenedor.parent
-
-                if not contenedor: continue
-
-                nombre = a_el.get_text(separator=" ").strip().upper()
-                if len(nombre) < 5:
-                    t_elem = contenedor.find(['h2', 'h3', 'span', 'div'], class_=re.compile(r'name|title|details', re.I))
-                    if t_elem: nombre = t_elem.get_text().strip().upper()
-
-                if not nombre or len(nombre) < 5 or any(x in nombre for x in ['RIPLEY', 'INICIO', 'CATEGORIA']):
-                    continue
-
-                nombre = re.sub(r'\s+', ' ', nombre).replace("AGREGAR", "").strip()
-
-                textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', container_text)
-                if not textos_precios: continue
-
-                precios_num = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                if not precios_num: continue
-
-                p_o = precios_num[0]
-                p_r = precios_num[-1] if len(precios_num) > 1 else p_o
-
-                img_el = contenedor.find('img')
-                img_url = ""
-                if img_el:
-                    img_url = img_el.get('data-src') or img_el.get('src') or ""
-                if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                if 0 < p_o <= limite:
-                    if link_final in vistos_links: continue
-                    vistos_links.add(link_final)
-                    productos_map[link_final] = {
-                        "nombre": f"Ripley - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url
-                    }
-            except Exception:
-                continue
-
-    except Exception as e:
-        safe_log(f"🛑 [Ripley] Error crítico: {e}", "error")
-
-    productos_finales = list(productos_map.values())
-    if productos_finales:
-        safe_log(f"✅ [Ripley] ¡Bypass exitoso! Se indexaron {len(productos_finales)} ofertas de la tienda.", "success")
-    else:
-        safe_log(f"⚠️ [Ripley] No se encontraron ofertas bajo el límite de S/. {limite:.2f}.", "warning")
-
-    return productos_finales
-
-
-
+    """Motor Ripley: Pausado temporalmente por política WAF"""
+    safe_log("⏸️ [Ripley] Motor pausado temporalmente.", "caption")
+    return []
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -1326,11 +1043,8 @@ def motor_tradicional_general(url, limite, headers):
 # =======================================================
 def escanear_tienda(url, limite):
     headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
-    
-    # ⚡ LA LÍNEA DETECTADA: Volvemos a definir dominio para evitar el NameError
     dominio = urlparse(url).netloc.lower()
     
-    # Ruteo seguro y aislado por tienda (Tus motores perfectos siguen intactos)
     if "carsa.pe" in dominio: return motor_carsa(url, limite)
     elif "thn.pe" in dominio: return motor_thn(url, limite)
     elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
@@ -1347,12 +1061,16 @@ def escanear_tienda(url, limite):
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
-# SISTEMA DE PATRULLAJE CENTRAL (CON SISTEMA ANTI-SPAM)
+# SISTEMA DE PATRULLAJE CENTRAL
 # =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
-    try: res = supabase.table("radares").select("*").execute()
-    except Exception as e: return f"Fallo Supabase: {e}"
-    if not res or not res.data: return "Sin radares."
+    try: 
+        res = supabase.table("radares").select("*").execute()
+    except Exception as e: 
+        safe_log(f"🛑 Error de conexión con Supabase (Tabla radares): {e}", "error")
+        return f"Fallo Supabase: {e}"
+        
+    if not res or not res.data: return "Sin radares activos."
     
     total, alertas = 0, 0
     enviados = set()
@@ -1410,32 +1128,42 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
                 id_registro = f"{item['identificador']}-{id_limpio}"[:200]
                 precio_anterior = None
-                registro_existe = False
                 
+                # 1. Consulta del historial previo (para evaluar si el precio bajó)
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
                     if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
-                        registro_existe = True
-                except Exception: pass
+                except Exception as e_sel:
+                    safe_log(f"⚠️ Aviso al consultar historial ({id_registro[:25]}...): {e_sel}", "caption")
                 
-                datos_guardar = {"identificador": id_registro, "precio": p_v, "precio_regular": p_r, "link_producto": p['link'], "imagen_producto": p.get('img', ''), "fecha": fecha_hoy}
+                # 2. Estructura de datos para la base de datos
+                datos_guardar = {
+                    "identificador": id_registro, 
+                    "precio": p_v, 
+                    "precio_regular": p_r, 
+                    "link_producto": p['link'], 
+                    "imagen_producto": p.get('img', ''), 
+                    "fecha": fecha_hoy
+                }
+                
+                # 3. Guardado directo mediante UPSERT (actualiza si existe, inserta si es nuevo)
                 try:
-                    if registro_existe: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
-                    else: supabase.table("historial_precios").insert(datos_guardar).execute()
-                except Exception: pass
+                    supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
+                except Exception as e_up:
+                    safe_log(f"🛑 Error Supabase al guardar producto ({id_registro[:25]}...): {e_up}", "error")
                 
+                # 4. Evaluación de alertas para Telegram
                 debe_alertar = False
                 if precio_anterior is not None:
                     if p_v < precio_anterior: debe_alertar = True
-                else:
-                    debe_alertar = False
                 
                 if debe_alertar:
                     emoji = mapa_emojis.get(grupo, "🔥")
-                    msg_t = f"{emoji} <b>¡PRECIO BAJÓ EN VIVO!</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Precio de Lista Anterior:</b> S/. {precio_anterior:.2f}\n💰 <b>Precio de Oferta Nuevo:</b> S/. {p_v:.2f}\n📉 <b>Ahorraste respecto a ayer:</b> S/. {(precio_anterior - p_v):.2f}\n"
+                    msg_t = f"{emoji} <b>¡PRECIO BAJÓ EN VIVO!</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n📉 <b>Ahorro:</b> S/. {(precio_anterior - p_v):.2f}\n"
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): alertas += 1
-            except Exception: pass
+            except Exception as e_p:
+                safe_log(f"⚠️ Error al procesar ítem en patrulla: {e_p}", "caption")
                 
     if len(lista_html_streamlit) > 0:
         try:
