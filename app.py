@@ -4,7 +4,6 @@ import os
 import pandas as pd
 import requests
 from supabase import create_client, Client
-# 🛡️ CORRECCIÓN CRÍTICA: Importación al tope para romper el caché de Python de inmediato
 from scraper import revisar_ofertas
 
 st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
@@ -141,7 +140,8 @@ if menu == "📈 Ver Dashboard / Ofertas":
     
     lista_dashboard = []
     try:
-        res_h = supabase.table("historial_precios").select("*").order("id", desc=True).execute()
+        # Aumentamos el límite de consulta para garantizar que traiga los productos recién escaneados
+        res_h = supabase.table("historial_precios").select("*").order("id", desc=True).limit(3000).execute()
         if res_h.data:
             proc = set()
             for reg in res_h.data:
@@ -149,46 +149,52 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 precio_venta = float(raw_precio) if raw_precio is not None else 0.0
                 if precio_venta <= 0: continue
 
-                id_p = str(reg["identificador"]).strip()
-                if id_p.upper() in proc: continue
-                proc.add(id_p.upper())
+                id_p = str(reg["identificador"]).strip().upper()
+                if id_p in proc: continue
+                proc.add(id_p)
                 
                 parts = id_p.split("-")
                 tnd_txt = parts[0].upper()
-                cat_txt = parts[1].upper().strip()
                 
+                # Extrae el nombre del producto de forma segura
                 prd_txt = "N/A"
-                if len(parts) > 2: prd_txt = parts[2].replace("_", " ").title()
-                if len(parts) > 4: prd_txt = "-".join(parts[4:]).replace("_", " ").title()
+                if len(parts) > 4:
+                    prd_txt = "-".join(parts[4:]).replace("_", " ").title()
+                elif len(parts) > 2:
+                    prd_txt = parts[2].replace("_", " ").title()
                 
+                # Clasificación inteligente basada en todo el identificador
                 grupo = "OTROS"
-                if "ZAPATILLA" in cat_txt: grupo = "ZAPATILLAS"
-                elif "PERFUME" in cat_txt: grupo = "PERFUMES"
-                elif "MEDIAS" in cat_txt: grupo = "MEDIAS"
-                elif "POLOS" in cat_txt: grupo = "POLOS"
-                elif "CASACAS" in cat_txt: grupo = "CASACAS"
-                elif "SHORTS" in cat_txt: grupo = "SHORTS"
-                elif "BUZOS" in cat_txt: grupo = "BUZOS"
-                elif "AUDIFONOS" in cat_txt: grupo = "AUDIFONOS"
-                elif "TV" in cat_txt: grupo = "TV"
-                elif "PARLANTE" in cat_txt: grupo = "PARLANTE"
-                elif "BARRA" in cat_txt: grupo = "BARRA DE SONIDO"
-                elif "CELULAR" in cat_txt: grupo = "CELULAR"
-                elif "PC" in cat_txt: grupo = "PC"
-                elif "REFRIGERADORA" in cat_txt: grupo = "REFRIGERADORA"
-                elif "LAVADORA" in cat_txt: grupo = "LAVADORA"
-                elif "ELECTRO" in cat_txt: grupo = "ELECTRODOMESTICOS"
-                elif "CAMA" in cat_txt: grupo = "CAMA"
+                if "ZAPATILLA" in id_p or "CALZADO" in id_p: grupo = "ZAPATILLAS"
+                elif "PERFUME" in id_p: grupo = "PERFUMES"
+                elif "MEDIAS" in id_p: grupo = "MEDIAS"
+                elif "POLO" in id_p: grupo = "POLOS"
+                elif "CASACA" in id_p or "POLERA" in id_p: grupo = "CASACAS"
+                elif "SHORT" in id_p: grupo = "SHORTS"
+                elif "BUZO" in id_p or "PANTALON" in id_p: grupo = "BUZOS"
+                elif "AUDIFONO" in id_p: grupo = "AUDIFONOS"
+                elif "TV" in id_p or "SMART" in id_p: grupo = "TV"
+                elif "PARLANTE" in id_p or "SPEAKER" in id_p: grupo = "PARLANTE"
+                elif "BARRA" in id_p or "SOUNDBAR" in id_p: grupo = "BARRA DE SONIDO"
+                elif "CELULAR" in id_p or "PHONE" in id_p: grupo = "CELULAR"
+                elif "PC" in id_p or "LAPTOP" in id_p: grupo = "PC"
+                elif "REFRIGERADORA" in id_p or "REFRIG" in id_p: grupo = "REFRIGERADORA"
+                elif "LAVADORA" in id_p or "LAVADO" in id_p: grupo = "LAVADORA"
+                elif "ELECTRO" in id_p: grupo = "ELECTRODOMESTICOS"
+                elif "CAMA" in id_p or "COLCHON" in id_p: grupo = "CAMA"
 
                 f_activo = st.session_state.filtro_activo
                 if f_activo == "TODOS" or f_activo == grupo:
                     raw_regular = reg.get('precio_regular')
                     precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
                     lista_dashboard.append({
-                        "Tienda": tnd_txt, "Nombre del Producto": prd_txt, 
+                        "Tienda": tnd_txt, 
+                        "Nombre del Producto": prd_txt, 
                         "Imagen del Producto": reg.get('imagen_producto', ''),
-                        "Precio Real": precio_regular, "Precio de Venta": precio_venta, 
-                        "Descuento": precio_regular - precio_venta, "Link": reg.get('link_producto', '#')
+                        "Precio Real": precio_regular, 
+                        "Precio de Venta": precio_venta, 
+                        "Descuento": precio_regular - precio_venta, 
+                        "Link": reg.get('link_producto', '#')
                     })
     except Exception as e: st.warning(f"Sincronizando: {e}")
 
@@ -284,6 +290,5 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     if st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True):
         target = st.session_state.filtro_activo
         st.toast(f"🕵️‍♂️ Buscando {target}...")
-        # 🛡️ AL ESTAR LA IMPORTACIÓN GLOBAL ARRIBA, ESTA LLAMADA TIENE CERO LATENCIA DE CACHÉ
         msg = revisar_ofertas(target)
         st.success(f"📊 Resumen del patrullaje: {msg}")
