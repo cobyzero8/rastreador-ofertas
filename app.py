@@ -140,7 +140,47 @@ if menu == "📈 Ver Dashboard / Ofertas":
     
     lista_dashboard = []
     try:
-        res_h = supabase.table("historial_precios").select("*").order("id", desc=True).limit(3000).execute()
+        f_activo = st.session_state.filtro_activo
+        query = supabase.table("historial_precios").select("*").order("fecha", desc=True)
+
+        # ⚡ BÚSQUEDA DIRECTA EN TODA LA BD (Bypassa el límite de 3000 filas)
+        if f_activo == "PERFUMES":
+            query = query.ilike("identificador", "%PERFUME%")
+        elif f_activo == "ZAPATILLAS":
+            query = query.or_("identificador.ilike.%ZAPATILLA%,identificador.ilike.%CALZADO%")
+        elif f_activo == "POLOS":
+            query = query.ilike("identificador", "%POLO%")
+        elif f_activo == "CASACAS":
+            query = query.or_("identificador.ilike.%CASACA%,identificador.ilike.%POLERA%")
+        elif f_activo == "SHORTS":
+            query = query.ilike("identificador", "%SHORT%")
+        elif f_activo == "BUZOS":
+            query = query.or_("identificador.ilike.%BUZO%,identificador.ilike.%PANTALON%")
+        elif f_activo == "MEDIAS":
+            query = query.ilike("identificador", "%MEDIAS%")
+        elif f_activo == "AUDIFONOS":
+            query = query.ilike("identificador", "%AUDIFONO%")
+        elif f_activo == "TV":
+            query = query.or_("identificador.ilike.%TV%,identificador.ilike.%SMART%")
+        elif f_activo == "PARLANTE":
+            query = query.or_("identificador.ilike.%PARLANTE%,identificador.ilike.%SPEAKER%")
+        elif f_activo == "BARRA DE SONIDO":
+            query = query.or_("identificador.ilike.%BARRA%,identificador.ilike.%SOUNDBAR%")
+        elif f_activo == "CELULAR":
+            query = query.or_("identificador.ilike.%CELULAR%,identificador.ilike.%PHONE%")
+        elif f_activo == "PC":
+            query = query.or_("identificador.ilike.%PC%,identificador.ilike.%LAPTOP%")
+        elif f_activo == "REFRIGERADORA":
+            query = query.or_("identificador.ilike.%REFRIGERADORA%,identificador.ilike.%REFRIG%")
+        elif f_activo == "LAVADORA":
+            query = query.or_("identificador.ilike.%LAVADORA%,identificador.ilike.%LAVADO%")
+        elif f_activo == "ELECTRODOMESTICOS":
+            query = query.ilike("identificador", "%ELECTRO%")
+        elif f_activo == "CAMA":
+            query = query.or_("identificador.ilike.%CAMA%,identificador.ilike.%COLCHON%")
+
+        res_h = query.limit(1000).execute()
+
         if res_h.data:
             proc = set()
             for reg in res_h.data:
@@ -161,38 +201,17 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 elif len(parts) > 2:
                     prd_txt = parts[2].replace("_", " ").title()
                 
-                grupo = "OTROS"
-                if "ZAPATILLA" in id_p or "CALZADO" in id_p: grupo = "ZAPATILLAS"
-                elif "PERFUME" in id_p: grupo = "PERFUMES"
-                elif "MEDIAS" in id_p: grupo = "MEDIAS"
-                elif "POLO" in id_p: grupo = "POLOS"
-                elif "CASACA" in id_p or "POLERA" in id_p: grupo = "CASACAS"
-                elif "SHORT" in id_p: grupo = "SHORTS"
-                elif "BUZO" in id_p or "PANTALON" in id_p: grupo = "BUZOS"
-                elif "AUDIFONO" in id_p: grupo = "AUDIFONOS"
-                elif "TV" in id_p or "SMART" in id_p: grupo = "TV"
-                elif "PARLANTE" in id_p or "SPEAKER" in id_p: grupo = "PARLANTE"
-                elif "BARRA" in id_p or "SOUNDBAR" in id_p: grupo = "BARRA DE SONIDO"
-                elif "CELULAR" in id_p or "PHONE" in id_p: grupo = "CELULAR"
-                elif "PC" in id_p or "LAPTOP" in id_p: grupo = "PC"
-                elif "REFRIGERADORA" in id_p or "REFRIG" in id_p: grupo = "REFRIGERADORA"
-                elif "LAVADORA" in id_p or "LAVADO" in id_p: grupo = "LAVADORA"
-                elif "ELECTRO" in id_p: grupo = "ELECTRODOMESTICOS"
-                elif "CAMA" in id_p or "COLCHON" in id_p: grupo = "CAMA"
-
-                f_activo = st.session_state.filtro_activo
-                if f_activo == "TODOS" or f_activo == grupo:
-                    raw_regular = reg.get('precio_regular')
-                    precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
-                    lista_dashboard.append({
-                        "Tienda": tnd_txt, 
-                        "Nombre del Producto": prd_txt, 
-                        "Imagen del Producto": reg.get('imagen_producto', ''),
-                        "Precio Real": precio_regular, 
-                        "Precio de Venta": precio_venta, 
-                        "Descuento": precio_regular - precio_venta, 
-                        "Link": reg.get('link_producto', '#')
-                    })
+                raw_regular = reg.get('precio_regular')
+                precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
+                lista_dashboard.append({
+                    "Tienda": tnd_txt, 
+                    "Nombre del Producto": prd_txt, 
+                    "Imagen del Producto": reg.get('imagen_producto', ''),
+                    "Precio Real": precio_regular, 
+                    "Precio de Venta": precio_venta, 
+                    "Descuento": precio_regular - precio_venta, 
+                    "Link": reg.get('link_producto', '#')
+                })
     except Exception as e: st.warning(f"Sincronizando: {e}")
 
     if lista_dashboard: 
@@ -255,13 +274,9 @@ elif menu == "🛠️ Configurar Radares y URLs":
 
     st.write("---")
     
-    # =======================================================
-    # 🏬 RENDERIZADO AGRUPADO POR TIENDAS (EXPANSORES)
-    # =======================================================
     try:
         res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
         if res_radares.data:
-            # 1. Agrupar los radares por nombre de tienda
             radares_por_tienda = {}
             for item in res_radares.data:
                 parts = item["identificador"].split("-")
@@ -270,7 +285,6 @@ elif menu == "🛠️ Configurar Radares y URLs":
                     radares_por_tienda[tienda_nombre] = []
                 radares_por_tienda[tienda_nombre].append((item, parts))
 
-            # 2. Generar un expander para cada tienda en orden alfabético
             for tienda_nombre in sorted(radares_por_tienda.keys()):
                 items_tienda = radares_por_tienda[tienda_nombre]
                 cant_radares = len(items_tienda)
