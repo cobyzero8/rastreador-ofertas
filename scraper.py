@@ -34,7 +34,7 @@ except Exception:
 if SUPABASE_URL and SUPABASE_KEY: 
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else: 
-    raise ValueError("Error crítico: Falta SUPABASE_KEY en la configuración.")
+    raise ValueError("Error crítico: Falta SUPABASE_KEY.")
 
 LISTA_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -146,7 +146,6 @@ def extraer_numeros_dict(d, valores_aux):
 # =======================================================
 
 def motor_thn(url, limite):
-    """Motor aislado exclusivo para THN.pe (The Athlete's Foot)"""
     productos = []
     try:
         headers = {
@@ -384,7 +383,6 @@ def motor_falabella(url, limite, headers):
     return productos
 
 def motor_adidas(url, limite):
-    """(Motor estacionado temporalmente)"""
     return []
 
 def motor_platanitos(url, limite):
@@ -439,7 +437,6 @@ def motor_platanitos(url, limite):
     return productos
 
 def motor_hiraoka(url, limite):
-    """Motor HIRAOKA Definitivo: Extractor especializado para Magento 2 (Infracommerce)"""
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -499,7 +496,6 @@ def motor_hiraoka(url, limite):
     return productos
 
 def motor_carsa(url, limite):
-    """Motor CARSA de Alta Fidelidad: Emulación de navegador real"""
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -536,7 +532,6 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    """Motor OECHSLE Híbrido V3: Preservación de Query String nativa"""
     import json
     import re
     import requests
@@ -683,7 +678,6 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    """Motor Plaza Vea V3.1: Extraction dinámica con soporte para filtros múltiples"""
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
 
@@ -777,7 +771,6 @@ def motor_plazavea(url, limite, headers=None):
     return productos
 
 def motor_juntoz(url, limite, headers=None):
-    """Motor Juntoz V4: Extractor semántico e independiente de clases CSS"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
@@ -900,7 +893,6 @@ def motor_juntoz(url, limite, headers=None):
     return productos_finales
 
 def motor_triathlon(url, limite, headers=None):
-    """Motor Triathlon V8: Paginador Multi-Página de Alto Rendimiento"""
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, urlunparse, parse_qs, urlencode, urljoin
@@ -1008,7 +1000,6 @@ def motor_triathlon(url, limite, headers=None):
     return productos_finales
 
 def motor_ripley(url, limite, headers=None):
-    """Motor Ripley: Pausado temporalmente por política WAF"""
     safe_log("⏸️ [Ripley] Motor pausado temporalmente.", "caption")
     return []
 
@@ -1157,18 +1148,16 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 emoji = mapa_emojis.get(grupo, "🔥")
 
                 # =======================================================
-                # ⚡ LÓGICA DE ALERTAS Y REGISTRO MAGNÉTICO
+                # ⚡ LÓGICA DE ALERTAS Y REGISTRO
                 # =======================================================
 
                 # CASO 1: ES UN PRODUCTO COMPLETAMENTE NUEVO
                 if precio_anterior is None:
-                    # Se inserta por primera vez en la BD
                     try:
                         supabase.table("historial_precios").insert(datos_guardar).execute()
                     except Exception as e_in:
                         safe_log(f"🛑 Error al registrar producto nuevo: {e_in}", "error")
 
-                    # Dispara Alerta de Nuevo Producto en Telegram
                     msg_t = (
                         f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
                         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1178,16 +1167,15 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     )
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
+                        time.sleep(0.3)
 
                 # CASO 2: EL PRODUCTO YA EXISTÍA Y BAJÓ DE PRECIO
                 elif p_v < precio_anterior:
-                    # Se actualiza en la BD con el nuevo precio más bajo
                     try:
                         supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
                     except Exception as e_up:
                         safe_log(f"🛑 Error al actualizar precio más bajo: {e_up}", "error")
 
-                    # Dispara Alerta de Bajada de Precio en Telegram
                     ahorro = precio_anterior - p_v
                     msg_t = (
                         f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
@@ -1200,10 +1188,10 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     )
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
+                        time.sleep(0.3)
 
                 # CASO 3: EL PRECIO SUBIÓ O SE MANTUVO IGUAL
                 else:
-                    # Ignoramos completamente: No actualizamos la BD y NO enviamos Telegram
                     pass
 
             except Exception as e_p:
