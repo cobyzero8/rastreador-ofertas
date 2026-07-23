@@ -12,6 +12,8 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ⚡ Optimización de caché (TTL = 5 min) para reducir tráfico Egress
+@st.cache_data(ttl=300)
 def obtener_tiendas_dinamicas():
     tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
     try:
@@ -141,9 +143,10 @@ if menu == "📈 Ver Dashboard / Ofertas":
     lista_dashboard = []
     try:
         f_activo = st.session_state.filtro_activo
-        query = supabase.table("historial_precios").select("*").order("fecha", desc=True)
+        # Selección acotada de columnas para ahorrar ancho de banda
+        query = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
 
-        # ⚡ BÚSQUEDA DIRECTA EN TODA LA BD (Bypassa el límite de 3000 filas)
+        # Filtro de búsqueda directo en la base de datos
         if f_activo == "PERFUMES":
             query = query.ilike("identificador", "%PERFUME%")
         elif f_activo == "ZAPATILLAS":
@@ -274,6 +277,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
 
     st.write("---")
     
+    # 🏬 RENDERIZADO AGRUPADO POR TIENDAS (EXPANSORES)
     try:
         res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
         if res_radares.data:
