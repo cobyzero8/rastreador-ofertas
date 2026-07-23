@@ -1078,12 +1078,19 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     zona_peru = timezone(timedelta(hours=-5))
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
-    mapa_emojis = {"PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", "TV": "📺", "PARLANTE": "🔊", "BARRA DE SONIDO": "🎵", "CELULAR": "📱", "PC": "💻", "REFRIGERADORA": "❄️", "LAVADORA": "🧺", "ELECTRODOMESTICOS": "🔌", "CAMA": "🛏️", "OTROS": "📦"}
+    mapa_emojis = {
+        "PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", 
+        "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", 
+        "TV": "📺", "PARLANTE": "🔊", "BARRA DE SONIDO": "🎵", "CELULAR": "📱", 
+        "PC": "💻", "REFRIGERADORA": "❄️", "LAVADORA": "🧺", "ELECTRODOMESTICOS": "🔌", 
+        "CAMA": "🛏️", "OTROS": "📦"
+    }
     
     for item in res.data:
         ident = item['identificador'].upper()
         url_low = item['url'].lower()
         
+        # Categorización del Radar
         if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
         elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low: grupo = "ZAPATILLAS"
@@ -1113,8 +1120,9 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             try:
                 n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
                 
+                # Filtro de palabras prohibidas para categoría Audio/Hogar
                 if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
-                    palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA", "SABANAS", "ALMOHADAS"]
+                    palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA"]
                     if any(bad in n_u for bad in palabras_prohibidas): continue
                 
                 if n_u in enviados: continue
@@ -1127,17 +1135,16 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 
                 id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
                 id_registro = f"{item['identificador']}-{id_limpio}"[:200]
-                precio_anterior = None
                 
-                # 1. Consulta del historial previo (para evaluar si el precio bajó)
+                # 1. Consultar si el producto ya existe en la Base de Datos
+                precio_anterior = None
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
                     if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
                 except Exception as e_sel:
-                    safe_log(f"⚠️ Aviso al consultar historial ({id_registro[:25]}...): {e_sel}", "caption")
+                    safe_log(f"⚠️ Error al consultar historial ({id_registro[:25]}...): {e_sel}", "caption")
                 
-                # 2. Estructura de datos para la base de datos
                 datos_guardar = {
                     "identificador": id_registro, 
                     "precio": p_v, 
@@ -1147,21 +1154,58 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     "fecha": fecha_hoy
                 }
                 
-                # 3. Guardado directo mediante UPSERT (actualiza si existe, inserta si es nuevo)
-                try:
-                    supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
-                except Exception as e_up:
-                    safe_log(f"🛑 Error Supabase al guardar producto ({id_registro[:25]}...): {e_up}", "error")
-                
-                # 4. Evaluación de alertas para Telegram
-                debe_alertar = False
-                if precio_anterior is not None:
-                    if p_v < precio_anterior: debe_alertar = True
-                
-                if debe_alertar:
-                    emoji = mapa_emojis.get(grupo, "🔥")
-                    msg_t = f"{emoji} <b>¡PRECIO BAJÓ EN VIVO!</b> {emoji}\n━━━━━━━━━━━━━━━━━━━━━\n\n📦 <b>Producto:</b> <code>{p['nombre']}</code>\n🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n📉 <b>Ahorro:</b> S/. {(precio_anterior - p_v):.2f}\n"
-                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): alertas += 1
+                emoji = mapa_emojis.get(grupo, "🔥")
+
+                # =======================================================
+                # ⚡ LÓGICA DE ALERTAS Y REGISTRO MAGNÉTICO
+                # =======================================================
+
+                # CASO 1: ES UN PRODUCTO COMPLETAMENTE NUEVO
+                if precio_anterior is None:
+                    # Se inserta por primera vez en la BD
+                    try:
+                        supabase.table("historial_precios").insert(datos_guardar).execute()
+                    except Exception as e_in:
+                        safe_log(f"🛑 Error al registrar producto nuevo: {e_in}", "error")
+
+                    # Dispara Alerta de Nuevo Producto en Telegram
+                    msg_t = (
+                        f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                        f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
+                    )
+                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                        alertas += 1
+
+                # CASO 2: EL PRODUCTO YA EXISTÍA Y BAJÓ DE PRECIO
+                elif p_v < precio_anterior:
+                    # Se actualiza en la BD con el nuevo precio más bajo
+                    try:
+                        supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
+                    except Exception as e_up:
+                        safe_log(f"🛑 Error al actualizar precio más bajo: {e_up}", "error")
+
+                    # Dispara Alerta de Bajada de Precio en Telegram
+                    ahorro = precio_anterior - p_v
+                    msg_t = (
+                        f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                        f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
+                        f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
+                        f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
+                    )
+                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                        alertas += 1
+
+                # CASO 3: EL PRECIO SUBIÓ O SE MANTUVO IGUAL
+                else:
+                    # Ignoramos completamente: No actualizamos la BD y NO enviamos Telegram
+                    pass
+
             except Exception as e_p:
                 safe_log(f"⚠️ Error al procesar ítem en patrulla: {e_p}", "caption")
                 
