@@ -140,7 +140,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
     
     lista_dashboard = []
     try:
-        # Aumentamos el límite de consulta para garantizar que traiga los productos recién escaneados
         res_h = supabase.table("historial_precios").select("*").order("id", desc=True).limit(3000).execute()
         if res_h.data:
             proc = set()
@@ -156,14 +155,12 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 parts = id_p.split("-")
                 tnd_txt = parts[0].upper()
                 
-                # Extrae el nombre del producto de forma segura
                 prd_txt = "N/A"
                 if len(parts) > 4:
                     prd_txt = "-".join(parts[4:]).replace("_", " ").title()
                 elif len(parts) > 2:
                     prd_txt = parts[2].replace("_", " ").title()
                 
-                # Clasificación inteligente basada en todo el identificador
                 grupo = "OTROS"
                 if "ZAPATILLA" in id_p or "CALZADO" in id_p: grupo = "ZAPATILLAS"
                 elif "PERFUME" in id_p: grupo = "PERFUMES"
@@ -257,30 +254,48 @@ elif menu == "🛠️ Configurar Radares y URLs":
             except Exception as e: st.error(f"Error: {e}")
 
     st.write("---")
+    
+    # =======================================================
+    # 🏬 RENDERIZADO AGRUPADO POR TIENDAS (EXPANSORES)
+    # =======================================================
     try:
         res_radares = supabase.table("radares").select("*").order("id", desc=True).execute()
         if res_radares.data:
-            for index, item in enumerate(res_radares.data):
+            # 1. Agrupar los radares por nombre de tienda
+            radares_por_tienda = {}
+            for item in res_radares.data:
                 parts = item["identificador"].split("-")
-                with st.container(border=True):
-                    col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
-                    with col_info:
-                        st.markdown(f"**{index + 1}. 🌐 [{parts[0]}]** | #{parts[1].replace('_', ' ')} | Etiqueta: `{parts[2] if len(parts)>2 else 'N/A'}` | **Tope: S/. {item['precio_max']:.2f}**")
-                        st.caption(f"🔗 **URL:** {item['url']}")
-                    with col_mod:
-                        if st.button("📝 Modificar", key=f"m_{item['id']}", use_container_width=True):
-                            st.session_state.mod_id = item["id"]
-                            st.session_state.mod_tienda = parts[0]
-                            st.session_state.mod_cat = parts[1].replace("_", " ").title()
-                            st.session_state.mod_nombre = parts[2] if len(parts) > 2 else ""
-                            st.session_state.mod_talla = parts[3] if len(parts) > 3 else "Todas"
-                            st.session_state.mod_url = item["url"]
-                            st.session_state.mod_precio = item["precio_max"]
-                            st.rerun()
-                    with col_del:
-                        if st.button("🗑️ Eliminar", key=f"d_{item['id']}", use_container_width=True):
-                            supabase.table("radares").delete().eq("id", item["id"]).execute()
-                            st.rerun()
+                tienda_nombre = parts[0].upper().strip() if parts[0] else "OTRAS"
+                if tienda_nombre not in radares_por_tienda:
+                    radares_por_tienda[tienda_nombre] = []
+                radares_por_tienda[tienda_nombre].append((item, parts))
+
+            # 2. Generar un expander para cada tienda en orden alfabético
+            for tienda_nombre in sorted(radares_por_tienda.keys()):
+                items_tienda = radares_por_tienda[tienda_nombre]
+                cant_radares = len(items_tienda)
+                
+                with st.expander(f"🏪 **{tienda_nombre}** ({cant_radares} radar{'es' if cant_radares > 1 else ''} activo{'s' if cant_radares > 1 else ''})", expanded=False):
+                    for index, (item, parts) in enumerate(items_tienda):
+                        with st.container(border=True):
+                            col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
+                            with col_info:
+                                st.markdown(f"**{index + 1}. 🌐 [{parts[0]}]** | #{parts[1].replace('_', ' ')} | Etiqueta: `{parts[2] if len(parts)>2 else 'N/A'}` | **Tope: S/. {item['precio_max']:.2f}**")
+                                st.caption(f"🔗 **URL:** {item['url']}")
+                            with col_mod:
+                                if st.button("📝 Modificar", key=f"m_{item['id']}", use_container_width=True):
+                                    st.session_state.mod_id = item["id"]
+                                    st.session_state.mod_tienda = parts[0]
+                                    st.session_state.mod_cat = parts[1].replace("_", " ").title()
+                                    st.session_state.mod_nombre = parts[2] if len(parts) > 2 else ""
+                                    st.session_state.mod_talla = parts[3] if len(parts) > 3 else "Todas"
+                                    st.session_state.mod_url = item["url"]
+                                    st.session_state.mod_precio = item["precio_max"]
+                                    st.rerun()
+                            with col_del:
+                                if st.button("🗑️ Eliminar", key=f"d_{item['id']}", use_container_width=True):
+                                    supabase.table("radares").delete().eq("id", item["id"]).execute()
+                                    st.rerun()
     except Exception as e: st.error(f"Error Supabase: {e}")
 
 elif menu == "💥 Forzar Escaneo Intensivo":
