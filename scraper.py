@@ -1003,13 +1003,13 @@ def motor_ripley(url, limite, headers=None):
     safe_log("⏸️ [Ripley] Motor pausado temporalmente.", "caption")
     return []
 
+
+
 def motor_footloose(url, limite):
     import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, parse_qs, urljoin, unquote
+    from urllib.parse import urlparse, parse_qs, urljoin
     import re
     import random
-    import json
 
     productos_map = {}
     headers = {
@@ -1023,116 +1023,84 @@ def motor_footloose(url, limite):
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
         
-        # 🎯 Extracción quirúrgica de la ruta VTEX IO completa desde la URL
-        search_path = parsed_url.path.rstrip('/')
+        # 1. Extraer la ruta raw de la consulta
+        raw_path = parsed_url.path.rstrip('/')
         if 'query' in query_params:
             q_val = query_params['query'][0]
             if q_val.startswith('/'):
-                search_path = q_val.rstrip('/')
+                raw_path = q_val.rstrip('/')
 
-        if not search_path.startswith('/'):
-            search_path = '/' + search_path
+        # 2. Sanitizar segmentos descartando tallas numéricas que rompen VTEX (ej. "9-5")
+        segmentos = [s for s in raw_path.split('/') if s and not re.match(r'^\d+[\-_.]\d+$', s)]
+        path_limpio = '/' + '/'.join(segmentos) if segmentos else "/calzados"
+        path_base = '/' + '/'.join(segmentos[:2]) if len(segmentos) >= 2 else path_limpio
 
-        api_url = f"https://www.footloose.pe/api/catalog_system/pub/products/search{search_path}"
-        
-        params = {
-            "O": query_params.get("order", ["OrderByPriceASC"])[0],
-            "_from": "0",
-            "_to": "49"
-        }
+        # 3. Construcción del plan de peticiones secuenciales
+        urls_a_probar = []
+
+        # Plan A: Path limpio omitiendo mapas de talla incompatibles
         if "map" in query_params:
-            params["map"] = query_params["map"][0]
+            maps = query_params["map"][0].split(',')
+            maps_validos = [m for m in maps if m in ['c', 'category-1', 'category-2', 'category-3', 'brand', 'b']]
+            if maps_validos and len(maps_validos) == len(segmentos):
+                urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49", "map": ",".join(maps_validos)}))
 
-        safe_log(f"📡 [Footloose API] Consultando catálogo VTEX: `{search_path}`...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        # Plan B: Path limpio directo sin parámetro map
+        urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
+        
+        # Plan C: Desescalado a categoría raíz (/calzados/hombres)
+        if path_base != path_limpio:
+            urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_base}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
 
-        if resp.status_code in [200, 206]:
-            data = resp.json()
-            if isinstance(data, list) and len(data) > 0:
-                safe_log(f"🔍 [Footloose API] ¡Éxito! Se procesaron {len(data)} modelos desde la API.", "info")
-                for p in data:
-                    try:
-                        nombre_prod = p.get("productName", "").strip().upper()
-                        link_rel = p.get("link", "")
-                        link_final = urljoin("https://www.footloose.pe", link_rel) if link_rel else url
+        safe_log(f"📡 [Footloose API] Iniciando escaneo multinivel sobre `{path_limpio}`...", "info")
+
+        # 4. Ejecución del escaneo con fallback automático
+        for api_endpoint, params in urls_a_probar:
+            try:
+                resp = requests.get(api_endpoint, headers=headers, params=params, timeout=12, verify=False)
+                if resp.status_code in [200, 206]:
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        safe_log(f"🔍 [Footloose API] ¡Respuesta recibida! {len(data)} ítems evaluados.", "info")
+                        for p in data:
+                            try:
+                                nombre_prod = p.get("productName", "").strip().upper()
+                                link_rel = p.get("link", "")
+                                link_final = urljoin("https://www.footloose.pe", link_rel) if link_rel else url
+                                
+                                items = p.get("items", [])
+                                if not items: continue
+                                
+                                first_item = items[0]
+                                images = first_item.get("images", [])
+                                img_final = images[0].get("imageUrl", "") if images else ""
+                                if img_final.startswith('//'): img_final = 'https:' + img_final
+                                
+                                sellers = first_item.get("sellers", [])
+                                if not sellers: continue
+                                    
+                                offer = sellers[0].get("commertialOffer", {})
+                                p_o = float(offer.get("Price", 0.0))
+                                p_r = float(offer.get("ListPrice", p_o))
+                                
+                                if 0 < p_o <= limite:
+                                    productos_map[link_final] = {
+                                        "nombre": f"FOOTLOOSE - {nombre_prod}",
+                                        "precio": p_o,
+                                        "precio_regular": max(p_r, p_o),
+                                        "link": link_final,
+                                        "img": img_final
+                                    }
+                            except Exception: continue
                         
-                        items = p.get("items", [])
-                        if not items: continue
-                        
-                        first_item = items[0]
-                        images = first_item.get("images", [])
-                        img_final = images[0].get("imageUrl", "") if images else ""
-                        if img_final.startswith('//'): img_final = 'https:' + img_final
-                        
-                        sellers = first_item.get("sellers", [])
-                        if not sellers: continue
-                            
-                        offer = sellers[0].get("commertialOffer", {})
-                        p_o = float(offer.get("Price", 0.0))
-                        p_r = float(offer.get("ListPrice", p_o))
-                        
-                        if 0 < p_o <= limite:
-                            productos_map[link_final] = {
-                                "nombre": f"FOOTLOOSE - {nombre_prod}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_final
-                            }
-                    except Exception: continue
+                        # Si obtuvimos resultados dentro del rango de precio, rompemos el ciclo
+                        if len(productos_map) > 0:
+                            break
+            except Exception:
+                continue
 
     except Exception as e:
-        safe_log(f"⚠️ [Footloose API] Excepción en API VTEX: {e}", "warning")
-
-    # Fallback por JSON-LD en caso de contingencia HTML
-    if not productos_map:
-        try:
-            safe_log("🛡️ [Footloose HTML] Escaneando estructura de emergencia...", "info")
-            html_headers = headers.copy()
-            html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
-            
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                for script in soup.find_all('script', type='application/ld+json'):
-                    try:
-                        if not script.string: continue
-                        json_data = json.loads(script.string)
-                        
-                        items = []
-                        if isinstance(json_data, dict) and json_data.get('@type') == 'ItemList':
-                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
-                        elif isinstance(json_data, list):
-                            items = json_data
-                        elif isinstance(json_data, dict) and json_data.get('@type') == 'Product':
-                            items = [json_data]
-                            
-                        for item in items:
-                            if not isinstance(item, dict): continue
-                            nombre = str(item.get('name', '')).strip().upper()
-                            link_f = urljoin("https://www.footloose.pe", item.get('url', ''))
-                            
-                            offers = item.get('offers', {})
-                            p_o = 0.0
-                            if isinstance(offers, dict): p_o = float(offers.get('price', 0.0))
-                            elif isinstance(offers, list) and offers: p_o = float(offers[0].get('price', 0.0))
-                            
-                            img_f = item.get('image', '')
-                            if isinstance(img_f, list) and img_f: img_f = img_f[0]
-                            if str(img_f).startswith('//'): img_f = 'https:' + str(img_f)
-                            
-                            if 0 < p_o <= limite and nombre and link_f:
-                                productos_map[link_f] = {
-                                    "nombre": f"FOOTLOOSE - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": p_o,
-                                    "link": link_f,
-                                    "img": img_f
-                                }
-                    except Exception: continue
-
-        except Exception as he:
-            safe_log(f"🛑 [Footloose HTML] Error en contingencia: {he}", "error")
+        safe_log(f"🛑 [Footloose API] Error de ejecución: {e}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
