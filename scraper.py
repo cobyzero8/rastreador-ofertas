@@ -1003,6 +1003,177 @@ def motor_ripley(url, limite, headers=None):
     safe_log("⏸️ [Ripley] Motor pausado temporalmente.", "caption")
     return []
 
+def motor_footloose(url, limite):
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, parse_qs, urljoin
+    import re
+    import random
+
+    productos_map = {}
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9",
+        "Referer": "https://www.footloose.pe/"
+    }
+
+    try:
+        parsed_url = urlparse(url)
+        category_path = parsed_url.path.rstrip('/')
+        if category_path and not category_path.startswith('/'):
+            category_path = '/' + category_path
+
+        # Intento 1: API de Búsqueda VTEX de Footloose
+        api_url = f"https://www.footloose.pe/api/catalog_system/pub/products/search{category_path}"
+        
+        query_params = parse_qs(parsed_url.query)
+        params = {
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"
+        }
+        for k, v in query_params.items():
+            params[k] = v if len(v) > 1 else v[0]
+
+        safe_log("📡 [Footloose API] Consultando catálogo en vivo...", "info")
+        resp = requests.get(api_url, headers={"Accept": "application/json", "User-Agent": headers["User-Agent"]}, params=params, timeout=15, verify=False)
+
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+            safe_log(f"🔍 [Footloose API] Catálogo procesado. Se analizaron {len(data)} ítems.", "info")
+            
+            for p in data:
+                try:
+                    nombre_prod = p.get("productName", "").strip().upper()
+                    link_rel = p.get("link", "")
+                    link_final = urljoin("https://www.footloose.pe", link_rel) if link_rel else url
+                    
+                    items = p.get("items", [])
+                    if not items: continue
+                    
+                    first_item = items[0]
+                    images = first_item.get("images", [])
+                    img_final = images[0].get("imageUrl", "") if images else ""
+                    if img_final.startswith('//'): img_final = 'https:' + img_final
+                    
+                    sellers = first_item.get("sellers", [])
+                    if not sellers: continue
+                        
+                    offer = sellers[0].get("commertialOffer", {})
+                    p_o = float(offer.get("Price", 0.0))
+                    p_r = float(offer.get("ListPrice", p_o))
+                    
+                    if 0 < p_o <= limite:
+                        productos_map[link_final] = {
+                            "nombre": f"FOOTLOOSE - {nombre_prod}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_final
+                        }
+                except Exception: continue
+
+    except Exception as e:
+        safe_log(f"⚠️ [Footloose API] Error en API VTEX: {e}. Activando raspado HTML...", "warning")
+
+    # Intento 2: Fallback por HTML / JSON-LD
+    if not productos_map:
+        try:
+            safe_log("🛡️ [Footloose HTML] Escaneando estructura HTML...", "info")
+            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                # 1. Búsqueda por JSON-LD
+                for script in soup.find_all('script', type='application/ld+json'):
+                    try:
+                        if not script.string: continue
+                        json_data = json.loads(script.string)
+                        
+                        items = []
+                        if isinstance(json_data, dict) and json_data.get('@type') == 'ItemList':
+                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
+                        elif isinstance(json_data, list):
+                            items = json_data
+                        elif isinstance(json_data, dict) and json_data.get('@type') == 'Product':
+                            items = [json_data]
+                            
+                        for item in items:
+                            if not isinstance(item, dict): continue
+                            nombre = str(item.get('name', '')).strip().upper()
+                            link_f = urljoin("https://www.footloose.pe", item.get('url', ''))
+                            
+                            offers = item.get('offers', {})
+                            p_o = 0.0
+                            if isinstance(offers, dict): p_o = float(offers.get('price', 0.0))
+                            elif isinstance(offers, list) and offers: p_o = float(offers[0].get('price', 0.0))
+                            
+                            img_f = item.get('image', '')
+                            if isinstance(img_f, list) and img_f: img_f = img_f[0]
+                            if str(img_f).startswith('//'): img_f = 'https:' + str(img_f)
+                            
+                            if 0 < p_o <= limite and nombre and link_f:
+                                productos_map[link_f] = {
+                                    "nombre": f"FOOTLOOSE - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": p_o,
+                                    "link": link_f,
+                                    "img": img_f
+                                }
+                    except Exception: continue
+
+                # 2. Búsqueda por Tarjetas VTEX HTML
+                if not productos_map:
+                    tarjetas = soup.select('[class*="product-summary"]') or soup.select('[class*="vtex-product-summary"]') or soup.select('article') or soup.select('.product-item')
+                    for t in tarjetas:
+                        try:
+                            a_el = t.find('a', href=True)
+                            if not a_el: continue
+                            link_f = urljoin("https://www.footloose.pe", a_el['href'])
+                            
+                            tit_el = t.find(['h2', 'h3', 'span', 'p'], class_=re.compile(r'(name|brand|title|product)', re.I))
+                            nombre = tit_el.text.strip().upper() if tit_el else ""
+                            if not nombre: nombre = a_el.get('title', '').strip().upper() or a_el.text.strip().upper()
+                            if len(nombre) < 3: continue
+                            
+                            textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                            if not textos_precios: continue
+                            nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                            if not nums: continue
+                            
+                            p_o = nums[0]
+                            p_r = nums[-1] if len(nums) > 1 else p_o
+                            
+                            if 0 < p_o <= limite:
+                                img_el = t.find('img')
+                                img_f = ""
+                                if img_el: img_f = img_el.get('data-src') or img_el.get('src') or ""
+                                if img_f.startswith('//'): img_f = 'https:' + img_f
+                                
+                                productos_map[link_f] = {
+                                    "nombre": f"FOOTLOOSE - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": max(p_r, p_o),
+                                    "link": link_f,
+                                    "img": img_f
+                                }
+                        except Exception: continue
+        except Exception as he:
+            safe_log(f"🛑 [Footloose HTML] Error en fallback HTML: {he}", "error")
+
+    productos_list = list(productos_map.values())
+    if productos_list:
+        safe_log(f"✅ [Footloose] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+    else:
+        safe_log(f"⚠️ [Footloose] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
+
+    return productos_list
+
+
+
+
+
 def motor_tradicional_general(url, limite, headers):
     productos = []
     try:
@@ -1049,6 +1220,7 @@ def escanear_tienda(url, limite):
     elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
     elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
     elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
+    elif "footloose.pe" in dominio: return motor_footloose(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
