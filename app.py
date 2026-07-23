@@ -15,7 +15,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ⚡ Optimización de caché (TTL = 5 min) para reducir tráfico Egress
 @st.cache_data(ttl=300)
 def obtener_tiendas_dinamicas():
-    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS"]
+    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"]
     try:
         res = supabase.table("radares").select("identificador").execute()
         if res.data:
