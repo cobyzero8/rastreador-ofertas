@@ -1111,6 +1111,117 @@ def motor_footloose(url, limite):
     return productos_list
 
 
+def motor_mercado_libre(url, limite):
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
+    import re
+    import random
+
+    productos_map = {}
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.mercadolibre.com.pe/"
+    }
+
+    try:
+        safe_log("📡 [Mercado Libre] Escaneando catálogo en vivo...", "info")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Mercado Libre] Error de servidor. Código HTTP: {resp.status_code}", "error")
+            return []
+
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Captura tanto la estructura estándar (ui-search) como el nuevo diseño (poly-card)
+        tarjetas = soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-layout__item|ui-search-result|poly-card|ui-search-result__wrapper)', re.I))
+
+        if not tarjetas:
+            tarjetas = soup.select('.ui-search-layout__item') or soup.select('.poly-card')
+
+        safe_log(f"🔍 [Mercado Libre] Se detectaron {len(tarjetas)} productos en la página.", "info")
+
+        for t in tarjetas:
+            try:
+                # 1. Enlace y Título del Producto
+                a_el = t.find('a', href=True)
+                if not a_el: continue
+                
+                link_final = a_el['href'].split('#')[0]
+                
+                tit_el = t.find(['h2', 'h3', 'span', 'a'], class_=re.compile(r'(ui-search-item__title|poly-component__title|title)', re.I))
+                nombre = tit_el.text.strip().upper() if tit_el else ""
+                if not nombre and a_el.has_attr('title'): 
+                    nombre = a_el['title'].strip().upper()
+                
+                if not nombre or len(nombre) < 4: continue
+
+                # 2. Extracción de Precios (Regular vs Oferta)
+                p_o, p_r = 0.0, 0.0
+                
+                # Precio Tachado / Regular
+                del_precio = t.find(['s', 'del', 'span'], class_=re.compile(r'(original|strikethrough|part--original|poly-price__original)', re.I))
+                if del_precio:
+                    p_r = limpiar_precio_pnp(del_precio.text)
+
+                # Precio Oferta / Actual
+                precio_main = t.find(['div', 'span'], class_=re.compile(r'(price__second-line|poly-price__current|price__part)', re.I))
+                if precio_main:
+                    p_o = limpiar_precio_pnp(precio_main.text)
+                
+                # Contingencia si el selector fino no captura el precio
+                if p_o == 0.0:
+                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                    if textos_precios:
+                        nums = [limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0]
+                        if nums:
+                            p_o = nums[0]
+                            if p_r == 0.0 and len(nums) > 1:
+                                p_r = nums[1]
+
+                if p_r == 0.0: p_r = p_o
+
+                # 3. Imagen del Producto
+                img_el = t.find('img')
+                img_url = ""
+                if img_el:
+                    img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy-icon') or ""
+                    
+                if img_url.startswith('//'): img_url = 'https:' + img_url
+                if 'data:image' in img_url.lower(): img_url = ""
+
+                # 4. Filtro por Presupuesto Límitado
+                if 0 < p_o <= limite:
+                    productos_map[link_final] = {
+                        "nombre": f"MERCADO LIBRE - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url
+                    }
+
+            except Exception:
+                continue
+
+    except Exception as e:
+        safe_log(f"🛑 [Mercado Libre] Error crítico durante el patrullaje: {e}", "error")
+
+    productos_list = list(productos_map.values())
+    if productos_list:
+        safe_log(f"✅ [Mercado Libre] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+    else:
+        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
+
+    return productos_list
+
+
+
+
+
+
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -1159,6 +1270,7 @@ def escanear_tienda(url, limite):
     elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
     elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
     elif "footloose.pe" in dominio: return motor_footloose(url, limite)
+    elif "mercadolibre" in dominio: return motor_mercado_libre(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
