@@ -1120,15 +1120,9 @@ def motor_mercado_libre(url, limite):
     import json
 
     productos_map = {}
-    headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Referer": "https://www.mercadolibre.com.pe/"
-    }
 
     # =======================================================
-    # CAPA 1: CONSULTA MEDIANTE API OFICIAL DE MERCADO LIBRE
+    # CAPA 1: CONSULTA A API OFICIAL (Cabeceras JSON Estricto)
     # =======================================================
     try:
         parsed_url = urlparse(url)
@@ -1146,7 +1140,14 @@ def motor_mercado_libre(url, limite):
             safe_log(f"📡 [Mercado Libre API] Consultando término: `{query_text}`...", "info")
             api_url = f"https://api.mercadolibre.com/sites/MPE/search?q={quote(query_text)}&sort=price_asc&limit=50"
             
-            resp_api = requests.get(api_url, headers={"User-Agent": headers["User-Agent"]}, timeout=12)
+            # Cabecera estricta JSON para evitar HTTP 403
+            api_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Accept-Language": "es-PE,es;q=0.9"
+            }
+            
+            resp_api = requests.get(api_url, headers=api_headers, timeout=12)
             if resp_api.status_code == 200:
                 data_api = resp_api.json()
                 results = data_api.get("results", [])
@@ -1183,48 +1184,59 @@ def motor_mercado_libre(url, limite):
         safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta API: {e}", "warning")
 
     # =======================================================
-    # CAPA 2: FALLBACK POR RASPADO HTML / ESTADO PRECARGADO
+    # CAPA 2: FALLBACK POR RASPADO HTML Y ESTRUCTURA JSON-LD
     # =======================================================
     if not productos_map:
         try:
             safe_log("🛡️ [Mercado Libre HTML] Escaneando estructura de respaldo...", "info")
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            html_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "es-PE,es;q=0.9"
+            }
+            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
             
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Intento de descompresión del estado inicial embedded
-                for script_state in soup.find_all('script'):
-                    if script_state.string and '__PRELOADED_STATE__' in script_state.string:
-                        try:
-                            match = re.search(r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});', script_state.string)
-                            if match:
-                                json_state = json.loads(match.group(1))
-                                results_state = json_state.get('results', []) or json_state.get('initialState', {}).get('results', [])
-                                for item in results_state:
-                                    nombre = item.get('title', '').strip().upper()
-                                    link_final = item.get('permalink', '').split('#')[0]
-                                    p_o = float(item.get('price', 0.0))
-                                    p_r = float(item.get('original_price') or p_o)
-                                    img_url = item.get('thumbnail', '')
-                                    if img_url: img_url = img_url.replace("http://", "https://")
-                                    if 0 < p_o <= limite and link_final and nombre:
-                                        productos_map[link_final] = {
-                                            "nombre": f"MERCADO LIBRE - {nombre}",
-                                            "precio": p_o,
-                                            "precio_regular": max(p_r, p_o),
-                                            "link": link_final,
-                                            "img": img_url
-                                        }
-                        except Exception:
-                            pass
+                # Búsqueda en etiquetas JSON-LD estructuradas
+                scripts_ld = soup.find_all('script', type='application/ld+json')
+                for script in scripts_ld:
+                    try:
+                        if not script.string: continue
+                        json_data = json.loads(script.string)
+                        items = []
+                        if isinstance(json_data, dict) and json_data.get('@type') == 'ItemList':
+                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
+                        elif isinstance(json_data, list):
+                            items = json_data
+                            
+                        for item in items:
+                            if not isinstance(item, dict): continue
+                            nombre = str(item.get('name', '')).strip().upper()
+                            link_f = item.get('url', '').split('#')[0]
+                            offers = item.get('offers', {})
+                            p_o = 0.0
+                            if isinstance(offers, dict): p_o = float(offers.get('price', 0.0))
+                            elif isinstance(offers, list) and offers: p_o = float(offers[0].get('price', 0.0))
+                            img_f = item.get('image', '')
+                            if isinstance(img_f, list) and img_f: img_f = img_f[0]
+                            
+                            if 0 < p_o <= limite and nombre and link_f:
+                                productos_map[link_f] = {
+                                    "nombre": f"MERCADO LIBRE - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": p_o,
+                                    "link": link_f,
+                                    "img": img_f
+                                }
+                    except Exception: continue
 
-                # Fallback por selectores de tarjeta HTML
+                # Fallback por tarjetas HTML físicas
                 if not productos_map:
                     tarjetas = soup.select('.ui-search-layout__item') or \
                                soup.select('.poly-card') or \
                                soup.select('.ui-search-result') or \
-                               soup.select('li.ui-search-layout__item') or \
                                soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-result|poly-card|ui-search-layout__item)', re.I))
 
                     safe_log(f"🔍 [Mercado Libre HTML] Se detectaron {len(tarjetas)} elementos en el HTML.", "info")
@@ -1233,7 +1245,6 @@ def motor_mercado_libre(url, limite):
                         try:
                             a_el = t.find('a', href=True)
                             if not a_el: continue
-                            
                             link_final = a_el['href'].split('#')[0]
                             
                             tit_el = t.find(['h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|poly-component__title|ui-search-item__title)', re.I))
