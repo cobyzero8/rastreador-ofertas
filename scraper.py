@@ -1119,10 +1119,21 @@ def motor_mercado_libre(url, limite):
     import random
     import json
 
+    # Usar cloudscraper si está instalado o fallback a requests.Session
+    scraper_sess = None
+    try:
+        import cloudscraper
+        scraper_sess = cloudscraper.create_scraper()
+    except Exception:
+        scraper_sess = requests.Session()
+
     productos_map = {}
 
+    ua_mobile = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+    ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
     # =======================================================
-    # CAPA 1: CONSULTA A API OFICIAL (Cabeceras JSON Estricto)
+    # CAPA 1: CONSULTA A API OFICIAL (Cabeceras Anti-403)
     # =======================================================
     try:
         parsed_url = urlparse(url)
@@ -1140,14 +1151,32 @@ def motor_mercado_libre(url, limite):
             safe_log(f"📡 [Mercado Libre API] Consultando término: `{query_text}`...", "info")
             api_url = f"https://api.mercadolibre.com/sites/MPE/search?q={quote(query_text)}&sort=price_asc&limit=50"
             
-            # Cabecera estricta JSON para evitar HTTP 403
+            # Intento 1: Cabecera con perfil de cliente móvil
             api_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-                "Accept-Language": "es-PE,es;q=0.9"
+                "User-Agent": ua_mobile,
+                "Accept": "*/*",
+                "Accept-Language": "es-PE,es;q=0.9",
+                "Origin": "https://www.mercadolibre.com.pe",
+                "Referer": "https://www.mercadolibre.com.pe/"
             }
             
-            resp_api = requests.get(api_url, headers=api_headers, timeout=12)
+            resp_api = scraper_sess.get(api_url, headers=api_headers, timeout=12)
+            
+            # Intento 2: Si devuelve 403, reintentar con Sec-Headers de Chromium Desktop
+            if resp_api.status_code == 403:
+                api_headers_desk = {
+                    "User-Agent": ua_desktop,
+                    "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8",
+                    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+                    "Sec-Ch-Ua-Mobile": "?0",
+                    "Sec-Ch-Ua-Platform": '"Windows"',
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-site"
+                }
+                resp_api = scraper_sess.get(api_url, headers=api_headers_desk, timeout=12)
+
             if resp_api.status_code == 200:
                 data_api = resp_api.json()
                 results = data_api.get("results", [])
@@ -1178,23 +1207,32 @@ def motor_mercado_libre(url, limite):
                         except Exception:
                             continue
             else:
-                safe_log(f"⚠️ [Mercado Libre API] Respuesta HTTP {resp_api.status_code}. Pasando a respaldo...", "warning")
+                safe_log(f"⚠️ [Mercado Libre API] Respuesta HTTP {resp_api.status_code}. Pasando a respaldo HTML...", "warning")
 
     except Exception as e:
         safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta API: {e}", "warning")
 
     # =======================================================
-    # CAPA 2: FALLBACK POR RASPADO HTML Y ESTRUCTURA JSON-LD
+    # CAPA 2: FALLBACK POR RASPADO HTML CON NAVEGACIÓN COMPLETA
     # =======================================================
     if not productos_map:
         try:
             safe_log("🛡️ [Mercado Libre HTML] Escaneando estructura de respaldo...", "info")
             html_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "es-PE,es;q=0.9"
+                "User-Agent": ua_desktop,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1"
             }
-            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
+            resp = scraper_sess.get(url, headers=html_headers, timeout=15)
             
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
