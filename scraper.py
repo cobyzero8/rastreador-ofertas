@@ -1119,64 +1119,38 @@ def motor_mercado_libre(url, limite):
     import random
     import json
 
-    # Usar cloudscraper si está instalado o fallback a requests.Session
-    scraper_sess = None
-    try:
-        import cloudscraper
-        scraper_sess = cloudscraper.create_scraper()
-    except Exception:
-        scraper_sess = requests.Session()
-
     productos_map = {}
 
-    ua_mobile = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-    ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    # =======================================================
+    # 🎯 1. EXTRAER EL TÉRMINO DE BÚSQUEDA LIMPIO DE LA URL
+    # =======================================================
+    parsed_url = urlparse(url)
+    path_segments = [s for s in parsed_url.path.split('/') if s]
+    
+    terms = []
+    for seg in path_segments:
+        # Separa la parte principal previa a los parámetros de ordenamiento (_OrderId_...)
+        clean_seg = seg.split('_')[0]
+        if clean_seg and not clean_seg.isdigit():
+            terms.append(clean_seg.replace('-', ' '))
+    
+    query_text = " ".join(terms).strip()
 
     # =======================================================
-    # CAPA 1: CONSULTA A API OFICIAL (Cabeceras Anti-403)
+    # 📡 2. CAPA 1: CONSULTA A API OFICIAL (MPE - PERÚ)
     # =======================================================
-    try:
-        parsed_url = urlparse(url)
-        path_segments = [s for s in parsed_url.path.split('/') if s]
-        
-        terms = []
-        for seg in path_segments:
-            clean_seg = seg.split('_')[0]
-            if clean_seg and not clean_seg.isdigit():
-                terms.append(clean_seg.replace('-', ' '))
-        
-        query_text = " ".join(terms).strip()
-
-        if query_text:
+    if query_text:
+        try:
             safe_log(f"📡 [Mercado Libre API] Consultando término: `{query_text}`...", "info")
             api_url = f"https://api.mercadolibre.com/sites/MPE/search?q={quote(query_text)}&sort=price_asc&limit=50"
             
-            # Intento 1: Cabecera con perfil de cliente móvil
+            # Cabeceras limpias y estándar sin parámetros de origen que activen el 403
             api_headers = {
-                "User-Agent": ua_mobile,
-                "Accept": "*/*",
-                "Accept-Language": "es-PE,es;q=0.9",
-                "Origin": "https://www.mercadolibre.com.pe",
-                "Referer": "https://www.mercadolibre.com.pe/"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Accept": "application/json"
             }
             
-            resp_api = scraper_sess.get(api_url, headers=api_headers, timeout=12)
-            
-            # Intento 2: Si devuelve 403, reintentar con Sec-Headers de Chromium Desktop
-            if resp_api.status_code == 403:
-                api_headers_desk = {
-                    "User-Agent": ua_desktop,
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8",
-                    "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-                    "Sec-Ch-Ua-Mobile": "?0",
-                    "Sec-Ch-Ua-Platform": '"Windows"',
-                    "Sec-Fetch-Dest": "empty",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "same-site"
-                }
-                resp_api = scraper_sess.get(api_url, headers=api_headers_desk, timeout=12)
-
+            resp_api = requests.get(api_url, headers=api_headers, timeout=12)
             if resp_api.status_code == 200:
                 data_api = resp_api.json()
                 results = data_api.get("results", [])
@@ -1209,115 +1183,70 @@ def motor_mercado_libre(url, limite):
             else:
                 safe_log(f"⚠️ [Mercado Libre API] Respuesta HTTP {resp_api.status_code}. Pasando a respaldo HTML...", "warning")
 
-    except Exception as e:
-        safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta API: {e}", "warning")
+        except Exception as e:
+            safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta API: {e}", "warning")
 
     # =======================================================
-    # CAPA 2: FALLBACK POR RASPADO HTML CON NAVEGACIÓN COMPLETA
+    # 🛡️ 3. CAPA 2: RESPALDO DE RASPADO HTML DIRECTO
     # =======================================================
     if not productos_map:
         try:
             safe_log("🛡️ [Mercado Libre HTML] Escaneando estructura de respaldo...", "info")
             html_headers = {
-                "User-Agent": ua_desktop,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Upgrade-Insecure-Requests": "1"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "es-PE,es;q=0.9"
             }
-            resp = scraper_sess.get(url, headers=html_headers, timeout=15)
+            
+            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
             
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                # Búsqueda en etiquetas JSON-LD estructuradas
-                scripts_ld = soup.find_all('script', type='application/ld+json')
-                for script in scripts_ld:
+                # Búsqueda de elementos compatibles con el diseño actual
+                tarjetas = soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-layout__item|poly-card|ui-search-result)', re.I))
+
+                safe_log(f"🔍 [Mercado Libre HTML] Se detectaron {len(tarjetas)} elementos en el HTML.", "info")
+
+                for t in tarjetas:
                     try:
-                        if not script.string: continue
-                        json_data = json.loads(script.string)
-                        items = []
-                        if isinstance(json_data, dict) and json_data.get('@type') == 'ItemList':
-                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
-                        elif isinstance(json_data, list):
-                            items = json_data
-                            
-                        for item in items:
-                            if not isinstance(item, dict): continue
-                            nombre = str(item.get('name', '')).strip().upper()
-                            link_f = item.get('url', '').split('#')[0]
-                            offers = item.get('offers', {})
-                            p_o = 0.0
-                            if isinstance(offers, dict): p_o = float(offers.get('price', 0.0))
-                            elif isinstance(offers, list) and offers: p_o = float(offers[0].get('price', 0.0))
-                            img_f = item.get('image', '')
-                            if isinstance(img_f, list) and img_f: img_f = img_f[0]
-                            
-                            if 0 < p_o <= limite and nombre and link_f:
-                                productos_map[link_f] = {
-                                    "nombre": f"MERCADO LIBRE - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": p_o,
-                                    "link": link_f,
-                                    "img": img_f
-                                }
-                    except Exception: continue
+                        a_el = t.find('a', href=True)
+                        if not a_el: continue
+                        link_final = a_el['href'].split('#')[0]
+                        
+                        tit_el = t.find(['h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|poly-component__title|ui-search-item__title)', re.I))
+                        nombre = tit_el.text.strip().upper() if tit_el else ""
+                        if not nombre and a_el.has_attr('title'): 
+                            nombre = a_el['title'].strip().upper()
+                        
+                        if not nombre or len(nombre) < 3: continue
 
-                # Fallback por tarjetas HTML físicas
-                if not productos_map:
-                    tarjetas = soup.select('.ui-search-layout__item') or \
-                               soup.select('.poly-card') or \
-                               soup.select('.ui-search-result') or \
-                               soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-result|poly-card|ui-search-layout__item)', re.I))
+                        textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                        if not textos_precios: continue
+                        
+                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                        if not nums: continue
+                        
+                        p_o = nums[0]
+                        p_r = nums[-1] if len(nums) > 1 else p_o
 
-                    safe_log(f"🔍 [Mercado Libre HTML] Se detectaron {len(tarjetas)} elementos en el HTML.", "info")
-
-                    for t in tarjetas:
-                        try:
-                            a_el = t.find('a', href=True)
-                            if not a_el: continue
-                            link_final = a_el['href'].split('#')[0]
+                        img_el = t.find('img')
+                        img_url = ""
+                        if img_el:
+                            img_url = img_el.get('data-src') or img_el.get('src') or ""
                             
-                            tit_el = t.find(['h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|poly-component__title|ui-search-item__title)', re.I))
-                            nombre = tit_el.text.strip().upper() if tit_el else ""
-                            if not nombre and a_el.has_attr('title'): 
-                                nombre = a_el['title'].strip().upper()
-                            
-                            if not nombre or len(nombre) < 3: continue
+                        if img_url.startswith('//'): img_url = 'https:' + img_url
 
-                            textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                            if not textos_precios: continue
-                            
-                            nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                            if not nums: continue
-                            
-                            p_o = nums[0]
-                            p_r = nums[-1] if len(nums) > 1 else p_o
-
-                            img_el = t.find('img')
-                            img_url = ""
-                            if img_el:
-                                img_url = img_el.get('data-src') or img_el.get('src') or ""
-                                
-                            if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                            if 0 < p_o <= limite:
-                                productos_map[link_final] = {
-                                    "nombre": f"MERCADO LIBRE - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": max(p_r, p_o),
-                                    "link": link_final,
-                                    "img": img_url
-                                }
-                        except Exception:
-                            continue
+                        if 0 < p_o <= limite:
+                            productos_map[link_final] = {
+                                "nombre": f"MERCADO LIBRE - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url
+                            }
+                    except Exception:
+                        continue
 
         except Exception as he:
             safe_log(f"🛑 [Mercado Libre HTML] Error durante el raspado HTML: {he}", "error")
