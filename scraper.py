@@ -1114,22 +1114,26 @@ def motor_footloose(url, limite):
 def motor_mercado_libre(url, limite):
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, parse_qs, urljoin, unquote, quote
+    from urllib.parse import urlparse, quote, unquote
     import re
     import random
-    import json
 
     productos_map = {}
 
-    # =======================================================
-    # 🎯 1. EXTRAER EL TÉRMINO DE BÚSQUEDA LIMPIO DE LA URL
-    # =======================================================
+    # 1. Obtener Token opcional desde secretos de Streamlit (si existe)
+    ml_token = None
+    try:
+        import streamlit as st
+        ml_token = st.secrets.get("MERCADOLIBRE_TOKEN", None)
+    except Exception:
+        pass
+
+    # 2. Extraer término de búsqueda desde la URL
     parsed_url = urlparse(url)
     path_segments = [s for s in parsed_url.path.split('/') if s]
     
     terms = []
     for seg in path_segments:
-        # Separa la parte principal previa a los parámetros de ordenamiento (_OrderId_...)
         clean_seg = seg.split('_')[0]
         if clean_seg and not clean_seg.isdigit():
             terms.append(clean_seg.replace('-', ' '))
@@ -1137,20 +1141,22 @@ def motor_mercado_libre(url, limite):
     query_text = " ".join(terms).strip()
 
     # =======================================================
-    # 📡 2. CAPA 1: CONSULTA A API OFICIAL (MPE - PERÚ)
+    # 📡 CAPA 1: CONSULTA A API OFICIAL
     # =======================================================
     if query_text:
         try:
             safe_log(f"📡 [Mercado Libre API] Consultando término: `{query_text}`...", "info")
             api_url = f"https://api.mercadolibre.com/sites/MPE/search?q={quote(query_text)}&sort=price_asc&limit=50"
             
-            # Cabeceras limpias y estándar sin parámetros de origen que activen el 403
             api_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
                 "Accept": "application/json"
             }
+            if ml_token:
+                api_headers["Authorization"] = f"Bearer {ml_token}"
+
+            resp_api = requests.get(api_url, headers=api_headers, timeout=10)
             
-            resp_api = requests.get(api_url, headers=api_headers, timeout=12)
             if resp_api.status_code == 200:
                 data_api = resp_api.json()
                 results = data_api.get("results", [])
@@ -1180,33 +1186,28 @@ def motor_mercado_libre(url, limite):
                                 }
                         except Exception:
                             continue
+            elif resp_api.status_code == 403:
+                safe_log("⚠️ [Mercado Libre] Acceso restringido desde la IP de la nube (HTTP 403).", "warning")
             else:
-                safe_log(f"⚠️ [Mercado Libre API] Respuesta HTTP {resp_api.status_code}. Pasando a respaldo HTML...", "warning")
+                safe_log(f"⚠️ [Mercado Libre API] Código de respuesta: {resp_api.status_code}", "warning")
 
         except Exception as e:
-            safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta API: {e}", "warning")
+            safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta: {e}", "warning")
 
     # =======================================================
-    # 🛡️ 3. CAPA 2: RESPALDO DE RASPADO HTML DIRECTO
+    # 🛡️ CAPA 2: RESPALDO HTML (Si la API no devolvió datos)
     # =======================================================
     if not productos_map:
         try:
-            safe_log("🛡️ [Mercado Libre HTML] Escaneando estructura de respaldo...", "info")
             html_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "es-PE,es;q=0.9"
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             }
-            
-            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
+            resp = requests.get(url, headers=html_headers, timeout=12, verify=False)
             
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                
-                # Búsqueda de elementos compatibles con el diseño actual
                 tarjetas = soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-layout__item|poly-card|ui-search-result)', re.I))
-
-                safe_log(f"🔍 [Mercado Libre HTML] Se detectaron {len(tarjetas)} elementos en el HTML.", "info")
 
                 for t in tarjetas:
                     try:
@@ -1231,10 +1232,7 @@ def motor_mercado_libre(url, limite):
                         p_r = nums[-1] if len(nums) > 1 else p_o
 
                         img_el = t.find('img')
-                        img_url = ""
-                        if img_el:
-                            img_url = img_el.get('data-src') or img_el.get('src') or ""
-                            
+                        img_url = img_el.get('data-src') or img_el.get('src') or "" if img_el else ""
                         if img_url.startswith('//'): img_url = 'https:' + img_url
 
                         if 0 < p_o <= limite:
@@ -1247,15 +1245,14 @@ def motor_mercado_libre(url, limite):
                             }
                     except Exception:
                         continue
-
-        except Exception as he:
-            safe_log(f"🛑 [Mercado Libre HTML] Error durante el raspado HTML: {he}", "error")
+        except Exception:
+            pass
 
     productos_list = list(productos_map.values())
     if productos_list:
         safe_log(f"✅ [Mercado Libre] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
     else:
-        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"ℹ️ [Mercado Libre] No se pudieron extraer ofertas activas bajo el presupuesto.", "info")
 
     return productos_list
 
