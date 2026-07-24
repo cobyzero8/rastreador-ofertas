@@ -1111,151 +1111,156 @@ def motor_footloose(url, limite):
     return productos_list
 
 
-def motor_mercado_libre(url, limite):
+def motor_estilos(url, limite):
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, quote, unquote
+    from urllib.parse import urlparse, parse_qs, urljoin, unquote
     import re
     import random
+    import json
 
     productos_map = {}
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "es-PE,es;q=0.9",
+        "Referer": "https://www.estilos.com.pe/"
+    }
 
-    # 1. Obtener Token opcional desde secretos de Streamlit (si existe)
-    ml_token = None
     try:
-        import streamlit as st
-        ml_token = st.secrets.get("MERCADOLIBRE_TOKEN", None)
-    except Exception:
-        pass
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        
+        raw_path = unquote(parsed_url.path.rstrip('/'))
+        
+        # Descartar tallas o segmentos numéricos incompatibles
+        segmentos = [s for s in raw_path.split('/') if s and not re.match(r'^\d+[\-_.]\d+$', s)]
+        path_limpio = '/' + '/'.join(segmentos) if segmentos else "/poleras-hombre"
+        path_base = '/' + '/'.join(segmentos[-2:]) if len(segmentos) >= 2 else path_limpio
 
-    # 2. Extraer término de búsqueda desde la URL
-    parsed_url = urlparse(url)
-    path_segments = [s for s in parsed_url.path.split('/') if s]
-    
-    terms = []
-    for seg in path_segments:
-        clean_seg = seg.split('_')[0]
-        if clean_seg and not clean_seg.isdigit():
-            terms.append(clean_seg.replace('-', ' '))
-    
-    query_text = " ".join(terms).strip()
+        # Estrategia de peticiones secuenciales para VTEX Estilos
+        urls_a_probar = []
 
-    # =======================================================
-    # 📡 CAPA 1: CONSULTA A API OFICIAL
-    # =======================================================
-    if query_text:
-        try:
-            safe_log(f"📡 [Mercado Libre API] Consultando término: `{query_text}`...", "info")
-            api_url = f"https://api.mercadolibre.com/sites/MPE/search?q={quote(query_text)}&sort=price_asc&limit=50"
-            
-            api_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
-            if ml_token:
-                api_headers["Authorization"] = f"Bearer {ml_token}"
+        # 1. Búsqueda por término explícito (_q o ft)
+        q_term = query_params.get('_q', query_params.get('ft', [None]))[0]
+        if q_term:
+            urls_a_probar.append((
+                "https://www.estilos.com.pe/api/catalog_system/pub/products/search",
+                {"ft": q_term, "O": "OrderByPriceASC", "_from": "0", "_to": "49"}
+            ))
 
-            resp_api = requests.get(api_url, headers=api_headers, timeout=10)
-            
-            if resp_api.status_code == 200:
-                data_api = resp_api.json()
-                results = data_api.get("results", [])
-                
-                if results:
-                    safe_log(f"🔍 [Mercado Libre API] ¡Éxito! Se procesaron {len(results)} productos.", "info")
-                    for item in results:
-                        try:
-                            nombre = item.get("title", "").strip().upper()
-                            link_final = item.get("permalink", "").split('#')[0]
-                            
-                            p_o = float(item.get("price", 0.0))
-                            p_r = float(item.get("original_price") or p_o)
-                            
-                            img_url = item.get("thumbnail", "")
-                            if img_url:
-                                img_url = img_url.replace("http://", "https://")
-                                img_url = re.sub(r'-I\.jpg$', '-O.jpg', img_url)
-                            
-                            if 0 < p_o <= limite and link_final:
-                                productos_map[link_final] = {
-                                    "nombre": f"MERCADO LIBRE - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": max(p_r, p_o),
-                                    "link": link_final,
-                                    "img": img_url
-                                }
-                        except Exception:
-                            continue
-            elif resp_api.status_code == 403:
-                safe_log("⚠️ [Mercado Libre] Acceso restringido desde la IP de la nube (HTTP 403).", "warning")
-            else:
-                safe_log(f"⚠️ [Mercado Libre API] Código de respuesta: {resp_api.status_code}", "warning")
+        # 2. Búsqueda por categoría / marcas (/puma/quiksilver/m/poleras hombre)
+        urls_a_probar.append((
+            f"https://www.estilos.com.pe/api/catalog_system/pub/products/search{path_limpio}",
+            {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}
+        ))
+        
+        # 3. Búsqueda por ruta base reducida
+        if path_base != path_limpio:
+            urls_a_probar.append((
+                f"https://www.estilos.com.pe/api/catalog_system/pub/products/search{path_base}",
+                {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}
+            ))
 
-        except Exception as e:
-            safe_log(f"⚠️ [Mercado Libre API] Excepción en consulta: {e}", "warning")
+        safe_log(f"📡 [Estilos API] Consultando catálogo VTEX de Estilos...", "info")
 
-    # =======================================================
-    # 🛡️ CAPA 2: RESPALDO HTML (Si la API no devolvió datos)
-    # =======================================================
+        for api_endpoint, params in urls_a_probar:
+            try:
+                resp = requests.get(api_endpoint, headers=headers, params=params, timeout=12, verify=False)
+                if resp.status_code in [200, 206]:
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        safe_log(f"🔍 [Estilos API] ¡Éxito! Se procesaron {len(data)} modelos desde VTEX.", "info")
+                        for p in data:
+                            try:
+                                nombre_prod = p.get("productName", "").strip().upper()
+                                link_rel = p.get("link", "")
+                                link_final = urljoin("https://www.estilos.com.pe", link_rel) if link_rel else url
+                                
+                                items = p.get("items", [])
+                                if not items: continue
+                                
+                                first_item = items[0]
+                                images = first_item.get("images", [])
+                                img_final = images[0].get("imageUrl", "") if images else ""
+                                if img_final.startswith('//'): img_final = 'https:' + img_final
+                                
+                                sellers = first_item.get("sellers", [])
+                                if not sellers: continue
+                                    
+                                offer = sellers[0].get("commertialOffer", {})
+                                p_o = float(offer.get("Price", 0.0))
+                                p_r = float(offer.get("ListPrice", p_o))
+                                
+                                if 0 < p_o <= limite:
+                                    productos_map[link_final] = {
+                                        "nombre": f"ESTILOS - {nombre_prod}",
+                                        "precio": p_o,
+                                        "precio_regular": max(p_r, p_o),
+                                        "link": link_final,
+                                        "img": img_final
+                                    }
+                            except Exception: continue
+                        
+                        if len(productos_map) > 0:
+                            break
+            except Exception:
+                continue
+
+    except Exception as e:
+        safe_log(f"⚠️ [Estilos API] Error de consulta: {e}", "warning")
+
+    # Respaldo HTML por JSON-LD en caso de contingencia
     if not productos_map:
         try:
-            html_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            }
-            resp = requests.get(url, headers=html_headers, timeout=12, verify=False)
+            safe_log("🛡️ [Estilos HTML] Escaneando estructura de respaldo...", "info")
+            html_headers = headers.copy()
+            html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
             
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                tarjetas = soup.find_all(['li', 'div'], class_=re.compile(r'(ui-search-layout__item|poly-card|ui-search-result)', re.I))
-
-                for t in tarjetas:
+                for script in soup.find_all('script', type='application/ld+json'):
                     try:
-                        a_el = t.find('a', href=True)
-                        if not a_el: continue
-                        link_final = a_el['href'].split('#')[0]
-                        
-                        tit_el = t.find(['h2', 'h3', 'span', 'a'], class_=re.compile(r'(title|poly-component__title|ui-search-item__title)', re.I))
-                        nombre = tit_el.text.strip().upper() if tit_el else ""
-                        if not nombre and a_el.has_attr('title'): 
-                            nombre = a_el['title'].strip().upper()
-                        
-                        if not nombre or len(nombre) < 3: continue
-
-                        textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                        if not textos_precios: continue
-                        
-                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                        if not nums: continue
-                        
-                        p_o = nums[0]
-                        p_r = nums[-1] if len(nums) > 1 else p_o
-
-                        img_el = t.find('img')
-                        img_url = img_el.get('data-src') or img_el.get('src') or "" if img_el else ""
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                        if 0 < p_o <= limite:
-                            productos_map[link_final] = {
-                                "nombre": f"MERCADO LIBRE - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url
-                            }
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+                        if not script.string: continue
+                        json_data = json.loads(script.string)
+                        items = []
+                        if isinstance(json_data, dict) and json_data.get('@type') == 'ItemList':
+                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
+                        elif isinstance(json_data, list):
+                            items = json_data
+                            
+                        for item in items:
+                            if not isinstance(item, dict): continue
+                            nombre = str(item.get('name', '')).strip().upper()
+                            link_f = urljoin("https://www.estilos.com.pe", item.get('url', ''))
+                            offers = item.get('offers', {})
+                            p_o = 0.0
+                            if isinstance(offers, dict): p_o = float(offers.get('price', 0.0))
+                            elif isinstance(offers, list) and offers: p_o = float(offers[0].get('price', 0.0))
+                            img_f = item.get('image', '')
+                            if isinstance(img_f, list) and img_f: img_f = img_f[0]
+                            if str(img_f).startswith('//'): img_f = 'https:' + str(img_f)
+                            
+                            if 0 < p_o <= limite and nombre and link_f:
+                                productos_map[link_f] = {
+                                    "nombre": f"ESTILOS - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": p_o,
+                                    "link": link_f,
+                                    "img": img_f
+                                }
+                    except Exception: continue
+        except Exception as he:
+            safe_log(f"🛑 [Estilos HTML] Error en contingencia HTML: {he}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Mercado Libre] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Estilos] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
     else:
-        safe_log(f"ℹ️ [Mercado Libre] No se pudieron extraer ofertas activas bajo el presupuesto.", "info")
+        safe_log(f"⚠️ [Estilos] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
 
 
 
@@ -1309,7 +1314,7 @@ def escanear_tienda(url, limite):
     elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
     elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
     elif "footloose.pe" in dominio: return motor_footloose(url, limite)
-    elif "mercadolibre" in dominio: return motor_mercado_libre(url, limite)
+    elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
