@@ -1161,163 +1161,87 @@ def motor_triathlon(url, limite, headers=None):
 
 
 def motor_ripley(url, limite, headers=None):
-    import json
-    import re
     import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin, quote
-    from datetime import datetime, timezone
-
-    # =======================================================
-    # ⏱️ CONTROL DE FRECUENCIA PARA RIPLEY (MÁX 1 VEZ CADA 2 HORAS)
-    # =======================================================
-    try:
-        res_check = supabase.table("historial_precios")\
-            .select("fecha")\
-            .like("identificador", "%RIPLEY%")\
-            .order("fecha", desc=True)\
-            .limit(1)\
-            .execute()
-
-        if res_check.data and len(res_check.data) > 0:
-            ultima_fecha_str = res_check.data[0]['fecha']
-            ultima_fecha = datetime.fromisoformat(ultima_fecha_str.replace('Z', '+00:00'))
-            if ultima_fecha.tzinfo is None:
-                ultima_fecha = ultima_fecha.replace(tzinfo=timezone.utc)
-                
-            ahora = datetime.now(timezone.utc)
-            minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
-
-            if minutos_transcurridos < 110:
-                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido para ahorrar créditos de ScraperAPI.", "caption")
-                return []
-    except Exception as e:
-        safe_log(f"⚠️ Nota de temporizador Ripley: {e}", "caption")
+    from urllib.parse import urljoin
 
     productos_map = {}
-    texto_html = ""
-    status_code = 0
+    safe_log("🚀 [Ripley] Consultando catálogo de televisores...", "info")
 
-    safe_log("🚀 [Ripley] Consultando catálogo vía ScraperAPI...", "info")
+    # API directa de catálogo Ripley (trae televisores ordenados por menor precio)
+    api_url = "https://simple.ripley.com.pe/api/v2/products?s=televisor&page=1&per_page=50&orderBy=price_asc"
+    
+    headers_api = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://simple.ripley.com.pe/"
+    }
 
-    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    # 🎯 CONFIGURACIÓN DE TUS FILTROS EXACTOS
+    MARCAS_PERMITIDAS = ["TCL", "LG", "SAMSUNG"]
+    TAMANOS_PERMITIDOS = ['55"', "55", '65"', "65"]
+
     try:
-        if "SCRAPERAPI_KEY" in st.secrets:
-            api_key = st.secrets["SCRAPERAPI_KEY"]
-    except Exception:
-        pass
+        resp = requests.get(api_url, headers=headers_api, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            products_list = data.get('products', [])
+            
+            for prod in products_list:
+                try:
+                    nombre = prod.get('name', '').strip().upper()
+                    brand = prod.get('brand', '').strip().upper()
+                    if len(nombre) < 3: continue
 
-    url_encoded = quote(url, safe='')
-    endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe"
-
-    try:
-        resp = requests.get(endpoint_scraper, timeout=45)
-        status_code = resp.status_code
-        texto_html = resp.text
-    except Exception as e:
-        safe_log(f"🚨 [Ripley] Error al conectar con ScraperAPI: {e}", "warning")
-        return []
-
-    if status_code != 200 or len(texto_html) <= 5000:
-        safe_log(f"🚨 [Ripley] ScraperAPI devolvió estado HTTP {status_code}.", "warning")
-        return []
-
-    soup = BeautifulSoup(texto_html, 'html.parser')
-
-    # =======================================================
-    # ESTRATEGIA 1: Búsqueda Profunda en __NEXT_DATA__
-    # =======================================================
-    next_script = soup.find('script', id='__NEXT_DATA__')
-    if next_script and next_script.string:
-        try:
-            json_data = json.loads(next_script.string)
-
-            # Buscador recursivo para extraer TODOS los arreglos de productos sin importar la clave
-            lista_acumulada = []
-            def buscar_todos_los_productos(nodo):
-                if isinstance(nodo, dict):
-                    for k, v in nodo.items():
-                        if k in ['products', 'results', 'catalog', 'items'] and isinstance(v, list) and len(v) > 0:
-                            if isinstance(v[0], dict) and any(key in v[0] for key in ['name', 'fullTitle', 'partNumber', 'uniqueID']):
-                                lista_acumulada.extend(v)
-                        else:
-                            buscar_todos_los_productos(v)
-                elif isinstance(nodo, list):
-                    for x in nodo:
-                        buscar_todos_los_productos(x)
-
-            buscar_todos_los_productos(json_data)
-
-            if lista_acumulada:
-                for p in lista_acumulada:
-                    try:
-                        nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
-                        if len(nombre) < 3: continue
-
-                        # Búsqueda exhaustiva de precios de oferta y regular
-                        valores_precios = []
-                        prices = p.get('prices') or p.get('price') or {}
-                        
-                        if isinstance(prices, dict):
-                            for k, v in prices.items():
-                                val_limpio = limpiar_precio_pnp(str(v))
-                                if val_limpio > 0: valores_precios.append(val_limpio)
-                        elif isinstance(prices, (int, float, str)):
-                            val_limpio = limpiar_precio_pnp(str(prices))
-                            if val_limpio > 0: valores_precios.append(val_limpio)
-
-                        for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice', 'formattedOfferPrice']:
-                            if p.get(campo_p):
-                                val_limpio = limpiar_precio_pnp(str(p.get(campo_p)))
-                                if val_limpio > 0: valores_precios.append(val_limpio)
-
-                        if not valores_precios: continue
-
-                        valores_ordenados = sorted(list(set(valores_precios)))
-                        p_o = valores_ordenados[0]
-                        p_r = valores_ordenados[-1] if len(valores_ordenados) > 1 else p_o
-
-                        # 🔗 EXTRACTOR Y CONSTRUCTOR DEL LINK INDIVIDUAL DEL PRODUCTO
-                        link_rel = p.get('urlPath') or p.get('url') or p.get('singleUrl') or p.get('canonicalUrl') or ''
-                        
-                        # Si no hay link relativo pero hay un partNumber/uniqueID, construimos la URL canónica
-                        part_num = str(p.get('partNumber') or p.get('uniqueID') or '').strip()
-                        if (not link_rel or link_rel == url) and part_num:
-                            slug = re.sub(r'[^a-zA-Z0-9]+', '-', nombre.lower()).strip('-')
-                            link_rel = f"/p/{slug}-{part_num}"
-
-                        if link_rel and link_rel != url:
-                            link_final = urljoin("https://simple.ripley.com.pe", link_rel)
-                        else:
-                            continue # Omitimos si no se logró generar la URL individual del producto
-
-                        # Imagen
-                        img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
-                        if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
-                            img_url = p['images'][0]
-                        if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
-
-                        if 0 < p_o <= limite:
-                            productos_map[link_final] = {
-                                "nombre": f"RIPLEY - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": str(img_url)
-                            }
-                    except Exception:
+                    # 1. FILTRO DE MARCA (TCL, LG, SAMSUNG)
+                    es_marca_valida = any(m in brand or m in nombre for m in MARCAS_PERMITIDAS)
+                    if not es_marca_valida:
                         continue
-        except Exception:
-            pass
+
+                    # 2. FILTRO DE TAMAÑO (Solo 55" o 65")
+                    es_tamano_valido = any(t in nombre for t in ["55", "65"])
+                    if not es_tamano_valido:
+                        continue
+
+                    # 3. FILTRO DE PRECIO
+                    prices = prod.get('prices', {})
+                    p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or prices.get('listPrice') or 0.0)
+                    p_r = float(prices.get('listPrice') or p_o)
+
+                    if p_o <= 0 or p_o > limite:
+                        continue
+
+                    # 4. CONSTRUCCIÓN DE ENLACE INDIVIDUAL DIRECTO
+                    part_num = str(prod.get('partNumber') or '').strip()
+                    url_rel = prod.get('url', '')
+                    
+                    if url_rel:
+                        link_final = urljoin("https://simple.ripley.com.pe", url_rel)
+                    elif part_num:
+                        link_final = f"https://simple.ripley.com.pe/p/-{part_num}"
+                    else:
+                        continue
+
+                    img_url = prod.get('fullImage') or prod.get('thumbnailImage') or ''
+
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url
+                    }
+                except Exception:
+                    continue
+    except Exception as e:
+        safe_log(f"🚨 [Ripley API] Error al conectar: {e}", "warning")
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} ofertas con sus links directos.", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} TVs (TCL/LG/Samsung de 55\" y 65\").", "success")
     else:
-        safe_log(f"⚠️ [Ripley] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Ripley] No se encontraron TVs de 55\"/65\" (TCL, LG, Samsung) por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
 
 
 
