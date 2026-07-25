@@ -383,7 +383,130 @@ def motor_falabella(url, limite, headers):
     return productos
 
 def motor_adidas(url, limite):
-    return []
+    import requests
+    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, urljoin
+    import re
+    import random
+    import json
+
+    productos_map = {}
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.adidas.pe/"
+    }
+
+    try:
+        safe_log("📡 [Adidas] Escaneando catálogo en vivo...", "info")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            # 1. Extracción mediante datos estructurados JSON-LD (Adidas oficial)
+            scripts_ld = soup.find_all('script', type='application/ld+json')
+            for script in scripts_ld:
+                try:
+                    if not script.string: continue
+                    json_data = json.loads(script.string)
+                    
+                    items = []
+                    if isinstance(json_data, dict):
+                        if json_data.get('@type') == 'ItemList':
+                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
+                        elif json_data.get('@type') == 'Product':
+                            items = [json_data]
+                    elif isinstance(json_data, list):
+                        items = json_data
+
+                    for item in items:
+                        if not isinstance(item, dict): continue
+                        nombre = str(item.get('name', '')).strip().upper()
+                        link_rel = item.get('url', '')
+                        link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
+                        
+                        offers = item.get('offers', {})
+                        p_o = 0.0
+                        if isinstance(offers, dict):
+                            p_o = float(offers.get('price', 0.0))
+                        elif isinstance(offers, list) and offers:
+                            p_o = float(offers[0].get('price', 0.0))
+                            
+                        img_f = item.get('image', '')
+                        if isinstance(img_f, list) and img_f: img_f = img_f[0]
+                        if str(img_f).startswith('//'): img_f = 'https:' + str(img_f)
+
+                        if 0 < p_o <= limite and nombre and link_final:
+                            productos_map[link_final] = {
+                                "nombre": f"ADIDAS - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": p_o,
+                                "link": link_final,
+                                "img": img_f
+                            }
+                except Exception:
+                    continue
+
+            # 2. Respaldo por tarjetas HTML si no responde JSON-LD
+            if not productos_map:
+                tarjetas = soup.select('[class*="glass-product-card"]') or \
+                           soup.select('[data-reg="product-card"]') or \
+                           soup.select('.grid-item') or \
+                           soup.find_all(['div', 'article'], class_=re.compile(r'(product-card|grid-item|glass-product)', re.I))
+
+                safe_log(f"🔍 [Adidas HTML] Se detectaron {len(tarjetas)} tarjetas en la estructura HTML.", "info")
+
+                for t in tarjetas:
+                    try:
+                        a_el = t.find('a', href=True)
+                        if not a_el: continue
+                        link_final = urljoin("https://www.adidas.pe", a_el['href'])
+                        
+                        tit_el = t.find(['p', 'span', 'h3', 'h2'], class_=re.compile(r'(title|name|card-title)', re.I))
+                        nombre = tit_el.text.strip().upper() if tit_el else ""
+                        if not nombre and a_el.has_attr('title'):
+                            nombre = a_el['title'].strip().upper()
+
+                        if not nombre or len(nombre) < 3: continue
+
+                        textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                        if not textos_precios: continue
+                        
+                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                        if not nums: continue
+                        
+                        p_o = nums[0]
+                        p_r = nums[-1] if len(nums) > 1 else p_o
+
+                        img_el = t.find('img')
+                        img_url = ""
+                        if img_el:
+                            img_url = img_el.get('data-src') or img_el.get('src') or ""
+                        if img_url.startswith('//'): img_url = 'https:' + img_url
+
+                        if 0 < p_o <= limite:
+                            productos_map[link_final] = {
+                                "nombre": f"ADIDAS - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url
+                            }
+                    except Exception:
+                        continue
+
+    except Exception as e:
+        safe_log(f"🛑 [Adidas] Error durante el patrullaje: {e}", "error")
+
+    productos_list = list(productos_map.values())
+    if productos_list:
+        safe_log(f"✅ [Adidas] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+    else:
+        safe_log(f"⚠️ [Adidas] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
+
+    return productos_list
 
 def motor_platanitos(url, limite):
     productos = []
@@ -1305,7 +1428,7 @@ def escanear_tienda(url, limite):
     elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
     elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
     elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
-    elif "adidas" in dominio: return motor_adidas(url, limite)
+    elif "adidas.pe" in dominio: return motor_adidas(url, limite)
     elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
     elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
     elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
