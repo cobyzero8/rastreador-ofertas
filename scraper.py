@@ -394,45 +394,32 @@ def motor_adidas(url, limite):
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Adidas] Abriendo túnel cifrado HTTP/2 (Impersonando Chrome)...", "info")
+    safe_log("🚀 [Adidas] Abriendo túnel cifrado HTTP/2 con impersonación Chrome...", "info")
 
-    # Intentos de conexión con curl_cffi para evadir Akamai
     for intento in range(1, 4):
         try:
             from curl_cffi import requests as crequests
             resp = crequests.get(
                 url, 
-                impersonate=random.choice(["chrome110", "chrome120"]), 
-                timeout=15
+                impersonate="chrome120", 
+                timeout=20
             )
             texto_html = resp.text
             status_code = resp.status_code
-        except ImportError:
-            # Fallback en caso de que no esté instalado curl_cffi
-            import requests
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                "Accept-Language": "es-PE,es;q=0.9"
-            }
-            resp = requests.get(url, headers=headers, timeout=15, verify=False)
-            texto_html = resp.text
-            status_code = resp.status_code
-
-        if status_code == 200 and len(texto_html) > 5000:
-            break
-        else:
-            time.sleep(random.uniform(2.0, 3.5))
+            if status_code == 200 and len(texto_html) > 5000:
+                break
+        except Exception as e:
+            safe_log(f"⚠️ Intento {intento} fallido en Adidas: {e}", "caption")
+            time.sleep(2)
 
     if status_code != 200 or len(texto_html) <= 5000:
-        safe_log(f"🚨 [Adidas] Bloqueado por Akamai (HTTP {status_code}). Vuelve a ejecutar para rotar la sesión.", "warning")
+        safe_log(f"🚨 [Adidas] No se pudo obtener la página (HTTP {status_code}).", "warning")
         return []
 
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # =======================================================
-    # ESTRATEGIA 1: Extracción desde __NEXT_DATA__ (Next.js)
-    # =======================================================
+    # Estrategia 1: __NEXT_DATA__
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -457,8 +444,7 @@ def motor_adidas(url, limite):
             if items_json:
                 for prod_j in items_json:
                     try:
-                        nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
-                        nombre = str(nombre).strip().upper()
+                        nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or "").strip().upper()
                         if len(nombre) < 3: continue
 
                         p_o = limpiar_precio_pnp(str(prod_j.get('salePrice') or prod_j.get('price') or 0))
@@ -481,9 +467,7 @@ def motor_adidas(url, limite):
         except Exception:
             pass
 
-    # =======================================================
-    # ESTRATEGIA 2: Fallback por selectores data-testid
-    # =======================================================
+    # Estrategia 2: Selectores HTML
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
@@ -525,7 +509,6 @@ def motor_adidas(url, limite):
         safe_log(f"⚠️ [Adidas] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
 
 
 def motor_platanitos(url, limite):
