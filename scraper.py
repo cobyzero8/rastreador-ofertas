@@ -392,30 +392,57 @@ def motor_adidas(url, limite):
     import json
 
     productos_map = {}
-
-    # 1. Confirmación de inicio de escaneo
     safe_log("📡 [Adidas] Consultando catálogo oficial en vivo...", "info")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.adidas.pe/"
+    # Intentar usar cloudscraper si está presente, de lo contrario requests.Session
+    try:
+        import cloudscraper
+        session = cloudscraper.create_scraper()
+    except Exception:
+        session = requests.Session()
+
+    ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+    ua_mobile = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+
+    headers_desktop = {
+        "User-Agent": ua_desktop,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="127", "Google Chrome";v="127"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
     }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        
+        # Intento 1: Cabeceras completas de escritorio
+        resp = session.get(url, headers=headers_desktop, timeout=12)
+
+        # Intento 2: Si responde 403, reintentar con perfil móvil
+        if resp.status_code == 403:
+            headers_mobile = {
+                "User-Agent": ua_mobile,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "es-PE,es;q=0.9",
+                "Referer": "https://www.google.com/"
+            }
+            resp = session.get(url, headers=headers_mobile, timeout=12)
+
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # CAPA 1: Extracción de datos estructurados JSON-LD (Standard de Adidas)
+
+            # CAPA 1: Extracción de datos JSON-LD
             scripts_ld = soup.find_all('script', type='application/ld+json')
             for script in scripts_ld:
                 try:
                     if not script.string: continue
                     json_data = json.loads(script.string)
-                    
+
                     items = []
                     if isinstance(json_data, dict):
                         if json_data.get('@type') == 'ItemList':
@@ -430,14 +457,14 @@ def motor_adidas(url, limite):
                         nombre = str(item.get('name', '')).strip().upper()
                         link_rel = item.get('url', '')
                         link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
-                        
+
                         offers = item.get('offers', {})
                         p_o = 0.0
                         if isinstance(offers, dict):
                             p_o = float(offers.get('price', 0.0))
                         elif isinstance(offers, list) and offers:
                             p_o = float(offers[0].get('price', 0.0))
-                            
+
                         img_f = item.get('image', '')
                         if isinstance(img_f, list) and img_f: img_f = img_f[0]
                         if str(img_f).startswith('//'): img_f = 'https:' + str(img_f)
@@ -453,26 +480,20 @@ def motor_adidas(url, limite):
                 except Exception:
                     continue
 
-            if productos_map:
-                safe_log(f"🔍 [Adidas JSON-LD] ¡Éxito! Se procesaron {len(productos_map)} ofertas en el JSON estructurado.", "info")
-
-            # CAPA 2: Raspado por tarjetas DOM en caso de contingencia
+            # CAPA 2: Extracción del DOM si el JSON-LD no devuelve productos
             if not productos_map:
-                safe_log("🛡️ [Adidas HTML] Escaneando tarjetas físicas del DOM...", "info")
                 tarjetas = soup.select('[class*="glass-product-card"]') or \
                            soup.select('[data-reg="product-card"]') or \
                            soup.select('.grid-item') or \
                            soup.find_all(['div', 'article'], class_=re.compile(r'(product-card|grid-item|glass-product|plp-card)', re.I))
-
-                safe_log(f"🔍 [Adidas HTML] Se detectaron {len(tarjetas)} elementos en la estructura HTML.", "info")
 
                 for t in tarjetas:
                     try:
                         a_el = t.find('a', href=True)
                         if not a_el: continue
                         link_final = urljoin("https://www.adidas.pe", a_el['href'])
-                        
-                        tit_el = t.find(['p', 'span', 'h3', 'h2', 'div'], class_=re.compile(r'(title|name|card-title|product-card-title)', re.I))
+
+                        tit_el = t.find(['p', 'span', 'h3', 'h2', 'div'], class_=re.compile(r'(title|name|card-title)', re.I))
                         nombre = tit_el.text.strip().upper() if tit_el else ""
                         if not nombre and a_el.has_attr('title'):
                             nombre = a_el['title'].strip().upper()
@@ -481,10 +502,10 @@ def motor_adidas(url, limite):
 
                         textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
                         if not textos_precios: continue
-                        
+
                         nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
                         if not nums: continue
-                        
+
                         p_o = nums[0]
                         p_r = nums[-1] if len(nums) > 1 else p_o
 
