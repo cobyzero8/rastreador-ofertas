@@ -1210,7 +1210,7 @@ def motor_ripley(url, limite, headers=None):
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
             if minutos_transcurridos < 110:
-                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente para ahorrar créditos.", "caption")
+                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente.", "caption")
                 return []
     except Exception as e:
         safe_log(f"⚠️ Temporizador Ripley: {e}", "caption")
@@ -1219,7 +1219,7 @@ def motor_ripley(url, limite, headers=None):
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Ripley] Consultando catálogo vía ScraperAPI (con Render JS)...", "info")
+    safe_log("🚀 [Ripley] Consultando catálogo vía ScraperAPI...", "info")
 
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
@@ -1228,8 +1228,8 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
+    # Usamos la URL codificada con render=true para asegurar la carga completa
     url_encoded = quote(url, safe='')
-    # 💥 CLAVE: Agregamos &render=true para que ejecute el JS de Ripley
     endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe&render=true"
 
     try:
@@ -1246,12 +1246,8 @@ def motor_ripley(url, limite, headers=None):
 
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # Filtros flexibilizados para evitar descartar falsos negativos
-    MARCAS_PERMITIDAS = ["TCL", "LG", "SAMSUNG", "HISENSE", "XIAOMI", "SONY", "CHIQ"]
-    TAMANOS_PERMITIDOS = ["55", "65", "50", "58"]
-
     # =======================================================
-    # ESTRATEGIA 1: Lectura desde __NEXT_DATA__
+    # ESTRATEGIA 1: Lectura directa desde __NEXT_DATA__ (Sin Filtros de Marca/Tamaño)
     # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
@@ -1278,18 +1274,7 @@ def motor_ripley(url, limite, headers=None):
                     nombre = str(p.get('name') or p.get('fullTitle') or '').strip().upper()
                     if len(nombre) < 3: continue
 
-                    # Validación de marca flexible
-                    brand_raw = p.get('brand') or ''
-                    brand_str = str(brand_raw.get('name') if isinstance(brand_raw, dict) else brand_raw).upper()
-
-                    es_marca_valida = any(m in brand_str or m in nombre for m in MARCAS_PERMITIDAS)
-                    es_tamano_valido = any(t in nombre for t in TAMANOS_PERMITIDOS)
-
-                    # Si el radar no es estrictamente de marcas especificas, permitimos pasar
-                    if not es_marca_valida or not es_tamano_valido:
-                        pass # Mantenemos flexibilidad para no ignorar ofertas
-
-                    # Precios
+                    # Extraer precios disponibles
                     valores_precios = []
                     prices = p.get('prices') or p.get('price') or {}
                     
@@ -1315,9 +1300,9 @@ def motor_ripley(url, limite, headers=None):
                     p_o = valores_ordenados[0]
                     p_r = valores_ordenados[-1] if len(valores_ordenados) > 1 else p_o
 
+                    # Se evalúa ÚNICAMENTE el precio máximo ingresado
                     if p_o <= 0 or p_o > limite: continue
 
-                    # Enlace directo
                     link_rel = p.get('url') or p.get('urlPath') or p.get('singleUrl') or ''
                     if not link_rel: continue
 
@@ -1341,13 +1326,13 @@ def motor_ripley(url, limite, headers=None):
             pass
 
     # =======================================================
-    # ESTRATEGIA 2: Fallback HTML usando clases exactas del DOM
+    # ESTRATEGIA 2: Fallback HTML (Escaneo Visual de Respaldo)
     # =======================================================
     if not productos_map:
-        tarjetas = soup.find_all(['div', 'section', 'article'], class_=re.compile(r'(catalog-product-item|product-item|catalog-card)', re.I))
+        tarjetas = soup.find_all(['div', 'section', 'article', 'a'], class_=re.compile(r'(catalog-product-item|product-item|catalog-card|ProducCard)', re.I))
         for t in tarjetas:
             try:
-                tit_el = t.find(class_=re.compile(r'(product-item--name|catalog-product-details__name)', re.I)) or t.find(['p', 'h2', 'h3'])
+                tit_el = t.find(class_=re.compile(r'(product-item--name|catalog-product-details__name|title)', re.I)) or t.find(['p', 'h2', 'h3', 'span'])
                 if not tit_el: continue
                 nombre = tit_el.text.strip().upper()
 
@@ -1384,12 +1369,11 @@ def motor_ripley(url, limite, headers=None):
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} productos.", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} Televisores.", "success")
     else:
-        safe_log(f"⚠️ [Ripley] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Ripley] No se encontraron TVs por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
 
 
 
