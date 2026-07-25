@@ -1,7 +1,7 @@
-httpx
-h2
+streamlit
+supabase
 beautifulsoup4
 requests
-supabase
-streamlit
+httpx
 curl_cffi
+urllib3
