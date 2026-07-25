@@ -1171,7 +1171,7 @@ def motor_ripley(url, limite, headers=None):
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Ripley] Solicitando catálogo a través de ScraperAPI (IP Perú)...", "info")
+    safe_log("🚀 [Ripley] Consultando catálogo en Ripley vía ScraperAPI...", "info")
 
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
@@ -1180,7 +1180,7 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    # Intento 1: Geolocalización en Perú
+    # Configuración de payload ligera
     payload = {
         'api_key': api_key,
         'url': url,
@@ -1188,20 +1188,16 @@ def motor_ripley(url, limite, headers=None):
     }
 
     try:
-        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=35)
+        # Aumentamos el timeout a 60 segundos para darle tiempo a ScraperAPI
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=60)
         status_code = resp.status_code
         texto_html = resp.text
 
-        # Intento 2: Si Ripley devuelve 500, activamos renderizado de JavaScript
-        if status_code != 200 or len(texto_html) <= 5000:
-            safe_log("🛡️ [Ripley] Activando modo renderizado de JavaScript en ScraperAPI...", "caption")
-            payload['render'] = 'true'
-            resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=50)
-            status_code = resp.status_code
-            texto_html = resp.text
-
+    except requests.exceptions.Timeout:
+        safe_log("⏳ [Ripley] ScraperAPI demoró más de 60s en responder (Timeout). Se reintentará en el próximo ciclo.", "warning")
+        return []
     except Exception as e:
-        safe_log(f"🚨 [Ripley] Error de conexión con ScraperAPI: {e}", "warning")
+        safe_log(f"🚨 [Ripley] Error al conectar con ScraperAPI: {e}", "warning")
         return []
 
     if status_code != 200 or len(texto_html) <= 5000:
@@ -1257,7 +1253,7 @@ def motor_ripley(url, limite, headers=None):
                 continue
 
     # =======================================================
-    # ESTRATEGIA 2: Fallback por HTML / Tarjetas de Ripley
+    # ESTRATEGIA 2: Fallback por Tarjetas HTML
     # =======================================================
     if not productos_map:
         tarjetas = soup.find_all(['div', 'section', 'article', 'a'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item|catalog-card)', re.I))
@@ -1303,12 +1299,11 @@ def motor_ripley(url, limite, headers=None):
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Ripley] ¡Éxito vía ScraperAPI! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Ripley] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
 
 
 
