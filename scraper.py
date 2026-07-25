@@ -1165,7 +1165,7 @@ def motor_ripley(url, limite, headers=None):
     import re
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin, quote
+    from urllib.parse import urljoin
     from datetime import datetime, timezone
 
     # =======================================================
@@ -1175,7 +1175,7 @@ def motor_ripley(url, limite, headers=None):
         res_check = supabase.table("historial_precios")\
             .select("fecha")\
             .like("identificador", "%RIPLEY%")\
-            .order("fecha", descending=True)\
+            .order("fecha", desc=True)\
             .limit(1)\
             .execute()
 
@@ -1204,11 +1204,15 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    url_encoded = quote(url, safe='')
-    endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe"
+    # Pasamos los parámetros de ScraperAPI limpios
+    payload = {
+        'api_key': api_key,
+        'url': url,
+        'country_code': 'pe'
+    }
 
     try:
-        resp = requests.get(endpoint_scraper, timeout=40)
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=45)
         status_code = resp.status_code
         texto_html = resp.text
     except Exception as e:
@@ -1221,7 +1225,9 @@ def motor_ripley(url, limite, headers=None):
 
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # Extracción __NEXT_DATA__
+    # =======================================================
+    # ESTRATEGIA 1: Lectura de datos estructurados __NEXT_DATA__
+    # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
         try:
@@ -1280,6 +1286,49 @@ def motor_ripley(url, limite, headers=None):
                         continue
         except Exception:
             pass
+
+    # =======================================================
+    # ESTRATEGIA 2: Fallback por HTML si el JSON estuviera ausente
+    # =======================================================
+    if not productos_map:
+        tarjetas = soup.select('.catalog-product-item') or soup.find_all(['div', 'article'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item)', re.I))
+
+        for t in tarjetas:
+            try:
+                tit_el = t.find(['a', 'div', 'span', 'h2', 'h3'], class_=re.compile(r'(product-title|title|brand|name)', re.I))
+                if not tit_el: continue
+                nombre = tit_el.text.strip().upper()
+                if len(nombre) < 3: continue
+
+                a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
+                if not a_el: continue
+                link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
+
+                precios_textos = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                if not precios_textos: continue
+
+                nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_textos if limpiar_precio_pnp(p) > 0])))
+                if not nums: continue
+
+                p_o = nums[0]
+                p_r = nums[-1] if len(nums) > 1 else p_o
+
+                if 0 < p_o <= limite:
+                    img_el = t.find('img')
+                    img_url = ""
+                    if img_el:
+                        img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-srcset') or ""
+                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
+
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": str(img_url)
+                    }
+            except Exception:
+                continue
 
     productos_list = list(productos_map.values())
     if productos_list:
