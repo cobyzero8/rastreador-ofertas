@@ -382,6 +382,7 @@ def motor_falabella(url, limite, headers):
     except Exception: pass
     return productos
 
+
 def motor_adidas(url, limite):
     import requests
     from bs4 import BeautifulSoup
@@ -391,21 +392,24 @@ def motor_adidas(url, limite):
     import json
 
     productos_map = {}
+
+    # 1. Confirmación de inicio de escaneo
+    safe_log("📡 [Adidas] Consultando catálogo oficial en vivo...", "info")
+
     headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
         "Referer": "https://www.adidas.pe/"
     }
 
     try:
-        safe_log("📡 [Adidas] Escaneando catálogo en vivo...", "info")
         resp = requests.get(url, headers=headers, timeout=15, verify=False)
         
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             
-            # 1. Extracción mediante datos estructurados JSON-LD (Adidas oficial)
+            # CAPA 1: Extracción de datos estructurados JSON-LD (Standard de Adidas)
             scripts_ld = soup.find_all('script', type='application/ld+json')
             for script in scripts_ld:
                 try:
@@ -449,14 +453,18 @@ def motor_adidas(url, limite):
                 except Exception:
                     continue
 
-            # 2. Respaldo por tarjetas HTML si no responde JSON-LD
+            if productos_map:
+                safe_log(f"🔍 [Adidas JSON-LD] ¡Éxito! Se procesaron {len(productos_map)} ofertas en el JSON estructurado.", "info")
+
+            # CAPA 2: Raspado por tarjetas DOM en caso de contingencia
             if not productos_map:
+                safe_log("🛡️ [Adidas HTML] Escaneando tarjetas físicas del DOM...", "info")
                 tarjetas = soup.select('[class*="glass-product-card"]') or \
                            soup.select('[data-reg="product-card"]') or \
                            soup.select('.grid-item') or \
-                           soup.find_all(['div', 'article'], class_=re.compile(r'(product-card|grid-item|glass-product)', re.I))
+                           soup.find_all(['div', 'article'], class_=re.compile(r'(product-card|grid-item|glass-product|plp-card)', re.I))
 
-                safe_log(f"🔍 [Adidas HTML] Se detectaron {len(tarjetas)} tarjetas en la estructura HTML.", "info")
+                safe_log(f"🔍 [Adidas HTML] Se detectaron {len(tarjetas)} elementos en la estructura HTML.", "info")
 
                 for t in tarjetas:
                     try:
@@ -464,7 +472,7 @@ def motor_adidas(url, limite):
                         if not a_el: continue
                         link_final = urljoin("https://www.adidas.pe", a_el['href'])
                         
-                        tit_el = t.find(['p', 'span', 'h3', 'h2'], class_=re.compile(r'(title|name|card-title)', re.I))
+                        tit_el = t.find(['p', 'span', 'h3', 'h2', 'div'], class_=re.compile(r'(title|name|card-title|product-card-title)', re.I))
                         nombre = tit_el.text.strip().upper() if tit_el else ""
                         if not nombre and a_el.has_attr('title'):
                             nombre = a_el['title'].strip().upper()
@@ -496,9 +504,11 @@ def motor_adidas(url, limite):
                             }
                     except Exception:
                         continue
+        else:
+            safe_log(f"⚠️ [Adidas] Servidor devolvió estado HTTP {resp.status_code}", "warning")
 
     except Exception as e:
-        safe_log(f"🛑 [Adidas] Error durante el patrullaje: {e}", "error")
+        safe_log(f"🛑 [Adidas] Error en ejecución: {e}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
@@ -507,6 +517,8 @@ def motor_adidas(url, limite):
         safe_log(f"⚠️ [Adidas] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
+
+
 
 def motor_platanitos(url, limite):
     productos = []
