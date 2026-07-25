@@ -1171,7 +1171,7 @@ def motor_ripley(url, limite, headers=None):
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Ripley] Solicitando catálogo a través de ScraperAPI...", "info")
+    safe_log("🚀 [Ripley] Solicitando catálogo a través de ScraperAPI (IP Perú)...", "info")
 
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
@@ -1180,17 +1180,28 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
+    # Intento 1: Geolocalización en Perú
     payload = {
         'api_key': api_key,
-        'url': url
+        'url': url,
+        'country_code': 'pe'
     }
 
     try:
-        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=35)
         status_code = resp.status_code
         texto_html = resp.text
+
+        # Intento 2: Si Ripley devuelve 500, activamos renderizado de JavaScript
+        if status_code != 200 or len(texto_html) <= 5000:
+            safe_log("🛡️ [Ripley] Activando modo renderizado de JavaScript en ScraperAPI...", "caption")
+            payload['render'] = 'true'
+            resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=50)
+            status_code = resp.status_code
+            texto_html = resp.text
+
     except Exception as e:
-        safe_log(f"🚨 [Ripley] Error al conectar con ScraperAPI: {e}", "warning")
+        safe_log(f"🚨 [Ripley] Error de conexión con ScraperAPI: {e}", "warning")
         return []
 
     if status_code != 200 or len(texto_html) <= 5000:
