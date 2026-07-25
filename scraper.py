@@ -1182,14 +1182,17 @@ def motor_ripley(url, limite, headers=None):
         if res_check.data and len(res_check.data) > 0:
             ultima_fecha_str = res_check.data[0]['fecha']
             ultima_fecha = datetime.fromisoformat(ultima_fecha_str.replace('Z', '+00:00'))
+            if ultima_fecha.tzinfo is None:
+                ultima_fecha = ultima_fecha.replace(tzinfo=timezone.utc)
+                
             ahora = datetime.now(timezone.utc)
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
             if minutos_transcurridos < 110:
-                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente para ahorrar créditos de ScraperAPI.", "caption")
+                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente para ahorrar créditos.", "caption")
                 return []
     except Exception as e:
-        safe_log(f"⚠️ No se pudo verificar temporizador de Ripley: {e}", "caption")
+        safe_log(f"⚠️ Nota de temporizador Ripley: {e}", "caption")
 
     productos_map = {}
     texto_html = ""
@@ -1204,7 +1207,6 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    # Usamos quote para evitar que ScraperAPI rompa los parámetros de la URL
     url_encoded = quote(url, safe='')
     endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe"
 
@@ -1223,7 +1225,7 @@ def motor_ripley(url, limite, headers=None):
     soup = BeautifulSoup(texto_html, 'html.parser')
 
     # =======================================================
-    # ESTRATEGIA 1: Lectura mejorada de datos __NEXT_DATA__
+    # ESTRATEGIA 1: Lectura de datos __NEXT_DATA__
     # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
@@ -1250,34 +1252,36 @@ def motor_ripley(url, limite, headers=None):
                         nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
                         if len(nombre) < 3: continue
 
-                        # Extraer todos los precios posibles dentro del objeto del producto
+                        # Búsqueda dinámica de precios
+                        valores_precios = []
                         prices = p.get('prices') or p.get('price') or {}
                         
-                        valores_precios = []
                         if isinstance(prices, dict):
                             for k, v in prices.items():
                                 val_limpio = limpiar_precio_pnp(str(v))
-                                if val_limpio > 0:
-                                    valores_precios.append(val_limpio)
+                                if val_limpio > 0: valores_precios.append(val_limpio)
                         elif isinstance(prices, (int, float, str)):
                             val_limpio = limpiar_precio_pnp(str(prices))
-                            if val_limpio > 0:
-                                valores_precios.append(val_limpio)
+                            if val_limpio > 0: valores_precios.append(val_limpio)
 
-                        # Si no encontró en prices, buscamos en los campos superiores
                         for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice']:
                             if p.get(campo_p):
                                 val_limpio = limpiar_precio_pnp(str(p.get(campo_p)))
-                                if val_limpio > 0:
-                                    valores_precios.append(val_limpio)
+                                if val_limpio > 0: valores_precios.append(val_limpio)
 
                         if not valores_precios: continue
 
                         valores_ordenados = sorted(list(set(valores_precios)))
-                        p_o = valores_ordenados[0]  # El menor precio siempre es la oferta
+                        p_o = valores_ordenados[0]
                         p_r = valores_ordenados[-1] if len(valores_ordenados) > 1 else p_o
 
-                        link_rel = p.get('url', '')
+                        # 🔗 CONSTRUCCIÓN EXACTA DE ENLACE DEL PRODUCTO
+                        link_rel = p.get('url') or p.get('urlPath') or p.get('singleUrl') or ''
+                        if not link_rel and p.get('partNumber'):
+                            part_num = p.get('partNumber')
+                            slug_nombre = re.sub(r'[^a-zA-Z0-9]+', '-', nombre.lower()).strip('-')
+                            link_rel = f"/p/{slug_nombre}-{part_num}"
+
                         link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
 
                         img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
@@ -1298,49 +1302,6 @@ def motor_ripley(url, limite, headers=None):
         except Exception:
             pass
 
-    # =======================================================
-    # ESTRATEGIA 2: Fallback por HTML si el JSON falla
-    # =======================================================
-    if not productos_map:
-        tarjetas = soup.select('.catalog-product-item') or soup.find_all(['div', 'article'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item)', re.I))
-
-        for t in tarjetas:
-            try:
-                tit_el = t.find(['a', 'div', 'span', 'h2', 'h3'], class_=re.compile(r'(product-title|title|brand|name)', re.I))
-                if not tit_el: continue
-                nombre = tit_el.text.strip().upper()
-                if len(nombre) < 3: continue
-
-                a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
-                if not a_el: continue
-                link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
-
-                precios_textos = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                if not precios_textos: continue
-
-                nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_textos if limpiar_precio_pnp(p) > 0])))
-                if not nums: continue
-
-                p_o = nums[0]
-                p_r = nums[-1] if len(nums) > 1 else p_o
-
-                if 0 < p_o <= limite:
-                    img_el = t.find('img')
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-srcset') or ""
-                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
-
-                    productos_map[link_final] = {
-                        "nombre": f"RIPLEY - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": str(img_url)
-                    }
-            except Exception:
-                continue
-
     productos_list = list(productos_map.values())
     if productos_list:
         safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
@@ -1348,6 +1309,8 @@ def motor_ripley(url, limite, headers=None):
         safe_log(f"⚠️ [Ripley] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
+
+
 
 
 def motor_footloose(url, limite):
