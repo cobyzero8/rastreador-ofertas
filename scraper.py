@@ -1189,7 +1189,7 @@ def motor_ripley(url, limite, headers=None):
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
             if minutos_transcurridos < 110:
-                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente para ahorrar créditos.", "caption")
+                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido para ahorrar créditos de ScraperAPI.", "caption")
                 return []
     except Exception as e:
         safe_log(f"⚠️ Nota de temporizador Ripley: {e}", "caption")
@@ -1225,34 +1225,36 @@ def motor_ripley(url, limite, headers=None):
     soup = BeautifulSoup(texto_html, 'html.parser')
 
     # =======================================================
-    # ESTRATEGIA 1: Lectura de datos __NEXT_DATA__
+    # ESTRATEGIA 1: Búsqueda Profunda en __NEXT_DATA__
     # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
         try:
             json_data = json.loads(next_script.string)
 
-            def buscar_productos(nodo):
+            # Buscador recursivo para extraer TODOS los arreglos de productos sin importar la clave
+            lista_acumulada = []
+            def buscar_todos_los_productos(nodo):
                 if isinstance(nodo, dict):
-                    if 'products' in nodo and isinstance(nodo['products'], list) and len(nodo['products']) > 0:
-                        return nodo['products']
-                    for v in nodo.values():
-                        res = buscar_productos(v)
-                        if res: return res
+                    for k, v in nodo.items():
+                        if k in ['products', 'results', 'catalog', 'items'] and isinstance(v, list) and len(v) > 0:
+                            if isinstance(v[0], dict) and any(key in v[0] for key in ['name', 'fullTitle', 'partNumber', 'uniqueID']):
+                                lista_acumulada.extend(v)
+                        else:
+                            buscar_todos_los_productos(v)
                 elif isinstance(nodo, list):
                     for x in nodo:
-                        res = buscar_productos(x)
-                        if res: return res
-                return []
+                        buscar_todos_los_productos(x)
 
-            prods = buscar_productos(json_data)
-            if prods:
-                for p in prods:
+            buscar_todos_los_productos(json_data)
+
+            if lista_acumulada:
+                for p in lista_acumulada:
                     try:
                         nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
                         if len(nombre) < 3: continue
 
-                        # Búsqueda dinámica de precios
+                        # Búsqueda exhaustiva de precios de oferta y regular
                         valores_precios = []
                         prices = p.get('prices') or p.get('price') or {}
                         
@@ -1264,7 +1266,7 @@ def motor_ripley(url, limite, headers=None):
                             val_limpio = limpiar_precio_pnp(str(prices))
                             if val_limpio > 0: valores_precios.append(val_limpio)
 
-                        for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice']:
+                        for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice', 'formattedOfferPrice']:
                             if p.get(campo_p):
                                 val_limpio = limpiar_precio_pnp(str(p.get(campo_p)))
                                 if val_limpio > 0: valores_precios.append(val_limpio)
@@ -1275,15 +1277,21 @@ def motor_ripley(url, limite, headers=None):
                         p_o = valores_ordenados[0]
                         p_r = valores_ordenados[-1] if len(valores_ordenados) > 1 else p_o
 
-                        # 🔗 CONSTRUCCIÓN EXACTA DE ENLACE DEL PRODUCTO
-                        link_rel = p.get('url') or p.get('urlPath') or p.get('singleUrl') or ''
-                        if not link_rel and p.get('partNumber'):
-                            part_num = p.get('partNumber')
-                            slug_nombre = re.sub(r'[^a-zA-Z0-9]+', '-', nombre.lower()).strip('-')
-                            link_rel = f"/p/{slug_nombre}-{part_num}"
+                        # 🔗 EXTRACTOR Y CONSTRUCTOR DEL LINK INDIVIDUAL DEL PRODUCTO
+                        link_rel = p.get('urlPath') or p.get('url') or p.get('singleUrl') or p.get('canonicalUrl') or ''
+                        
+                        # Si no hay link relativo pero hay un partNumber/uniqueID, construimos la URL canónica
+                        part_num = str(p.get('partNumber') or p.get('uniqueID') or '').strip()
+                        if (not link_rel or link_rel == url) and part_num:
+                            slug = re.sub(r'[^a-zA-Z0-9]+', '-', nombre.lower()).strip('-')
+                            link_rel = f"/p/{slug}-{part_num}"
 
-                        link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
+                        if link_rel and link_rel != url:
+                            link_final = urljoin("https://simple.ripley.com.pe", link_rel)
+                        else:
+                            continue # Omitimos si no se logró generar la URL individual del producto
 
+                        # Imagen
                         img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
                         if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
                             img_url = p['images'][0]
@@ -1304,7 +1312,7 @@ def motor_ripley(url, limite, headers=None):
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} ofertas con sus links directos.", "success")
     else:
         safe_log(f"⚠️ [Ripley] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
 
