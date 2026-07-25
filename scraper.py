@@ -1171,7 +1171,7 @@ def motor_ripley(url, limite, headers=None):
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Ripley] Consultando catálogo en Ripley vía ScraperAPI...", "info")
+    safe_log("🚀 [Ripley] Consultando catálogo filtrado vía ScraperAPI (con Render JS)...", "info")
 
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
@@ -1180,13 +1180,15 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
+    # Forzamos render=true para que cargue los filtros aplicados en la URL
     payload = {
         'api_key': api_key,
-        'url': url
+        'url': url,
+        'render': 'true'
     }
 
     try:
-        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=50)
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=60)
         status_code = resp.status_code
         texto_html = resp.text
     except Exception as e:
@@ -1200,7 +1202,7 @@ def motor_ripley(url, limite, headers=None):
     soup = BeautifulSoup(texto_html, 'html.parser')
 
     # =======================================================
-    # ESTRATEGIA 1: Extraer desde __NEXT_DATA__ (Next.js de Ripley)
+    # ESTRATEGIA 1: Extracción desde __NEXT_DATA__ (Next.js)
     # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
@@ -1221,41 +1223,53 @@ def motor_ripley(url, limite, headers=None):
                 return []
 
             prods_json = buscar_productos_next(json_data)
-            for p in prods_json:
-                try:
-                    nombre = str(p.get('name') or p.get('fullTitle') or '').strip().upper()
-                    if len(nombre) < 3: continue
+            if prods_json:
+                safe_log(f"🔍 [Ripley] Se hallaron {len(prods_json)} ítems en __NEXT_DATA__. Evaluando precios...", "info")
+                for p in prods_json:
+                    try:
+                        nombre = str(p.get('name') or p.get('fullTitle') or p.get('title') or '').strip().upper()
+                        if len(nombre) < 3: continue
 
-                    prices = p.get('prices', {})
-                    p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or prices.get('listPrice') or 0.0)
-                    p_r = float(prices.get('listPrice') or p_o)
+                        # Búsqueda exhaustiva del precio
+                        p_o, p_r = 0.0, 0.0
+                        prices = p.get('prices') or p.get('price') or {}
+                        
+                        if isinstance(prices, dict):
+                            val_o = prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or prices.get('formattedOfferPrice') or prices.get('listPrice')
+                            val_r = prices.get('listPrice') or prices.get('formattedListPrice') or val_o
+                            p_o = limpiar_precio_pnp(str(val_o)) if val_o else 0.0
+                            p_r = limpiar_precio_pnp(str(val_r)) if val_r else p_o
+                        elif isinstance(prices, (int, float, str)):
+                            p_o = limpiar_precio_pnp(str(prices))
+                            p_r = p_o
 
-                    link_rel = p.get('url', '')
-                    link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
-                    
-                    img_url = p.get('fullImage') or p.get('thumbnailImage') or p.get('images', [''])[0]
-                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
+                        link_rel = p.get('url', '')
+                        link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
+                        
+                        img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
+                        if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
+                            img_url = p['images'][0]
+                        if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
 
-                    if 0 < p_o <= limite:
-                        productos_map[link_final] = {
-                            "nombre": f"RIPLEY - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": str(img_url)
-                        }
-                except Exception:
-                    continue
-        except Exception:
-            pass
+                        if 0 < p_o <= limite:
+                            productos_map[link_final] = {
+                                "nombre": f"RIPLEY - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": str(img_url)
+                            }
+                    except Exception:
+                        continue
+        except Exception as e:
+            safe_log(f"⚠️ Error procesando __NEXT_DATA__ de Ripley: {e}", "caption")
 
     # =======================================================
-    # ESTRATEGIA 2: Fallback por Tarjetas HTML
+    # ESTRATEGIA 2: Fallback por HTML si falla el JSON
     # =======================================================
     if not productos_map:
-        tarjetas = soup.find_all(['div', 'section', 'article', 'a'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item|catalog-card)', re.I))
-        if not tarjetas:
-            tarjetas = soup.select('.catalog-product-item') or soup.select('[data-product-id]')
+        tarjetas = soup.select('.catalog-product-item') or soup.find_all(['div', 'article'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item)', re.I))
+        safe_log(f"🔍 [Ripley HTML] Evaluando {len(tarjetas)} tarjetas visibles...", "info")
 
         for t in tarjetas:
             try:
