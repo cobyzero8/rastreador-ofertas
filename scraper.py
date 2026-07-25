@@ -384,138 +384,91 @@ def motor_falabella(url, limite, headers):
 
 
 def motor_adidas(url, limite):
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, urljoin
-    import re
+    import time
     import random
     import json
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
 
     productos_map = {}
-    safe_log("📡 [Adidas] Consultando catálogo oficial en vivo...", "info")
+    texto_html = ""
+    status_code = 0
 
-    # Intentar usar cloudscraper si está presente, de lo contrario requests.Session
-    try:
-        import cloudscraper
-        session = cloudscraper.create_scraper()
-    except Exception:
-        session = requests.Session()
+    safe_log("🚀 [Adidas] Abriendo túnel cifrado HTTP/2 (Impersonando Chrome)...", "info")
 
-    ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
-    ua_mobile = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-
-    headers_desktop = {
-        "User-Agent": ua_desktop,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="127", "Google Chrome";v="127"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
-    }
-
-    try:
-        # Intento 1: Cabeceras completas de escritorio
-        resp = session.get(url, headers=headers_desktop, timeout=12)
-
-        # Intento 2: Si responde 403, reintentar con perfil móvil
-        if resp.status_code == 403:
-            headers_mobile = {
-                "User-Agent": ua_mobile,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "es-PE,es;q=0.9",
-                "Referer": "https://www.google.com/"
+    # Intentos de conexión con curl_cffi para evadir Akamai
+    for intento in range(1, 4):
+        try:
+            from curl_cffi import requests as crequests
+            resp = crequests.get(
+                url, 
+                impersonate=random.choice(["chrome110", "chrome120"]), 
+                timeout=15
+            )
+            texto_html = resp.text
+            status_code = resp.status_code
+        except ImportError:
+            # Fallback en caso de que no esté instalado curl_cffi
+            import requests
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Accept-Language": "es-PE,es;q=0.9"
             }
-            resp = session.get(url, headers=headers_mobile, timeout=12)
+            resp = requests.get(url, headers=headers, timeout=15, verify=False)
+            texto_html = resp.text
+            status_code = resp.status_code
 
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
+        if status_code == 200 and len(texto_html) > 5000:
+            break
+        else:
+            time.sleep(random.uniform(2.0, 3.5))
 
-            # CAPA 1: Extracción de datos JSON-LD
-            scripts_ld = soup.find_all('script', type='application/ld+json')
-            for script in scripts_ld:
-                try:
-                    if not script.string: continue
-                    json_data = json.loads(script.string)
+    if status_code != 200 or len(texto_html) <= 5000:
+        safe_log(f"🚨 [Adidas] Bloqueado por Akamai (HTTP {status_code}). Vuelve a ejecutar para rotar la sesión.", "warning")
+        return []
 
-                    items = []
-                    if isinstance(json_data, dict):
-                        if json_data.get('@type') == 'ItemList':
-                            items = [x.get('item', {}) for x in json_data.get('itemListElement', [])]
-                        elif json_data.get('@type') == 'Product':
-                            items = [json_data]
-                    elif isinstance(json_data, list):
-                        items = json_data
+    texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
+    soup = BeautifulSoup(texto_html, 'html.parser')
 
-                    for item in items:
-                        if not isinstance(item, dict): continue
-                        nombre = str(item.get('name', '')).strip().upper()
-                        link_rel = item.get('url', '')
-                        link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
+    # =======================================================
+    # ESTRATEGIA 1: Extracción desde __NEXT_DATA__ (Next.js)
+    # =======================================================
+    next_script = soup.find('script', id='__NEXT_DATA__')
+    if next_script:
+        try:
+            json_data = json.loads(next_script.text)
 
-                        offers = item.get('offers', {})
-                        p_o = 0.0
-                        if isinstance(offers, dict):
-                            p_o = float(offers.get('price', 0.0))
-                        elif isinstance(offers, list) and offers:
-                            p_o = float(offers[0].get('price', 0.0))
+            def buscar_productos_next(nodo):
+                if isinstance(nodo, dict):
+                    for k in ['products', 'results', 'items', 'itemListElement']:
+                        if k in nodo and isinstance(nodo[k], list) and len(nodo[k]) > 0:
+                            if isinstance(nodo[k][0], dict) and any(key in nodo[k][0] for key in ['title', 'name', 'displayName']):
+                                return nodo[k]
+                    for v in nodo.values():
+                        res = buscar_productos_next(v)
+                        if res: return res
+                elif isinstance(nodo, list):
+                    for x in nodo:
+                        res = buscar_productos_next(x)
+                        if res: return res
+                return []
 
-                        img_f = item.get('image', '')
-                        if isinstance(img_f, list) and img_f: img_f = img_f[0]
-                        if str(img_f).startswith('//'): img_f = 'https:' + str(img_f)
-
-                        if 0 < p_o <= limite and nombre and link_final:
-                            productos_map[link_final] = {
-                                "nombre": f"ADIDAS - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": p_o,
-                                "link": link_final,
-                                "img": img_f
-                            }
-                except Exception:
-                    continue
-
-            # CAPA 2: Extracción del DOM si el JSON-LD no devuelve productos
-            if not productos_map:
-                tarjetas = soup.select('[class*="glass-product-card"]') or \
-                           soup.select('[data-reg="product-card"]') or \
-                           soup.select('.grid-item') or \
-                           soup.find_all(['div', 'article'], class_=re.compile(r'(product-card|grid-item|glass-product|plp-card)', re.I))
-
-                for t in tarjetas:
+            items_json = buscar_productos_next(json_data)
+            if items_json:
+                for prod_j in items_json:
                     try:
-                        a_el = t.find('a', href=True)
-                        if not a_el: continue
-                        link_final = urljoin("https://www.adidas.pe", a_el['href'])
+                        nombre = prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or ""
+                        nombre = str(nombre).strip().upper()
+                        if len(nombre) < 3: continue
 
-                        tit_el = t.find(['p', 'span', 'h3', 'h2', 'div'], class_=re.compile(r'(title|name|card-title)', re.I))
-                        nombre = tit_el.text.strip().upper() if tit_el else ""
-                        if not nombre and a_el.has_attr('title'):
-                            nombre = a_el['title'].strip().upper()
-
-                        if not nombre or len(nombre) < 3: continue
-
-                        textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                        if not textos_precios: continue
-
-                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                        if not nums: continue
-
-                        p_o = nums[0]
-                        p_r = nums[-1] if len(nums) > 1 else p_o
-
-                        img_el = t.find('img')
-                        img_url = ""
-                        if img_el:
-                            img_url = img_el.get('data-src') or img_el.get('src') or ""
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
+                        p_o = limpiar_precio_pnp(str(prod_j.get('salePrice') or prod_j.get('price') or 0))
+                        p_r = limpiar_precio_pnp(str(prod_j.get('originalPrice') or prod_j.get('price') or p_o))
 
                         if 0 < p_o <= limite:
+                            link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
+                            link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
+                            img_url = str(prod_j.get('image', ''))
+
                             productos_map[link_final] = {
                                 "nombre": f"ADIDAS - {nombre}",
                                 "precio": p_o,
@@ -525,11 +478,45 @@ def motor_adidas(url, limite):
                             }
                     except Exception:
                         continue
-        else:
-            safe_log(f"⚠️ [Adidas] Servidor devolvió estado HTTP {resp.status_code}", "warning")
+        except Exception:
+            pass
 
-    except Exception as e:
-        safe_log(f"🛑 [Adidas] Error en ejecución: {e}", "error")
+    # =======================================================
+    # ESTRATEGIA 2: Fallback por selectores data-testid
+    # =======================================================
+    if not productos_map:
+        titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
+        for tit_el in titulos_testid:
+            try:
+                nombre_prod = tit_el.text.strip().upper()
+                ancestor = tit_el
+
+                oferta_el, regular_el, enlace_el, img_el = None, None, None, None
+                for _ in range(5):
+                    ancestor = ancestor.parent
+                    if not ancestor: break
+                    if not oferta_el: oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
+                    if not regular_el: regular_el = ancestor.find(attrs={"data-testid": "original-price"})
+                    if not enlace_el: enlace_el = ancestor.find('a', href=True)
+                    if not img_el: img_el = ancestor.find('img')
+
+                if oferta_el:
+                    precio_oferta = limpiar_precio_pnp(oferta_el.text)
+                    precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
+                    
+                    if 0 < precio_oferta <= limite:
+                        link_final = urljoin("https://www.adidas.pe", enlace_el['href']) if enlace_el else url
+                        img_url = img_el.get('src', '') if img_el else ''
+
+                        productos_map[link_final] = {
+                            "nombre": f"ADIDAS - {nombre_prod}",
+                            "precio": precio_oferta,
+                            "precio_regular": max(precio_regular, precio_oferta),
+                            "link": link_final,
+                            "img": img_url
+                        }
+            except Exception:
+                continue
 
     productos_list = list(productos_map.values())
     if productos_list:
