@@ -389,6 +389,33 @@ def motor_adidas(url, limite):
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
+    from datetime import datetime, timezone, timedelta
+
+    # =======================================================
+    # ⏱️ CONTROL DE FRECUENCIA (MÁXIMO 1 VEZ CADA 2 HORAS)
+    # =======================================================
+    try:
+        # Consultar la fecha del último escaneo de Adidas registrado en Supabase
+        res_check = supabase.table("historial_precios")\
+            .select("fecha")\
+            .like("identificador", "ADIDAS%")\
+            .order("fecha", descending=True)\
+            .limit(1)\
+            .execute()
+
+        if res_check.data and len(res_check.data) > 0:
+            ultima_fecha_str = res_check.data[0]['fecha']
+            # Convertir string a objeto datetime
+            ultima_fecha = datetime.fromisoformat(ultima_fecha_str.replace('Z', '+00:00'))
+            ahora = datetime.now(timezone.utc)
+            minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
+
+            # Si han transcurrido menos de 110 minutos, omitimos para ahorrar créditos
+            if minutos_transcurridos < 110:
+                safe_log(f"⏳ [Adidas] Escaneado hace {int(minutos_transcurridos)} min. Se omite esta ronda para ahorrar créditos de ScraperAPI.", "caption")
+                return []
+    except Exception as e:
+        safe_log(f"⚠️ No se pudo verificar el temporizador de Adidas: {e}", "caption")
 
     productos_map = {}
     texto_html = ""
@@ -396,16 +423,13 @@ def motor_adidas(url, limite):
 
     safe_log("🚀 [Adidas] Solicitando página a través de ScraperAPI (Proxy Residencial)...", "info")
 
-    # Clave API integrada desde tu cuenta
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
-    
     try:
         if "SCRAPERAPI_KEY" in st.secrets:
             api_key = st.secrets["SCRAPERAPI_KEY"]
     except Exception:
         pass
 
-    # Parámetros para la petición proxy
     payload = {
         'api_key': api_key,
         'url': url
@@ -426,9 +450,7 @@ def motor_adidas(url, limite):
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # =======================================================
-    # ESTRATEGIA 1: Extracción desde __NEXT_DATA__
-    # =======================================================
+    # Estrategia 1: Extracción JSON desde __NEXT_DATA__
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -476,9 +498,7 @@ def motor_adidas(url, limite):
         except Exception:
             pass
 
-    # =======================================================
-    # ESTRATEGIA 2: Fallback por selectores HTML
-    # =======================================================
+    # Estrategia 2: Fallback por selectores HTML
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
