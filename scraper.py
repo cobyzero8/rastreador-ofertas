@@ -1159,6 +1159,7 @@ def motor_triathlon(url, limite, headers=None):
 
     return productos_finales
 
+
 def motor_ripley(url, limite, headers=None):
     import json
     import re
@@ -1167,106 +1168,73 @@ def motor_ripley(url, limite, headers=None):
     from urllib.parse import urljoin
 
     productos_map = {}
-    
-    if not headers:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9",
-            "Referer": "https://simple.ripley.com.pe/"
-        }
+    texto_html = ""
+    status_code = 0
+
+    safe_log("🚀 [Ripley] Solicitando catálogo a través de ScraperAPI...", "info")
+
+    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        if "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+    except Exception:
+        pass
+
+    payload = {
+        'api_key': api_key,
+        'url': url
+    }
 
     try:
-        safe_log("📡 [Ripley] Escaneando catálogo...", "info")
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        
-        if resp.status_code != 200 or len(resp.text) < 2000:
-            safe_log(f"⚠️ [Ripley] Respuesta del servidor con código HTTP {resp.status_code}", "warning")
-            return []
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
+        status_code = resp.status_code
+        texto_html = resp.text
+    except Exception as e:
+        safe_log(f"🚨 [Ripley] Error al conectar con ScraperAPI: {e}", "warning")
+        return []
 
-        soup = BeautifulSoup(resp.text, 'html.parser')
+    if status_code != 200 or len(texto_html) <= 5000:
+        safe_log(f"🚨 [Ripley] ScraperAPI devolvió estado HTTP {status_code}.", "warning")
+        return []
 
-        # =======================================================
-        # ESTRATEGIA 1: Extracción desde datos JSON / JSON-LD
-        # =======================================================
-        scripts = soup.find_all('script')
-        for script in scripts:
-            if script.string and ('application/ld+json' in script.get('type', '') or 'ItemList' in script.string):
-                try:
-                    data = json.loads(script.string.strip())
-                    items = []
-                    if isinstance(data, dict) and data.get('@type') == 'ItemList':
-                        items = [x.get('item', {}) for x in data.get('itemListElement', [])]
-                    elif isinstance(data, list):
-                        items = data
-                    
-                    for prod in items:
-                        if not isinstance(prod, dict): continue
-                        nombre = str(prod.get('name', '')).strip().upper()
-                        if len(nombre) < 3: continue
-                        
-                        link_rel = prod.get('url', '')
-                        link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
-                        
-                        offers = prod.get('offers', {})
-                        p_o, p_r = 0.0, 0.0
-                        if isinstance(offers, dict):
-                            p_o = float(offers.get('price', 0.0))
-                            p_r = float(offers.get('highPrice', p_o))
-                        elif isinstance(offers, list) and offers:
-                            p_o = float(offers[0].get('price', 0.0))
-                            p_r = float(offers[0].get('highPrice', p_o))
-                            
-                        img_url = prod.get('image', '')
-                        if isinstance(img_url, list) and img_url: img_url = img_url[0]
-                        if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
+    soup = BeautifulSoup(texto_html, 'html.parser')
 
-                        if 0 < p_o <= limite and link_final:
-                            productos_map[link_final] = {
-                                "nombre": f"RIPLEY - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": str(img_url)
-                            }
-                except Exception:
-                    continue
-
-        # =======================================================
-        # ESTRATEGIA 2: Fallback por HTML / Tarjetas de Ripley
-        # =======================================================
-        if not productos_map:
-            tarjetas = soup.find_all(['div', 'section', 'article', 'a'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item|catalog-card)', re.I))
-            if not tarjetas:
-                tarjetas = soup.select('.catalog-product-item') or soup.select('[data-product-id]')
-
-            for t in tarjetas:
-                try:
-                    tit_el = t.find(['a', 'div', 'span', 'h2', 'h3'], class_=re.compile(r'(product-title|title|brand|name)', re.I))
-                    if not tit_el: continue
-                    nombre = tit_el.text.strip().upper()
+    # =======================================================
+    # ESTRATEGIA 1: Extracción por JSON-LD / Datos Estructurados
+    # =======================================================
+    scripts = soup.find_all('script')
+    for script in scripts:
+        if script.string and ('application/ld+json' in script.get('type', '') or 'ItemList' in script.string):
+            try:
+                data = json.loads(script.string.strip())
+                items = []
+                if isinstance(data, dict) and data.get('@type') == 'ItemList':
+                    items = [x.get('item', {}) for x in data.get('itemListElement', [])]
+                elif isinstance(data, list):
+                    items = data
+                
+                for prod in items:
+                    if not isinstance(prod, dict): continue
+                    nombre = str(prod.get('name', '')).strip().upper()
                     if len(nombre) < 3: continue
+                    
+                    link_rel = prod.get('url', '')
+                    link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
+                    
+                    offers = prod.get('offers', {})
+                    p_o, p_r = 0.0, 0.0
+                    if isinstance(offers, dict):
+                        p_o = float(offers.get('price', 0.0))
+                        p_r = float(offers.get('highPrice', p_o))
+                    elif isinstance(offers, list) and offers:
+                        p_o = float(offers[0].get('price', 0.0))
+                        p_r = float(offers[0].get('highPrice', p_o))
+                        
+                    img_url = prod.get('image', '')
+                    if isinstance(img_url, list) and img_url: img_url = img_url[0]
+                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
 
-                    a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
-                    if not a_el: continue
-                    link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
-
-                    precios_textos = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                    if not precios_textos: continue
-
-                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_textos if limpiar_precio_pnp(p) > 0])))
-                    if not nums: continue
-
-                    p_o = nums[0]
-                    p_r = nums[-1] if len(nums) > 1 else p_o
-
-                    if 0 < p_o <= limite:
-                        img_el = t.find('img')
-                        img_url = ""
-                        if img_el:
-                            img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-srcset') or ""
-                        if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
-
+                    if 0 < p_o <= limite and link_final:
                         productos_map[link_final] = {
                             "nombre": f"RIPLEY - {nombre}",
                             "precio": p_o,
@@ -1274,19 +1242,63 @@ def motor_ripley(url, limite, headers=None):
                             "link": link_final,
                             "img": str(img_url)
                         }
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
-    except Exception as e:
-        safe_log(f"⚠️ [Ripley] Error durante el escaneo: {e}", "warning")
+    # =======================================================
+    # ESTRATEGIA 2: Fallback por HTML / Tarjetas de Ripley
+    # =======================================================
+    if not productos_map:
+        tarjetas = soup.find_all(['div', 'section', 'article', 'a'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item|catalog-card)', re.I))
+        if not tarjetas:
+            tarjetas = soup.select('.catalog-product-item') or soup.select('[data-product-id]')
+
+        for t in tarjetas:
+            try:
+                tit_el = t.find(['a', 'div', 'span', 'h2', 'h3'], class_=re.compile(r'(product-title|title|brand|name)', re.I))
+                if not tit_el: continue
+                nombre = tit_el.text.strip().upper()
+                if len(nombre) < 3: continue
+
+                a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
+                if not a_el: continue
+                link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
+
+                precios_textos = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
+                if not precios_textos: continue
+
+                nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_textos if limpiar_precio_pnp(p) > 0])))
+                if not nums: continue
+
+                p_o = nums[0]
+                p_r = nums[-1] if len(nums) > 1 else p_o
+
+                if 0 < p_o <= limite:
+                    img_el = t.find('img')
+                    img_url = ""
+                    if img_el:
+                        img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-srcset') or ""
+                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
+
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": str(img_url)
+                    }
+            except Exception:
+                continue
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito vía ScraperAPI! Se indexaron {len(productos_list)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Ripley] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
+
+
 
 
 def motor_footloose(url, limite):
