@@ -387,15 +387,34 @@ def motor_adidas(url, limite):
     import time
     import json
     import requests
+    import re
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
     from datetime import datetime, timezone, timedelta
+
+    # Función helper interna para sanitizar precios de Adidas
+    def limpiar_precio_adidas(texto):
+        if not texto:
+            return 0.0
+        texto = str(texto)
+        # 1. Eliminar cualquier etiqueta o texto de porcentaje/descuento (ej. "-30%", "30%")
+        texto = re.sub(r'-?\s*\d+\s*%', '', texto)
+        # 2. Si vienen palabras como "Precio original", limpiarlas
+        texto = re.sub(r'[^\d.,]', ' ', texto)
+        # 3. Extraer el primer bloque de números (el precio real)
+        match = re.search(r'\d+(?:[.,]\d+)?', texto)
+        if match:
+            num_str = match.group(0).replace(',', '.')
+            try:
+                return float(num_str)
+            except ValueError:
+                return 0.0
+        return 0.0
 
     # =======================================================
     # ⏱️ CONTROL DE FRECUENCIA (MÁXIMO 1 VEZ CADA 2 HORAS)
     # =======================================================
     try:
-        # Consultar la fecha del último escaneo de Adidas registrado en Supabase
         res_check = supabase.table("historial_precios")\
             .select("fecha")\
             .like("identificador", "ADIDAS%")\
@@ -405,12 +424,10 @@ def motor_adidas(url, limite):
 
         if res_check.data and len(res_check.data) > 0:
             ultima_fecha_str = res_check.data[0]['fecha']
-            # Convertir string a objeto datetime
             ultima_fecha = datetime.fromisoformat(ultima_fecha_str.replace('Z', '+00:00'))
             ahora = datetime.now(timezone.utc)
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
-            # Si han transcurrido menos de 110 minutos, omitimos para ahorrar créditos
             if minutos_transcurridos < 110:
                 safe_log(f"⏳ [Adidas] Escaneado hace {int(minutos_transcurridos)} min. Se omite esta ronda para ahorrar créditos de ScraperAPI.", "caption")
                 return []
@@ -478,8 +495,10 @@ def motor_adidas(url, limite):
                         nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or "").strip().upper()
                         if len(nombre) < 3: continue
 
-                        p_o = limpiar_precio_pnp(str(prod_j.get('salePrice') or prod_j.get('price') or 0))
-                        p_r = limpiar_precio_pnp(str(prod_j.get('originalPrice') or prod_j.get('price') or p_o))
+                        # Usar limpiador específico para Adidas
+                        p_o = limpiar_precio_adidas(prod_j.get('salePrice') or prod_j.get('price'))
+                        p_r = limpiar_precio_adidas(prod_j.get('originalPrice') or prod_j.get('price'))
+                        if p_r == 0: p_r = p_o
 
                         if 0 < p_o <= limite:
                             link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
@@ -516,9 +535,10 @@ def motor_adidas(url, limite):
                     if not img_el: img_el = ancestor.find('img')
 
                 if oferta_el:
-                    precio_oferta = limpiar_precio_pnp(oferta_el.text)
-                    precio_regular = limpiar_precio_pnp(regular_el.text) if regular_el else precio_oferta
-                    
+                    # Limpieza estricta descartando etiquetas de porcentaje
+                    precio_oferta = limpiar_precio_adidas(oferta_el.text)
+                    precio_regular = limpiar_precio_adidas(regular_el.text) if regular_el else precio_oferta
+
                     if 0 < precio_oferta <= limite:
                         link_final = urljoin("https://www.adidas.pe", enlace_el['href']) if enlace_el else url
                         img_url = img_el.get('src', '') if img_el else ''
@@ -1190,10 +1210,10 @@ def motor_ripley(url, limite, headers=None):
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
             if minutos_transcurridos < 110:
-                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido para ahorrar créditos.", "caption")
+                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente.", "caption")
                 return []
     except Exception as e:
-        safe_log(f"⚠️ Nota de temporizador Ripley: {e}", "caption")
+        safe_log(f"⚠️ Temporizador Ripley: {e}", "caption")
 
     productos_map = {}
     texto_html = ""
@@ -1228,6 +1248,9 @@ def motor_ripley(url, limite, headers=None):
     MARCAS_PERMITIDAS = ["TCL", "LG", "SAMSUNG"]
     TAMANOS_PERMITIDOS = ["55", "65"]
 
+    # =======================================================
+    # ESTRATEGIA 1: Lectura desde __NEXT_DATA__
+    # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
         try:
@@ -1238,7 +1261,7 @@ def motor_ripley(url, limite, headers=None):
                 if isinstance(nodo, dict):
                     for k, v in nodo.items():
                         if k in ['products', 'results', 'catalog', 'items'] and isinstance(v, list) and len(v) > 0:
-                            if isinstance(v[0], dict) and any(key in v[0] for key in ['name', 'fullTitle', 'partNumber', 'uniqueID']):
+                            if isinstance(v[0], dict) and any(key in v[0] for key in ['name', 'fullTitle', 'partNumber', 'uniqueID', 'url']):
                                 lista_acumulada.extend(v)
                         else:
                             buscar_todos_los_productos(v)
@@ -1248,91 +1271,120 @@ def motor_ripley(url, limite, headers=None):
 
             buscar_todos_los_productos(json_data)
 
-            if lista_acumulada:
-                safe_log(f"🔎 [Ripley] Se extrajeron {len(lista_acumulada)} productos del JSON. Evaluando filtros...", "caption")
-                
-                for p in lista_acumulada:
-                    try:
-                        nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
-                        if len(nombre) < 3: continue
+            for p in lista_acumulada:
+                try:
+                    nombre = str(p.get('name') or p.get('fullTitle') or '').strip().upper()
+                    if len(nombre) < 3: continue
 
-                        # Extraer marca (manejando si es string o dict)
-                        brand_raw = p.get('brand') or ''
-                        if isinstance(brand_raw, dict):
-                            brand_str = str(brand_raw.get('name') or '').upper()
-                        else:
-                            brand_str = str(brand_raw).upper()
+                    # Marca
+                    brand_raw = p.get('brand') or ''
+                    brand_str = str(brand_raw.get('name') if isinstance(brand_raw, dict) else brand_raw).upper()
 
-                        # 1. Filtro de Marcas
-                        if not any(m in brand_str or m in nombre for m in MARCAS_PERMITIDAS):
-                            continue
+                    if not any(m in brand_str or m in nombre for m in MARCAS_PERMITIDAS): continue
+                    if not any(t in nombre for t in TAMANOS_PERMITIDOS): continue
 
-                        # 2. Filtro de Tamaños (55" o 65")
-                        if not any(t in nombre for t in TAMANOS_PERMITIDOS):
-                            continue
+                    # Precios
+                    valores_precios = []
+                    prices = p.get('prices') or p.get('price') or {}
+                    
+                    if isinstance(prices, dict):
+                        for v in prices.values():
+                            v_clean = str(v).replace('\xa0', ' ').replace('&nbsp;', ' ')
+                            val_l = limpiar_precio_pnp(v_clean)
+                            if val_l > 0: valores_precios.append(val_l)
+                    elif isinstance(prices, (int, float, str)):
+                        v_clean = str(prices).replace('\xa0', ' ').replace('&nbsp;', ' ')
+                        val_l = limpiar_precio_pnp(v_clean)
+                        if val_l > 0: valores_precios.append(val_l)
 
-                        # 3. Extracción exhaustiva de precios
-                        valores_precios = []
-                        prices = p.get('prices') or p.get('price') or {}
-                        
-                        if isinstance(prices, dict):
-                            for k, v in prices.items():
-                                val_limpio = limpiar_precio_pnp(str(v))
-                                if val_limpio > 0: valores_precios.append(val_limpio)
-                        elif isinstance(prices, (int, float, str)):
-                            val_limpio = limpiar_precio_pnp(str(prices))
-                            if val_limpio > 0: valores_precios.append(val_limpio)
+                    for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice', 'formattedOfferPrice']:
+                        if p.get(campo_p):
+                            v_clean = str(p.get(campo_p)).replace('\xa0', ' ').replace('&nbsp;', ' ')
+                            val_l = limpiar_precio_pnp(v_clean)
+                            if val_l > 0: valores_precios.append(val_l)
 
-                        for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice', 'formattedOfferPrice', 'formattedCardPrice']:
-                            if p.get(campo_p):
-                                val_limpio = limpiar_precio_pnp(str(p.get(campo_p)))
-                                if val_limpio > 0: valores_precios.append(val_limpio)
+                    if not valores_precios: continue
 
-                        if not valores_precios: continue
+                    valores_ordenados = sorted(list(set(valores_precios)))
+                    p_o = valores_ordenados[0]
+                    p_r = valores_ordenados[-1] if len(valores_ordenados) > 1 else p_o
 
-                        valores_ordenados = sorted(list(set(valores_precios)))
-                        p_o = valores_ordenados[0]
-                        p_r = valores_ordenados[-1] if len(valores_ordenados) > 1 else p_o
+                    if p_o <= 0 or p_o > limite: continue
 
-                        if p_o <= 0 or p_o > limite:
-                            continue
+                    # Enlace directo
+                    link_rel = p.get('url') or p.get('urlPath') or p.get('singleUrl') or ''
+                    if not link_rel: continue
 
-                        # 4. Construcción del Enlace Directo
-                        link_rel = p.get('urlPath') or p.get('url') or p.get('singleUrl') or p.get('canonicalUrl') or ''
-                        part_num = str(p.get('partNumber') or p.get('uniqueID') or '').strip()
-                        
-                        if (not link_rel or link_rel == url) and part_num:
-                            slug = re.sub(r'[^a-zA-Z0-9]+', '-', nombre.lower()).strip('-')
-                            link_rel = f"/p/{slug}-{part_num}"
+                    link_final = urljoin("https://simple.ripley.com.pe", link_rel)
 
-                        if link_rel and link_rel != url:
-                            link_final = urljoin("https://simple.ripley.com.pe", link_rel)
-                        else:
-                            # Fallback de seguridad para no perder la oferta
-                            link_final = f"https://simple.ripley.com.pe/p/-{part_num}" if part_num else url
+                    img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
+                    if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
+                        img_url = p['images'][0]
+                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
 
-                        img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
-                        if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
-                            img_url = p['images'][0]
-                        if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
-
-                        productos_map[link_final] = {
-                            "nombre": f"RIPLEY - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": str(img_url)
-                        }
-                    except Exception:
-                        continue
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": str(img_url)
+                    }
+                except Exception:
+                    continue
         except Exception:
             pass
 
+    # =======================================================
+    # ESTRATEGIA 2: Fallback HTML usando clases exactas del DOM
+    # =======================================================
+    if not productos_map:
+        tarjetas = soup.find_all(['div', 'section', 'article'], class_=re.compile(r'(catalog-product-item|product-item)', re.I))
+        for t in tarjetas:
+            try:
+                tit_el = t.find(class_=re.compile(r'product-item--name', re.I)) or t.find(['p', 'h2', 'h3'])
+                if not tit_el: continue
+                nombre = tit_el.text.strip().upper()
+
+                if not any(m in nombre for m in MARCAS_PERMITIDAS): continue
+                if not any(tm in nombre for tm in TAMANOS_PERMITIDOS): continue
+
+                a_el = t.find('a', href=True) or (t if t.name == 'a' else None)
+                if not a_el: continue
+                link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
+
+                # Limpieza de texto de precios removiendo \xa0
+                texto_tarjeta = t.text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+                precios_textos = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
+                if not precios_textos: continue
+
+                nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_textos if limpiar_precio_pnp(p) > 0])))
+                if not nums: continue
+
+                p_o = nums[0]
+                p_r = nums[-1] if len(nums) > 1 else p_o
+
+                if 0 < p_o <= limite:
+                    img_el = t.find('img')
+                    img_url = ""
+                    if img_el:
+                        img_url = img_el.get('data-src') or img_el.get('src') or ""
+                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
+
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": str(img_url)
+                    }
+            except Exception:
+                continue
+
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} TVs (TCL/LG/Samsung de 55\" y 65\").", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito! Se indexaron {len(productos_list)} TVs (TCL/LG/Samsung 55\"/65\").", "success")
     else:
-        safe_log(f"⚠️ [Ripley] No se encontraron TVs de 55\"/65\" (TCL, LG, Samsung) por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Ripley] No se encontraron TVs de 55\"/65\" por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
 
