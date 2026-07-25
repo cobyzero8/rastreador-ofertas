@@ -1166,6 +1166,30 @@ def motor_ripley(url, limite, headers=None):
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin, quote
+    from datetime import datetime, timezone
+
+    # =======================================================
+    # ⏱️ CONTROL DE FRECUENCIA PARA RIPLEY (MÁX 1 VEZ CADA 2 HORAS)
+    # =======================================================
+    try:
+        res_check = supabase.table("historial_precios")\
+            .select("fecha")\
+            .like("identificador", "%RIPLEY%")\
+            .order("fecha", descending=True)\
+            .limit(1)\
+            .execute()
+
+        if res_check.data and len(res_check.data) > 0:
+            ultima_fecha_str = res_check.data[0]['fecha']
+            ultima_fecha = datetime.fromisoformat(ultima_fecha_str.replace('Z', '+00:00'))
+            ahora = datetime.now(timezone.utc)
+            minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
+
+            if minutos_transcurridos < 110:
+                safe_log(f"⏳ [Ripley] Escaneado hace {int(minutos_transcurridos)} min. Omitido temporalmente para ahorrar créditos de ScraperAPI.", "caption")
+                return []
+    except Exception as e:
+        safe_log(f"⚠️ No se pudo verificar temporizador de Ripley: {e}", "caption")
 
     productos_map = {}
     texto_html = ""
@@ -1180,7 +1204,6 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    # Codificamos la URL adecuadamente para evitar errores 500 en ScraperAPI
     url_encoded = quote(url, safe='')
     endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe"
 
@@ -1198,9 +1221,7 @@ def motor_ripley(url, limite, headers=None):
 
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # =======================================================
-    # ESTRATEGIA 1: Lectura de datos estructurados __NEXT_DATA__
-    # =======================================================
+    # Extracción __NEXT_DATA__
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
         try:
@@ -1223,7 +1244,7 @@ def motor_ripley(url, limite, headers=None):
             if prods:
                 for p in prods:
                     try:
-                        nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
+                        nombre = str(p.get('name') or p.get('fullTitle') or '').strip().upper()
                         if len(nombre) < 3: continue
 
                         prices = p.get('prices', {})
@@ -1257,51 +1278,8 @@ def motor_ripley(url, limite, headers=None):
                             }
                     except Exception:
                         continue
-        except Exception as e:
-            safe_log(f"⚠️ Error extrayendo JSON de Ripley: {e}", "caption")
-
-    # =======================================================
-    # ESTRATEGIA 2: Fallback por HTML si el JSON estuviera ausente
-    # =======================================================
-    if not productos_map:
-        tarjetas = soup.select('.catalog-product-item') or soup.find_all(['div', 'article'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item)', re.I))
-
-        for t in tarjetas:
-            try:
-                tit_el = t.find(['a', 'div', 'span', 'h2', 'h3'], class_=re.compile(r'(product-title|title|brand|name)', re.I))
-                if not tit_el: continue
-                nombre = tit_el.text.strip().upper()
-                if len(nombre) < 3: continue
-
-                a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
-                if not a_el: continue
-                link_final = urljoin("https://simple.ripley.com.pe", a_el['href'])
-
-                precios_textos = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                if not precios_textos: continue
-
-                nums = sorted(list(set([limpiar_precio_pnp(p) for p in precios_textos if limpiar_precio_pnp(p) > 0])))
-                if not nums: continue
-
-                p_o = nums[0]
-                p_r = nums[-1] if len(nums) > 1 else p_o
-
-                if 0 < p_o <= limite:
-                    img_el = t.find('img')
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-srcset') or ""
-                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
-
-                    productos_map[link_final] = {
-                        "nombre": f"RIPLEY - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": str(img_url)
-                    }
-            except Exception:
-                continue
+        except Exception:
+            pass
 
     productos_list = list(productos_map.values())
     if productos_list:
@@ -1310,7 +1288,6 @@ def motor_ripley(url, limite, headers=None):
         safe_log(f"⚠️ [Ripley] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
 
 
 def motor_footloose(url, limite):
