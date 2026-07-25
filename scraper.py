@@ -1165,13 +1165,13 @@ def motor_ripley(url, limite, headers=None):
     import re
     import requests
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, quote
 
     productos_map = {}
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Ripley] Consultando catálogo filtrado vía ScraperAPI (con Render JS)...", "info")
+    safe_log("🚀 [Ripley] Consultando catálogo vía ScraperAPI...", "info")
 
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
@@ -1180,15 +1180,12 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    # Forzamos render=true para que cargue los filtros aplicados en la URL
-    payload = {
-        'api_key': api_key,
-        'url': url,
-        'render': 'true'
-    }
+    # Codificamos la URL adecuadamente para evitar errores 500 en ScraperAPI
+    url_encoded = quote(url, safe='')
+    endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe"
 
     try:
-        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=60)
+        resp = requests.get(endpoint_scraper, timeout=40)
         status_code = resp.status_code
         texto_html = resp.text
     except Exception as e:
@@ -1202,50 +1199,49 @@ def motor_ripley(url, limite, headers=None):
     soup = BeautifulSoup(texto_html, 'html.parser')
 
     # =======================================================
-    # ESTRATEGIA 1: Extracción desde __NEXT_DATA__ (Next.js)
+    # ESTRATEGIA 1: Lectura de datos estructurados __NEXT_DATA__
     # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
         try:
             json_data = json.loads(next_script.string)
 
-            def buscar_productos_next(nodo):
+            def buscar_productos(nodo):
                 if isinstance(nodo, dict):
                     if 'products' in nodo and isinstance(nodo['products'], list) and len(nodo['products']) > 0:
                         return nodo['products']
                     for v in nodo.values():
-                        res = buscar_productos_next(v)
+                        res = buscar_productos(v)
                         if res: return res
                 elif isinstance(nodo, list):
                     for x in nodo:
-                        res = buscar_productos_next(x)
+                        res = buscar_productos(x)
                         if res: return res
                 return []
 
-            prods_json = buscar_productos_next(json_data)
-            if prods_json:
-                safe_log(f"🔍 [Ripley] Se hallaron {len(prods_json)} ítems en __NEXT_DATA__. Evaluando precios...", "info")
-                for p in prods_json:
+            prods = buscar_productos(json_data)
+            if prods:
+                for p in prods:
                     try:
-                        nombre = str(p.get('name') or p.get('fullTitle') or p.get('title') or '').strip().upper()
+                        nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
                         if len(nombre) < 3: continue
 
-                        # Búsqueda exhaustiva del precio
-                        p_o, p_r = 0.0, 0.0
-                        prices = p.get('prices') or p.get('price') or {}
-                        
+                        prices = p.get('prices', {})
+                        p_o = 0.0
                         if isinstance(prices, dict):
-                            val_o = prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or prices.get('formattedOfferPrice') or prices.get('listPrice')
-                            val_r = prices.get('listPrice') or prices.get('formattedListPrice') or val_o
+                            val_o = prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or prices.get('listPrice')
                             p_o = limpiar_precio_pnp(str(val_o)) if val_o else 0.0
-                            p_r = limpiar_precio_pnp(str(val_r)) if val_r else p_o
                         elif isinstance(prices, (int, float, str)):
                             p_o = limpiar_precio_pnp(str(prices))
-                            p_r = p_o
+
+                        p_r = p_o
+                        val_r = prices.get('listPrice') if isinstance(prices, dict) else None
+                        if val_r:
+                            p_r = max(limpiar_precio_pnp(str(val_r)), p_o)
 
                         link_rel = p.get('url', '')
                         link_final = urljoin("https://simple.ripley.com.pe", link_rel) if link_rel else url
-                        
+
                         img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
                         if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
                             img_url = p['images'][0]
@@ -1255,21 +1251,20 @@ def motor_ripley(url, limite, headers=None):
                             productos_map[link_final] = {
                                 "nombre": f"RIPLEY - {nombre}",
                                 "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
+                                "precio_regular": p_r,
                                 "link": link_final,
                                 "img": str(img_url)
                             }
                     except Exception:
                         continue
         except Exception as e:
-            safe_log(f"⚠️ Error procesando __NEXT_DATA__ de Ripley: {e}", "caption")
+            safe_log(f"⚠️ Error extrayendo JSON de Ripley: {e}", "caption")
 
     # =======================================================
-    # ESTRATEGIA 2: Fallback por HTML si falla el JSON
+    # ESTRATEGIA 2: Fallback por HTML si el JSON estuviera ausente
     # =======================================================
     if not productos_map:
         tarjetas = soup.select('.catalog-product-item') or soup.find_all(['div', 'article'], class_=re.compile(r'(catalog-product-item|catalog-item|product-item)', re.I))
-        safe_log(f"🔍 [Ripley HTML] Evaluando {len(tarjetas)} tarjetas visibles...", "info")
 
         for t in tarjetas:
             try:
