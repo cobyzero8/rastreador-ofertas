@@ -1160,6 +1160,7 @@ def motor_triathlon(url, limite, headers=None):
     return productos_finales
 
 
+
 def motor_ripley(url, limite, headers=None):
     import json
     import re
@@ -1207,7 +1208,6 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    # URL Encoding limpio para ScraperAPI
     url_encoded = quote(url, safe='')
     endpoint_scraper = f"https://api.scraperapi.com/?api_key={api_key}&url={url_encoded}&country_code=pe"
 
@@ -1225,13 +1225,9 @@ def motor_ripley(url, limite, headers=None):
 
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # 🎯 REGLAS ESTRICTAS DE FILTRADO SOLICITADAS
     MARCAS_PERMITIDAS = ["TCL", "LG", "SAMSUNG"]
     TAMANOS_PERMITIDOS = ["55", "65"]
 
-    # =======================================================
-    # ESTRATEGIA: Búsqueda Profunda en __NEXT_DATA__
-    # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script and next_script.string:
         try:
@@ -1253,21 +1249,29 @@ def motor_ripley(url, limite, headers=None):
             buscar_todos_los_productos(json_data)
 
             if lista_acumulada:
+                safe_log(f"🔎 [Ripley] Se extrajeron {len(lista_acumulada)} productos del JSON. Evaluando filtros...", "caption")
+                
                 for p in lista_acumulada:
                     try:
                         nombre = str(p.get('name') or p.get('fullTitle') or p.get('partNumber') or '').strip().upper()
-                        brand = str(p.get('brand') or '').strip().upper()
                         if len(nombre) < 3: continue
 
+                        # Extraer marca (manejando si es string o dict)
+                        brand_raw = p.get('brand') or ''
+                        if isinstance(brand_raw, dict):
+                            brand_str = str(brand_raw.get('name') or '').upper()
+                        else:
+                            brand_str = str(brand_raw).upper()
+
                         # 1. Filtro de Marcas
-                        if not any(m in brand or m in nombre for m in MARCAS_PERMITIDAS):
+                        if not any(m in brand_str or m in nombre for m in MARCAS_PERMITIDAS):
                             continue
 
                         # 2. Filtro de Tamaños (55" o 65")
                         if not any(t in nombre for t in TAMANOS_PERMITIDOS):
                             continue
 
-                        # 3. Extracción de Precios
+                        # 3. Extracción exhaustiva de precios
                         valores_precios = []
                         prices = p.get('prices') or p.get('price') or {}
                         
@@ -1279,7 +1283,7 @@ def motor_ripley(url, limite, headers=None):
                             val_limpio = limpiar_precio_pnp(str(prices))
                             if val_limpio > 0: valores_precios.append(val_limpio)
 
-                        for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice', 'formattedOfferPrice']:
+                        for campo_p in ['offerPrice', 'cardPrice', 'listPrice', 'salePrice', 'formattedOfferPrice', 'formattedCardPrice']:
                             if p.get(campo_p):
                                 val_limpio = limpiar_precio_pnp(str(p.get(campo_p)))
                                 if val_limpio > 0: valores_precios.append(val_limpio)
@@ -1304,7 +1308,8 @@ def motor_ripley(url, limite, headers=None):
                         if link_rel and link_rel != url:
                             link_final = urljoin("https://simple.ripley.com.pe", link_rel)
                         else:
-                            continue
+                            # Fallback de seguridad para no perder la oferta
+                            link_final = f"https://simple.ripley.com.pe/p/-{part_num}" if part_num else url
 
                         img_url = p.get('fullImage') or p.get('thumbnailImage') or ''
                         if not img_url and isinstance(p.get('images'), list) and len(p['images']) > 0:
@@ -1330,6 +1335,8 @@ def motor_ripley(url, limite, headers=None):
         safe_log(f"⚠️ [Ripley] No se encontraron TVs de 55\"/65\" (TCL, LG, Samsung) por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
+
+
 
 
 def motor_footloose(url, limite):
