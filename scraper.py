@@ -385,8 +385,8 @@ def motor_falabella(url, limite, headers):
 
 def motor_adidas(url, limite):
     import time
-    import random
     import json
+    import requests
     from bs4 import BeautifulSoup
     from urllib.parse import urljoin
 
@@ -394,32 +394,41 @@ def motor_adidas(url, limite):
     texto_html = ""
     status_code = 0
 
-    safe_log("🚀 [Adidas] Abriendo túnel cifrado HTTP/2 con impersonación Chrome...", "info")
+    safe_log("🚀 [Adidas] Solicitando página a través de ScraperAPI (Proxy Residencial)...", "info")
 
-    for intento in range(1, 4):
-        try:
-            from curl_cffi import requests as crequests
-            resp = crequests.get(
-                url, 
-                impersonate="chrome120", 
-                timeout=20
-            )
-            texto_html = resp.text
-            status_code = resp.status_code
-            if status_code == 200 and len(texto_html) > 5000:
-                break
-        except Exception as e:
-            safe_log(f"⚠️ Intento {intento} fallido en Adidas: {e}", "caption")
-            time.sleep(2)
+    # Clave API integrada desde tu cuenta
+    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    
+    try:
+        if "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+    except Exception:
+        pass
+
+    # Parámetros para la petición proxy
+    payload = {
+        'api_key': api_key,
+        'url': url
+    }
+
+    try:
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
+        status_code = resp.status_code
+        texto_html = resp.text
+    except Exception as e:
+        safe_log(f"🚨 [Adidas] Error al conectar con ScraperAPI: {e}", "warning")
+        return []
 
     if status_code != 200 or len(texto_html) <= 5000:
-        safe_log(f"🚨 [Adidas] No se pudo obtener la página (HTTP {status_code}).", "warning")
+        safe_log(f"🚨 [Adidas] ScraperAPI devolvió estado HTTP {status_code}.", "warning")
         return []
 
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # Estrategia 1: __NEXT_DATA__
+    # =======================================================
+    # ESTRATEGIA 1: Extracción desde __NEXT_DATA__
+    # =======================================================
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -467,7 +476,9 @@ def motor_adidas(url, limite):
         except Exception:
             pass
 
-    # Estrategia 2: Selectores HTML
+    # =======================================================
+    # ESTRATEGIA 2: Fallback por selectores HTML
+    # =======================================================
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
@@ -504,11 +515,14 @@ def motor_adidas(url, limite):
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Adidas] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Adidas] ¡Éxito vía ScraperAPI! Se indexaron {len(productos_list)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Adidas] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
+
+
+
 
 
 def motor_platanitos(url, limite):
