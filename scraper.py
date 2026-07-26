@@ -1449,7 +1449,8 @@ def motor_estilos(url, limite):
 
 def motor_promart(url, limite, headers=None):
     import requests
-    from urllib.parse import urlparse, parse_qs, urljoin
+    import re
+    from urllib.parse import urlparse, parse_qs, urljoin, unquote
 
     productos_map = {}
     
@@ -1464,41 +1465,37 @@ def motor_promart(url, limite, headers=None):
         parsed_url = urlparse(url)
         raw_path = parsed_url.path.rstrip('/')
         
-        # Endpoint de la API pública VTEX
-        if raw_path and raw_path != "/tecnologia/tv-y-video/televisores":
-            api_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{raw_path}"
-        else:
-            api_url = "https://www.promart.pe/api/catalog_system/pub/products/search"
+        # 1. Usamos una consulta base limpia para evitar el error HTTP 400
+        api_url = "https://www.promart.pe/api/catalog_system/pub/products/search/tecnologia/tv-y-video/televisores"
 
-        # Parámetros base de paginación y orden
-        params = [
-            ("O", "OrderByPriceASC"),
-            ("_from", "0"),
-            ("_to", "49")
-        ]
+        params = {
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"
+        }
 
-        # Extraer TODOS los filtros 'fq' (categoría, tamaño, pulgadas, marca, etc.)
-        query_params = parse_qs(parsed_url.query)
-        
-        if 'fq' in query_params:
-            for fq_val in query_params['fq']:
-                params.append(("fq", fq_val))
-                
-        if '_query' in query_params:
-            params.append(("ft", query_params['_query'][0]))
-        elif 'ft' in query_params:
-            params.append(("ft", query_params['ft'][0]))
-
-        safe_log("📡 [Promart API] Consultando catálogo VTEX con filtros de pulgada...", "info")
+        safe_log("📡 [Promart API] Consultando catálogo VTEX de Televisores...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
         if resp.status_code in [200, 206]:
             data = resp.json()
-            safe_log(f"🔍 [Promart API] Se procesaron {len(data)} productos con el filtro aplicado.", "info")
+            safe_log(f"🔍 [Promart API] Catálogo recibido ({len(data)} ítems). Filtrando especificaciones en vivo...", "info")
+
+            # Detectar si en la URL original se pidió un tamaño de pantalla específico
+            url_decodificada = unquote(url).lower()
+            exigir_50_59 = "50-59" in url_decodificada or "55" in url_decodificada
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
+                    
+                    # 2. FILTRADO INTELIGENTE POR PULGADAS EN PYTHON
+                    if exigir_50_59:
+                        # Busca expresiones como 50", 55", 58", 50 PULGADAS, etc.
+                        tiene_pulgada_deseada = any(size in nombre_prod for size in ['50"', '55"', '58"', '50 "', '55 "', '58 "', '50P', '55P', '58P', '50-59', '55 PULGADAS', '50 PULGADAS'])
+                        if not tiene_pulgada_deseada:
+                            continue # Descarta televisores de 32", 43", 65", etc.
+
                     link_rel = p.get("link", "")
                     link_final = urljoin("https://www.promart.pe", link_rel) if link_rel else url
 
@@ -1540,7 +1537,7 @@ def motor_promart(url, limite, headers=None):
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Promart] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Promart] ¡Éxito! Se indexaron {len(productos_list)} ofertas válidas.", "success")
     else:
         safe_log(f"⚠️ [Promart] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
 
