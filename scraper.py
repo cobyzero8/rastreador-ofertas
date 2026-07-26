@@ -1447,7 +1447,98 @@ def motor_estilos(url, limite):
     return productos_list
 
 
+def motor_promart(url, limite, headers=None):
+    import requests
+    from urllib.parse import urlparse, parse_qs, urljoin
 
+    productos_map = {}
+    
+    if not headers:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.promart.pe/"
+        }
+
+    try:
+        parsed_url = urlparse(url)
+        raw_path = parsed_url.path.rstrip('/')
+        
+        # Endpoint de la API pública VTEX de Promart
+        if raw_path:
+            api_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{raw_path}"
+        else:
+            api_url = "https://www.promart.pe/api/catalog_system/pub/products/search"
+
+        params = {
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"
+        }
+
+        # Extraer parámetros de búsqueda si vienen en la URL
+        query_params = parse_qs(parsed_url.query)
+        if '_query' in query_params:
+            params['ft'] = query_params['_query'][0]
+        elif 'ft' in query_params:
+            params['ft'] = query_params['ft'][0]
+
+        safe_log("📡 [Promart API] Consultando catálogo VTEX oficial...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+            safe_log(f"🔍 [Promart API] Se procesaron {len(data)} productos desde VTEX.", "info")
+
+            for p in data:
+                try:
+                    nombre_prod = p.get("productName", "").strip().upper()
+                    link_rel = p.get("link", "")
+                    link_final = urljoin("https://www.promart.pe", link_rel) if link_rel else url
+
+                    items = p.get("items", [])
+                    if not items: continue
+
+                    first_item = items[0]
+                    images = first_item.get("images", [])
+                    img_final = images[0].get("imageUrl", "") if images else ""
+                    if img_final.startswith('//'): img_final = 'https:' + img_final
+
+                    sellers = first_item.get("sellers", [])
+                    if not sellers: continue
+
+                    offer = sellers[0].get("commertialOffer", {})
+                    
+                    # Validar disponibilidad de stock
+                    stock = offer.get("AvailableQuantity", 0)
+                    if stock <= 0: continue
+
+                    p_o = float(offer.get("Price", 0.0))
+                    p_r = float(offer.get("ListPrice", p_o))
+
+                    if 0 < p_o <= limite:
+                        productos_map[link_final] = {
+                            "nombre": f"PROMART - {nombre_prod}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_final
+                        }
+                except Exception:
+                    continue
+        else:
+            safe_log(f"🛑 [Promart API] Código HTTP: {resp.status_code}", "error")
+
+    except Exception as e:
+        safe_log(f"🛑 [Promart API] Error crítico: {e}", "error")
+
+    productos_list = list(productos_map.values())
+    if productos_list:
+        safe_log(f"✅ [Promart] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
+    else:
+        safe_log(f"⚠️ [Promart] No hay productos por debajo de S/. {limite:.2f}", "warning")
+
+    return productos_list
 
 
 
@@ -1499,6 +1590,7 @@ def escanear_tienda(url, limite):
     elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
     elif "footloose.pe" in dominio: return motor_footloose(url, limite)
     elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
+    elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
