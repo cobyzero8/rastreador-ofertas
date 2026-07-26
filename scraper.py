@@ -1595,25 +1595,35 @@ def motor_coolbox(url, limite, headers=None):
     try:
         parsed_url = urlparse(url)
         
-        # 1. Path de categoría/búsqueda para Coolbox
+        # 1. Path de categoría / búsqueda para Coolbox
         path = parsed_url.path.rstrip('/')
         api_base_url = f"https://www.coolbox.pe/api/catalog_system/pub/products/search{path}"
 
-        # 2. Construcción limpia del Query String para VTEX
+        # 2. SOLUCIÓN AL HTTP 400: Limpieza de parámetros de VTEX IO / Frontend
+        params_prohibidos = ['initialmap', 'initialquery', 'map', 'query', 'searchstate']
+        
         query_parts = []
         if parsed_url.query:
             for pair in parsed_url.query.split('&'):
-                # Evita duplicar la paginación
-                if pair.startswith('_from=') or pair.startswith('_to='):
+                if not pair or '=' not in pair:
                     continue
-                # Traduce order= a O= si la URL viene con la sintaxis del frontend
-                if pair.startswith('order='):
-                    val = pair.split('=', 1)[1]
+                
+                key, val = pair.split('=', 1)
+                key_lower = key.lower()
+                
+                # Descartar parámetros del frontend de VTEX IO que provocan el Error 400
+                if key_lower in params_prohibidos:
+                    continue
+                # Evitar duplicar paginación
+                if key_lower in ['_from', '_to']:
+                    continue
+                # Traducir ordenamiento a la sintaxis del catálogo
+                if key_lower in ['order', 'orderby']:
                     query_parts.append(f"O={val}")
                 else:
                     query_parts.append(pair)
         
-        # Garantiza el orden por menor precio y el rango inicial de búsqueda
+        # Garantizar orden por menor precio y rango inicial
         if not any(p.startswith('O=') for p in query_parts):
             query_parts.append("O=OrderByPriceASC")
         query_parts.append("_from=0")
@@ -1630,13 +1640,13 @@ def motor_coolbox(url, limite, headers=None):
             safe_log(f"🔍 [Coolbox API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
 
             url_decodificada = unquote(url).lower()
-            exigir_50_59_tv = "50-59" in url_decodificada and ("tv" in path or "televisor" in path)
+            exigir_50_59_tv = "50-59" in url_decodificada and ("tv" in path or "televisor" in path or "todo-tv" in path)
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # Filtro específico si se escanean TVs de 50-59 pulgadas
+                    # Filtro específico de pulgadas en caso de escanear televisores
                     if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
@@ -1665,7 +1675,7 @@ def motor_coolbox(url, limite, headers=None):
 
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Validación de Stock
+                    # Validación de Stock disponible
                     if offer.get("AvailableQuantity", 0) <= 0: 
                         continue
 
@@ -1679,7 +1689,7 @@ def motor_coolbox(url, limite, headers=None):
                     
                     for option in installment_options:
                         p_name = f"{option.get('paymentSystemName', '')} {option.get('paymentName', '')}".lower()
-                        if any(t in p_name for t in ["oh", "bcp", "cmr", "diners", "tarjeta"]):
+                        if any(t in p_name for t in ["oh", "bcp", "cmr", "diners", "tarjeta", "bbva"]):
                             installments = option.get("installments", [])
                             if installments:
                                 total_val = float(installments[0].get("total", 0))
