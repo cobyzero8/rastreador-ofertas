@@ -1581,7 +1581,7 @@ def motor_promart(url, limite, headers=None):
 def motor_coolbox(url, limite, headers=None):
     import requests
     import re
-    from urllib.parse import urlparse, urljoin, unquote
+    from urllib.parse import urlparse, parse_qs, urljoin, unquote
 
     productos_map = {}
     
@@ -1594,15 +1594,26 @@ def motor_coolbox(url, limite, headers=None):
 
     try:
         parsed_url = urlparse(url)
-        
-        # 1. Path de categoría / búsqueda para Coolbox
+        query_params = parse_qs(parsed_url.query)
         path = parsed_url.path.rstrip('/')
-        api_base_url = f"https://www.coolbox.pe/api/catalog_system/pub/products/search{path}"
 
-        # 2. SOLUCIÓN AL HTTP 400: Limpieza de parámetros de VTEX IO / Frontend
-        params_prohibidos = ['initialmap', 'initialquery', 'map', 'query', 'searchstate']
-        
+        # 1. DETECCIÓN DE CLUSTERS Y COLECCIONES (Ej. initialQuery=1539)
+        initial_map = query_params.get("initialMap", [""])[0]
+        initial_query = query_params.get("initialQuery", [""])[0]
+
         query_parts = []
+
+        if initial_map == "productClusterIds" and initial_query:
+            # Si es un cluster/colección dinámico, usamos la API base sin la ruta /todo-tv
+            api_base_url = "https://www.coolbox.pe/api/catalog_system/pub/products/search"
+            query_parts.append(f"fq=productClusterIds:{initial_query}")
+        else:
+            # Si es una categoría normal, mantenemos la ruta
+            api_base_url = f"https://www.coolbox.pe/api/catalog_system/pub/products/search{path}"
+
+        # 2. LIMPIEZA Y TRADUCCIÓN DE PARÁMETROS
+        params_ignorar = ['initialmap', 'initialquery', 'map', 'query', 'searchstate', '_from', '_to']
+        
         if parsed_url.query:
             for pair in parsed_url.query.split('&'):
                 if not pair or '=' not in pair:
@@ -1611,19 +1622,15 @@ def motor_coolbox(url, limite, headers=None):
                 key, val = pair.split('=', 1)
                 key_lower = key.lower()
                 
-                # Descartar parámetros del frontend de VTEX IO que provocan el Error 400
-                if key_lower in params_prohibidos:
+                if key_lower in params_ignorar:
                     continue
-                # Evitar duplicar paginación
-                if key_lower in ['_from', '_to']:
-                    continue
-                # Traducir ordenamiento a la sintaxis del catálogo
+                
                 if key_lower in ['order', 'orderby']:
                     query_parts.append(f"O={val}")
                 else:
                     query_parts.append(pair)
         
-        # Garantizar orden por menor precio y rango inicial
+        # Paginación y ordenamiento por menor precio
         if not any(p.startswith('O=') for p in query_parts):
             query_parts.append("O=OrderByPriceASC")
         query_parts.append("_from=0")
@@ -1646,7 +1653,7 @@ def motor_coolbox(url, limite, headers=None):
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # Filtro específico de pulgadas en caso de escanear televisores
+                    # Filtro inteligente de pulgadas si se trata de televisores
                     if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
@@ -1675,12 +1682,10 @@ def motor_coolbox(url, limite, headers=None):
 
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Validación de Stock disponible
                     if offer.get("AvailableQuantity", 0) <= 0: 
                         continue
 
-                    # Extracción de precios
-                    p_o = float(offer.get("Price", 0.0))          # Precio Oferta / Web
+                    p_o = float(offer.get("Price", 0.0))          # Precio Web / Oferta
                     p_r = float(offer.get("ListPrice", p_o))      # Precio Lista tachado
                     
                     # Detección de Precio Exclusivo con Tarjetas asociadas
