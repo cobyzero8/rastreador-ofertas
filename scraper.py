@@ -1184,21 +1184,27 @@ def motor_triathlon(url, limite, headers=None):
 def motor_ripley(url, limite, headers=None):
     import requests
     import json
+    from urllib.parse import quote
 
     productos = []
     
-    # API interna oficial de Ripley Perú (Directo a base de datos, 100% rápido y confiable)
+    # 1. Endpoint directo JSON de Ripley
     api_ripley = "https://simple.ripley.com.pe/api/v1/catalog/products?term=televisor&per_page=50&sort=relevance_desc"
     
-    headers_directo = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://simple.ripley.com.pe/"
-    }
+    # 2. Clave de ScraperAPI para bypass de Cloudflare 403
+    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        if "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+    except Exception:
+        pass
+
+    # Usamos ScraperAPI sobre el JSON directo (Rápido, económico y 100% libre de bloqueo 403)
+    endpoint_proxy = f"https://api.scraperapi.com/?api_key={api_key}&url={quote(api_ripley, safe='')}&country_code=pe"
 
     try:
-        safe_log("🚀 [Ripley] Consultando API oficial de Ripley...", "info")
-        resp = requests.get(api_ripley, headers=headers_directo, timeout=15)
+        safe_log("🚀 [Ripley] Consultando catálogo directo vía ScraperAPI...", "info")
+        resp = requests.get(endpoint_proxy, timeout=30)
         
         if resp.status_code == 200:
             data = resp.json()
@@ -1209,7 +1215,6 @@ def motor_ripley(url, limite, headers=None):
                     nombre = p.get("name", "").strip().upper()
                     if not nombre: continue
 
-                    # Precios
                     prices = p.get("prices", {})
                     p_o = float(prices.get("offerPrice") or prices.get("cardPrice") or prices.get("listPrice") or 0.0)
                     p_r = float(prices.get("listPrice") or p_o)
@@ -1229,18 +1234,24 @@ def motor_ripley(url, limite, headers=None):
                         })
                 except Exception:
                     continue
+            
+            safe_log(f"✅ [Ripley] ¡Éxito! Se procesaron {len(items)} productos de la base de datos.", "info")
         else:
-            safe_log(f"🚨 [Ripley] Error de respuesta: Estado {resp.status_code}", "warning")
+            safe_log(f"🚨 [Ripley] ScraperAPI devolvió estado: {resp.status_code}", "warning")
 
     except Exception as e:
-        safe_log(f"🚨 [Ripley] Error crítico al consultar Ripley: {e}", "error")
+        safe_log(f"🚨 [Ripley] Error de conexión: {e}", "error")
 
     if productos:
-        safe_log(f"✅ [Ripley] ¡Éxito TOTAL! Se encontraron {len(productos)} televisores.", "success")
+        safe_log(f"✅ [Ripley] ¡Éxito TOTAL! Se encontraron {len(productos)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [Ripley] No hay TVs por debajo de S/. {limite:.2f}", "warning")
 
     return productos
+
+
+
+
 
 
 def motor_footloose(url, limite):
