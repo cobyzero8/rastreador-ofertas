@@ -1450,7 +1450,7 @@ def motor_estilos(url, limite):
 def motor_promart(url, limite, headers=None):
     import requests
     import re
-    from urllib.parse import urlparse, parse_qs, urljoin, unquote
+    from urllib.parse import urlparse, urljoin, unquote
 
     productos_map = {}
     
@@ -1463,40 +1463,51 @@ def motor_promart(url, limite, headers=None):
 
     try:
         parsed_url = urlparse(url)
-        query_params = parse_qs(parsed_url.query)
         
-        # API base de VTEX para la categoría
-        api_url = "https://www.promart.pe/api/catalog_system/pub/products/search/tecnologia/tv-y-video/televisores"
+        # 1. Construcción dinámica de la URL base usando el path exacto
+        path = parsed_url.path.rstrip('/')
+        api_base_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{path}"
 
-        params = {
-            "O": query_params.get("O", ["OrderByPriceASC"])[0],
-            "_from": "0",
-            "_to": "49"
-        }
+        # 2. SOLUCIÓN AL ERROR 400: Armado manual del Query String
+        # Evitamos usar el dict "params" de requests para que no codifique los ':' a '%3A'
+        query_parts = []
+        if parsed_url.query:
+            # Separamos la query en crudo (manteniendo los %20 y los :)
+            for pair in parsed_url.query.split('&'):
+                # Descartamos el filtro de categoría duplicado (causante original del error)
+                if pair.startswith('fq=C:') or pair.startswith('fq=C%3A'):
+                    continue
+                # Descartamos la paginación si ya viene en la URL
+                if pair.startswith('_from=') or pair.startswith('_to='):
+                    continue
+                query_parts.append(pair)
+        
+        # Inyectamos nuestros parámetros de orden y paginación
+        if not any(p.startswith('O=') for p in query_parts):
+            query_parts.append("O=OrderByPriceASC")
+        query_parts.append("_from=0")
+        query_parts.append("_to=49")
 
-        # 1. SOLUCIÓN AL ERROR 400: Filtrar parámetros de categoría que causan conflicto
-        if "fq" in query_params:
-            # Nos quedamos solo con los fq de especificaciones (ej. specificationFilter), 
-            # descartando los de categoría (C:/...) porque ya están implícitos en el api_url.
-            fqs_limpios = [f for f in query_params["fq"] if not f.startswith("C:/")]
-            if fqs_limpios:
-                params["fq"] = fqs_limpios
+        # Ensamblamos la URL final sin codificaciones destructivas
+        final_query_string = "&".join(query_parts)
+        final_api_url = f"{api_base_url}?{final_query_string}"
 
         safe_log("📡 [Promart API] Consultando catálogo VTEX...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+        
+        # Pasamos la URL completa ensamblada (sin el argumento params)
+        resp = requests.get(final_api_url, headers=headers, timeout=15, verify=False)
 
         if resp.status_code in [200, 206]:
             data = resp.json()
             safe_log(f"🔍 [Promart API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
 
             url_decodificada = unquote(url).lower()
-            exigir_50_59 = "50-59" in url_decodificada or "specificationfilter_10794" in url_decodificada
+            exigir_50_59 = "50-59" in url_decodificada or "specificationfilter" in url_decodificada
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # 2. FILTRADO ROBUSTO CON EXPRESIONES REGULARES (PULGADAS)
                     if exigir_50_59:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
@@ -1510,34 +1521,26 @@ def motor_promart(url, limite, headers=None):
                     link_final = urljoin("https://www.promart.pe", link_rel) if link_rel else url
 
                     items = p.get("items", [])
-                    if not items: 
-                        continue
+                    if not items: continue
 
                     first_item = items[0]
                     images = first_item.get("images", [])
                     img_final = images[0].get("imageUrl", "") if images else ""
-                    if img_final.startswith('//'): 
-                        img_final = 'https:' + img_final
+                    if img_final.startswith('//'): img_final = 'https:' + img_final
 
                     sellers = first_item.get("sellers", [])
-                    if not sellers: 
-                        continue
+                    if not sellers: continue
 
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Validar stock disponible
-                    stock = offer.get("AvailableQuantity", 0)
-                    if stock <= 0: 
+                    if offer.get("AvailableQuantity", 0) <= 0: 
                         continue
 
-                    # 3. EXTRAER LOS 3 TIPOS DE PRECIOS (Oferta, Lista y Tarjeta oh!)
-                    p_o = float(offer.get("Price", 0.0))          # Precio Oferta Regular (ej. S/ 799)
-                    p_r = float(offer.get("ListPrice", p_o))      # Precio Lista tachado (ej. S/ 1699)
+                    p_o = float(offer.get("Price", 0.0))
+                    p_r = float(offer.get("ListPrice", p_o))
                     
-                    # Detección del precio exclusivo con Tarjeta oh! (ej. S/ 749)
                     p_tarjeta = None
-                    payment_options = offer.get("PaymentOptions", {})
-                    installment_options = payment_options.get("installmentOptions", [])
+                    installment_options = offer.get("PaymentOptions", {}).get("installmentOptions", [])
                     
                     for option in installment_options:
                         p_name = f"{option.get('paymentSystemName', '')} {option.get('paymentName', '')}".lower()
@@ -1545,21 +1548,19 @@ def motor_promart(url, limite, headers=None):
                             installments = option.get("installments", [])
                             if installments:
                                 total_val = float(installments[0].get("total", 0))
-                                # Evitar que la API retorne el valor multiplicado accidentalmente por 100
                                 val = total_val / 100.0 if total_val > 10000 else float(installments[0].get("value", 0))
                                 if 0 < val < p_o:
                                     p_tarjeta = val
                                     break
 
-                    # Determinar el precio más bajo accesible para evaluar el límite del usuario
                     precio_minimo = p_tarjeta if p_tarjeta else p_o
 
                     if 0 < precio_minimo <= limite:
                         productos_map[link_final] = {
                             "nombre": f"PROMART - {nombre_prod}",
-                            "precio": p_o,                             # S/ 799 (Oferta regular)
-                            "precio_tarjeta": p_tarjeta,               # S/ 749 (Tarjeta oh!)
-                            "precio_regular": max(p_r, p_o),           # S/ 1,699 (Tachado)
+                            "precio": p_o,
+                            "precio_tarjeta": p_tarjeta,
+                            "precio_regular": max(p_r, p_o),
                             "link": link_final,
                             "img": img_final
                         }
