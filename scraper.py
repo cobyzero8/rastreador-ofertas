@@ -1474,9 +1474,13 @@ def motor_promart(url, limite, headers=None):
             "_to": "49"
         }
 
-        # 1. PASAR FILTROS DE LA URL DE NAVEGACIÓN A LA API VTEX (ej: fq=specificationFilter_10794:50-59 pulgadas)
+        # 1. SOLUCIÓN AL ERROR 400: Filtrar parámetros de categoría que causan conflicto
         if "fq" in query_params:
-            params["fq"] = query_params["fq"]
+            # Nos quedamos solo con los fq de especificaciones (ej. specificationFilter), 
+            # descartando los de categoría (C:/...) porque ya están implícitos en el api_url.
+            fqs_limpios = [f for f in query_params["fq"] if not f.startswith("C:/")]
+            if fqs_limpios:
+                params["fq"] = fqs_limpios
 
         safe_log("📡 [Promart API] Consultando catálogo VTEX...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
@@ -1541,6 +1545,7 @@ def motor_promart(url, limite, headers=None):
                             installments = option.get("installments", [])
                             if installments:
                                 total_val = float(installments[0].get("total", 0))
+                                # Evitar que la API retorne el valor multiplicado accidentalmente por 100
                                 val = total_val / 100.0 if total_val > 10000 else float(installments[0].get("value", 0))
                                 if 0 < val < p_o:
                                     p_tarjeta = val
@@ -1553,8 +1558,8 @@ def motor_promart(url, limite, headers=None):
                         productos_map[link_final] = {
                             "nombre": f"PROMART - {nombre_prod}",
                             "precio": p_o,                             # S/ 799 (Oferta regular)
-                            "precio_tarjeta": p_tarjeta,              # S/ 749 (Tarjeta oh!)
-                            "precio_regular": max(p_r, p_o),          # S/ 1,699 (Tachado)
+                            "precio_tarjeta": p_tarjeta,               # S/ 749 (Tarjeta oh!)
+                            "precio_regular": max(p_r, p_o),           # S/ 1,699 (Tachado)
                             "link": link_final,
                             "img": img_final
                         }
