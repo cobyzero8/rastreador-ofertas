@@ -1764,51 +1764,60 @@ def motor_tradicional_general(url, limite, headers):
 def motor_marathon(url, limite, headers=None):
     import requests
     import re
+    import json
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, urljoin
 
     productos_map = {}
     
-    if not headers:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-ES,es;q=0.9",
-            "Referer": "https://www.marathon.store/pe"
-        }
+    # 1. LOG INICIAL INMEDIATO (Confirma el arranque en el dashboard)
+    safe_log("📡 [Marathon] Conectando con la tienda...", "info")
+
+    # 2. HEADERS COMPLETOS DE NAVEGADOR (Evita bloqueos de servidor/Akamai)
+    headers_marathon = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://www.marathon.store/pe/"
+    }
+
+    if headers:
+        headers_marathon.update(headers)
 
     try:
-        safe_log("📡 [Marathon] Consultando catálogo...", "info")
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+        session = requests.Session()
+        resp = session.get(url, headers=headers_marathon, timeout=12, verify=False)
 
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             
-            # Selectores de tarjetas de producto en la plataforma SAP Hybris de Marathon
-            cards = soup.select('.product-item, .product-tile, .js-product-tile, div[data-product-code], .item-product')
+            # ESTRATEGIA 1: Extracción por selectores CSS de tarjetas de producto
+            cards = soup.select('.product-item, .product-tile, .js-product-tile, div[data-product-code], .item-product, .productCard, div.product-card')
             
-            if not cards:
-                # Fallback para estructuras alternativas de rejilla
-                cards = soup.find_all('div', class_=re.compile(r'product-item|productTile|productCard'))
-
-            safe_log(f"🔍 [Marathon] Ítems encontrados en página: {len(cards)}. Procesando...", "info")
+            safe_log(f"🔍 [Marathon] Respuesta 200 OK. Procesando {len(cards)} ítems en vista...", "info")
 
             for card in cards:
                 try:
-                    # 1. Extraer Nombre del Producto
-                    name_elem = card.select_one('.name, .product-name, .js-product-name, a.title, .product-item-name')
+                    name_elem = card.select_one('.name, .product-name, .js-product-name, a.title, .product-item-name, [data-product-name]')
                     if not name_elem:
                         continue
                     nombre_prod = name_elem.get_text(strip=True).upper()
 
-                    # 2. Extraer Enlace del Producto
                     link_elem = card.select_one('a[href]')
                     if not link_elem:
                         continue
                     link_rel = link_elem.get('href', '')
                     link_final = urljoin("https://www.marathon.store", link_rel)
 
-                    # 3. Extraer Imagen del Producto
                     img_elem = card.select_one('img')
                     img_final = ""
                     if img_elem:
@@ -1816,28 +1825,21 @@ def motor_marathon(url, limite, headers=None):
                         if img_final.startswith('//'):
                             img_final = 'https:' + img_final
 
-                    # 4. Extraer Precios (Regular vs Oferta)
-                    price_elems = card.select('.price, .product-price, .price-box, span[class*="price"], .sales')
+                    price_text = card.get_text()
                     precios_encontrados = []
-                    
-                    for p in price_elems:
-                        text_p = p.get_text(strip=True)
-                        # Busca patrones de montos en soles (S/ 299.00, S/299, etc.)
-                        match = re.search(r'S/\.?\s*([\d,.]+)', text_p)
-                        if match:
-                            val_str = match.group(1).replace(',', '')
-                            try:
-                                val = float(val_str)
-                                if val > 0:
-                                    precios_encontrados.append(val)
-                            except ValueError:
-                                pass
+                    for match in re.finditer(r'S/\.?\s*([\d,.]+)', price_text):
+                        try:
+                            val = float(match.group(1).replace(',', ''))
+                            if val > 0:
+                                precios_encontrados.append(val)
+                        except ValueError:
+                            pass
 
                     if not precios_encontrados:
                         continue
 
-                    p_o = min(precios_encontrados)  # Precio de Oferta
-                    p_r = max(precios_encontrados)  # Precio Regular
+                    p_o = min(precios_encontrados)
+                    p_r = max(precios_encontrados)
 
                     if 0 < p_o <= limite:
                         productos_map[link_final] = {
@@ -1851,11 +1853,50 @@ def motor_marathon(url, limite, headers=None):
                 except Exception:
                     continue
 
+            # ESTRATEGIA 2 (FALLBACK JSON-LD): Si el HTML no trajo tarjetas por CSS
+            if not productos_map:
+                scripts = soup.find_all('script', type='application/ld+json')
+                for script in scripts:
+                    try:
+                        if not script.string: continue
+                        js_data = json.loads(script.string)
+                        
+                        items_list = []
+                        if isinstance(js_data, list):
+                            items_list = js_data
+                        elif isinstance(js_data, dict):
+                            items_list = js_data.get('itemListElement', []) or [js_data]
+
+                        for item in items_list:
+                            prod_info = item.get('item', item) if isinstance(item, dict) else item
+                            if not isinstance(prod_info, dict): continue
+                            
+                            nombre_prod = prod_info.get('name', '').strip().upper()
+                            link_final = prod_info.get('url', url)
+                            img_final = prod_info.get('image', '')
+                            if isinstance(img_final, list) and img_final:
+                                img_final = img_final[0]
+
+                            offers = prod_info.get('offers', {})
+                            price = float(offers.get('price', 0) or 0)
+
+                            if nombre_prod and 0 < price <= limite:
+                                productos_map[link_final] = {
+                                    "nombre": f"MARATHON - {nombre_prod}",
+                                    "precio": price,
+                                    "precio_tarjeta": None,
+                                    "precio_regular": price,
+                                    "link": link_final,
+                                    "img": img_final
+                                }
+                    except Exception:
+                        continue
+
         else:
             safe_log(f"🛑 [Marathon] Código HTTP: {resp.status_code}", "error")
 
     except Exception as e:
-        safe_log(f"🛑 [Marathon] Error crítico: {e}", "error")
+        safe_log(f"🛑 [Marathon] Error de conexión: {e}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
