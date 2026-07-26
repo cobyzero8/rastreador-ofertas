@@ -1767,7 +1767,7 @@ def escanear_tienda(url, limite):
     elif "footloose.pe" in dominio: return motor_footloose(url, limite)
     elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
     elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
-    elif "COOLBOX" in tienda or "coolbox.pe" in url_lower: return motor_coolbox(url, limite)
+    elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
