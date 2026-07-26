@@ -1759,8 +1759,9 @@ def motor_tradicional_general(url, limite, headers):
     except Exception: pass
     return productos
 
+
+
 def motor_marathon(url, limite, headers=None):
-    import requests
     import re
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, urljoin
@@ -1772,53 +1773,59 @@ def motor_marathon(url, limite, headers=None):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.marathon.store/pe/",
-        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin"
+        "Referer": "https://www.marathon.store/pe/"
     }
 
-    resp = None
+    html_content = None
+    status_code = None
 
-    # 1. Intento principal con cloudscraper (si está instalado)
+    # 1. PRIMER INTENTO: curl_cffi (Efectivo contra bloqueos Cloudflare TLS en GitHub Actions)
     try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
-        resp = scraper.get(url, headers=headers_marathon, timeout=15)
-    except Exception:
+        from curl_cffi import requests as curl_requests
+        resp = curl_requests.get(url, headers=headers_marathon, impersonate="chrome120", timeout=15, verify=False)
+        status_code = resp.status_code
+        if status_code == 200:
+            html_content = resp.text
+    except Exception as e:
         pass
 
-    # 2. Fallback con requests pre-calentando la sesión
-    if not resp or resp.status_code == 403:
+    # 2. SEGUNDO INTENTO: cloudscraper (Fallback)
+    if not html_content:
         try:
-            session = requests.Session()
-            # Handshake previo a la home para obtener cookies válidas y evadir el 403
-            session.get("https://www.marathon.store/pe/", headers=headers_marathon, timeout=8, verify=False)
-            resp = session.get(url, headers=headers_marathon, timeout=15, verify=False)
+            import cloudscraper
+            scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+            resp = scraper.get(url, headers=headers_marathon, timeout=15)
+            status_code = resp.status_code
+            if status_code == 200:
+                html_content = resp.text
+        except Exception:
+            pass
+
+    # 3. TERCER INTENTO: requests tradicional (Fallback final)
+    if not html_content:
+        try:
+            import requests
+            resp = requests.get(url, headers=headers_marathon, timeout=15, verify=False)
+            status_code = resp.status_code
+            if status_code == 200:
+                html_content = resp.text
         except Exception as e:
             safe_log(f"🛑 [Marathon] Error de red: {e}", "error")
-            return []
 
-    try:
-        if resp and resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # Selectores extraídos directamente de tu captura de Developer Tools
+    # PROCESAMIENTO DEL HTML
+    if html_content:
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
             cards = soup.select('.product-item')
             safe_log(f"🔍 [Marathon] Respuesta 200 OK. Procesando {len(cards)} ítems...", "info")
 
             for card in cards:
                 try:
-                    # Nombre (.nameproduct)
                     name_elem = card.select_one('.nameproduct, .product-name, .name')
                     if not name_elem:
                         continue
                     nombre_prod = name_elem.get_text(strip=True).upper()
 
-                    # Enlace (Extraído de data-bv-redirect-url o <a>)
                     link_final = ""
                     redirect_elem = card.select_one('[data-bv-redirect-url]')
                     if redirect_elem and redirect_elem.get('data-bv-redirect-url'):
@@ -1831,7 +1838,6 @@ def motor_marathon(url, limite, headers=None):
                     if not link_final:
                         continue
 
-                    # Imagen
                     img_elem = card.select_one('img')
                     img_final = ""
                     if img_elem:
@@ -1839,7 +1845,6 @@ def motor_marathon(url, limite, headers=None):
                         if img_final.startswith('//'):
                             img_final = 'https:' + img_final
 
-                    # Precios (.price y .price-promotion)
                     price_elems = card.select('.price')
                     precios_encontrados = []
                     for p_elem in price_elems:
@@ -1856,8 +1861,8 @@ def motor_marathon(url, limite, headers=None):
                     if not precios_encontrados:
                         continue
 
-                    p_o = min(precios_encontrados)  # Oferta (ej. S/ 79.50)
-                    p_r = max(precios_encontrados)  # Lista (ej. S/ 159.00)
+                    p_o = min(precios_encontrados)
+                    p_r = max(precios_encontrados)
 
                     if 0 < p_o <= limite:
                         productos_map[link_final] = {
@@ -1870,12 +1875,11 @@ def motor_marathon(url, limite, headers=None):
                         }
                 except Exception:
                     continue
-        else:
-            status = resp.status_code if resp else "Sin Respuesta"
-            safe_log(f"🛑 [Marathon] Código HTTP: {status}", "error")
-
-    except Exception as e:
-        safe_log(f"🛑 [Marathon] Error crítico: {e}", "error")
+        except Exception as e:
+            safe_log(f"🛑 [Marathon] Error al procesar HTML: {e}", "error")
+    else:
+        status_msg = f"HTTP {status_code}" if status_code else "Sin Respuesta / Bloqueo TCP"
+        safe_log(f"🛑 [Marathon] Código HTTP: {status_msg}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
