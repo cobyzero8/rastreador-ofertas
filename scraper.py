@@ -1463,67 +1463,98 @@ def motor_promart(url, limite, headers=None):
 
     try:
         parsed_url = urlparse(url)
-        raw_path = parsed_url.path.rstrip('/')
+        query_params = parse_qs(parsed_url.query)
         
-        # 1. Usamos una consulta base limpia para evitar el error HTTP 400
+        # API base de VTEX para la categoría
         api_url = "https://www.promart.pe/api/catalog_system/pub/products/search/tecnologia/tv-y-video/televisores"
 
         params = {
-            "O": "OrderByPriceASC",
+            "O": query_params.get("O", ["OrderByPriceASC"])[0],
             "_from": "0",
             "_to": "49"
         }
 
-        safe_log("📡 [Promart API] Consultando catálogo VTEX de Televisores...", "info")
+        # 1. PASAR FILTROS DE LA URL DE NAVEGACIÓN A LA API VTEX (ej: fq=specificationFilter_10794:50-59 pulgadas)
+        if "fq" in query_params:
+            params["fq"] = query_params["fq"]
+
+        safe_log("📡 [Promart API] Consultando catálogo VTEX...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
         if resp.status_code in [200, 206]:
             data = resp.json()
-            safe_log(f"🔍 [Promart API] Catálogo recibido ({len(data)} ítems). Filtrando especificaciones en vivo...", "info")
+            safe_log(f"🔍 [Promart API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
 
-            # Detectar si en la URL original se pidió un tamaño de pantalla específico
             url_decodificada = unquote(url).lower()
-            exigir_50_59 = "50-59" in url_decodificada or "55" in url_decodificada
+            exigir_50_59 = "50-59" in url_decodificada or "specificationfilter_10794" in url_decodificada
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # 2. FILTRADO INTELIGENTE POR PULGADAS EN PYTHON
+                    # 2. FILTRADO ROBUSTO CON EXPRESIONES REGULARES (PULGADAS)
                     if exigir_50_59:
-                        # Busca expresiones como 50", 55", 58", 50 PULGADAS, etc.
-                        tiene_pulgada_deseada = any(size in nombre_prod for size in ['50"', '55"', '58"', '50 "', '55 "', '58 "', '50P', '55P', '58P', '50-59', '55 PULGADAS', '50 PULGADAS'])
-                        if not tiene_pulgada_deseada:
-                            continue # Descarta televisores de 32", 43", 65", etc.
+                        match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
+                        if match_pulgadas:
+                            pulgadas = int(match_pulgadas.group(1))
+                            if not (50 <= pulgadas <= 59):
+                                continue
+                        elif not any(k in nombre_prod for k in ["50-59", "50", "55", "58"]):
+                            continue
 
                     link_rel = p.get("link", "")
                     link_final = urljoin("https://www.promart.pe", link_rel) if link_rel else url
 
                     items = p.get("items", [])
-                    if not items: continue
+                    if not items: 
+                        continue
 
                     first_item = items[0]
                     images = first_item.get("images", [])
                     img_final = images[0].get("imageUrl", "") if images else ""
-                    if img_final.startswith('//'): img_final = 'https:' + img_final
+                    if img_final.startswith('//'): 
+                        img_final = 'https:' + img_final
 
                     sellers = first_item.get("sellers", [])
-                    if not sellers: continue
+                    if not sellers: 
+                        continue
 
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Validar stock
+                    # Validar stock disponible
                     stock = offer.get("AvailableQuantity", 0)
-                    if stock <= 0: continue
+                    if stock <= 0: 
+                        continue
 
-                    p_o = float(offer.get("Price", 0.0))
-                    p_r = float(offer.get("ListPrice", p_o))
+                    # 3. EXTRAER LOS 3 TIPOS DE PRECIOS (Oferta, Lista y Tarjeta oh!)
+                    p_o = float(offer.get("Price", 0.0))          # Precio Oferta Regular (ej. S/ 799)
+                    p_r = float(offer.get("ListPrice", p_o))      # Precio Lista tachado (ej. S/ 1699)
+                    
+                    # Detección del precio exclusivo con Tarjeta oh! (ej. S/ 749)
+                    p_tarjeta = None
+                    payment_options = offer.get("PaymentOptions", {})
+                    installment_options = payment_options.get("installmentOptions", [])
+                    
+                    for option in installment_options:
+                        p_name = f"{option.get('paymentSystemName', '')} {option.get('paymentName', '')}".lower()
+                        if "oh" in p_name:
+                            installments = option.get("installments", [])
+                            if installments:
+                                total_val = float(installments[0].get("total", 0))
+                                val = total_val / 100.0 if total_val > 10000 else float(installments[0].get("value", 0))
+                                if 0 < val < p_o:
+                                    p_tarjeta = val
+                                    break
 
-                    if 0 < p_o <= limite:
+                    # Determinar el precio más bajo accesible para evaluar el límite del usuario
+                    precio_minimo = p_tarjeta if p_tarjeta else p_o
+
+                    if 0 < precio_minimo <= limite:
                         productos_map[link_final] = {
                             "nombre": f"PROMART - {nombre_prod}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
+                            "precio": p_o,                             # S/ 799 (Oferta regular)
+                            "precio_tarjeta": p_tarjeta,              # S/ 749 (Tarjeta oh!)
+                            "precio_regular": max(p_r, p_o),          # S/ 1,699 (Tachado)
                             "link": link_final,
                             "img": img_final
                         }
