@@ -1759,6 +1759,112 @@ def motor_tradicional_general(url, limite, headers):
     except Exception: pass
     return productos
 
+
+
+def motor_marathon(url, limite, headers=None):
+    import requests
+    import re
+    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, urljoin
+
+    productos_map = {}
+    
+    if not headers:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "Referer": "https://www.marathon.store/pe"
+        }
+
+    try:
+        safe_log("📡 [Marathon] Consultando catálogo...", "info")
+        resp = requests.get(url, headers=headers, timeout=15, verify=False)
+
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            # Selectores de tarjetas de producto en la plataforma SAP Hybris de Marathon
+            cards = soup.select('.product-item, .product-tile, .js-product-tile, div[data-product-code], .item-product')
+            
+            if not cards:
+                # Fallback para estructuras alternativas de rejilla
+                cards = soup.find_all('div', class_=re.compile(r'product-item|productTile|productCard'))
+
+            safe_log(f"🔍 [Marathon] Ítems encontrados en página: {len(cards)}. Procesando...", "info")
+
+            for card in cards:
+                try:
+                    # 1. Extraer Nombre del Producto
+                    name_elem = card.select_one('.name, .product-name, .js-product-name, a.title, .product-item-name')
+                    if not name_elem:
+                        continue
+                    nombre_prod = name_elem.get_text(strip=True).upper()
+
+                    # 2. Extraer Enlace del Producto
+                    link_elem = card.select_one('a[href]')
+                    if not link_elem:
+                        continue
+                    link_rel = link_elem.get('href', '')
+                    link_final = urljoin("https://www.marathon.store", link_rel)
+
+                    # 3. Extraer Imagen del Producto
+                    img_elem = card.select_one('img')
+                    img_final = ""
+                    if img_elem:
+                        img_final = img_elem.get('src') or img_elem.get('data-src') or img_elem.get('data-original') or ""
+                        if img_final.startswith('//'):
+                            img_final = 'https:' + img_final
+
+                    # 4. Extraer Precios (Regular vs Oferta)
+                    price_elems = card.select('.price, .product-price, .price-box, span[class*="price"], .sales')
+                    precios_encontrados = []
+                    
+                    for p in price_elems:
+                        text_p = p.get_text(strip=True)
+                        # Busca patrones de montos en soles (S/ 299.00, S/299, etc.)
+                        match = re.search(r'S/\.?\s*([\d,.]+)', text_p)
+                        if match:
+                            val_str = match.group(1).replace(',', '')
+                            try:
+                                val = float(val_str)
+                                if val > 0:
+                                    precios_encontrados.append(val)
+                            except ValueError:
+                                pass
+
+                    if not precios_encontrados:
+                        continue
+
+                    p_o = min(precios_encontrados)  # Precio de Oferta
+                    p_r = max(precios_encontrados)  # Precio Regular
+
+                    if 0 < p_o <= limite:
+                        productos_map[link_final] = {
+                            "nombre": f"MARATHON - {nombre_prod}",
+                            "precio": p_o,
+                            "precio_tarjeta": None,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_final
+                        }
+                except Exception:
+                    continue
+
+        else:
+            safe_log(f"🛑 [Marathon] Código HTTP: {resp.status_code}", "error")
+
+    except Exception as e:
+        safe_log(f"🛑 [Marathon] Error crítico: {e}", "error")
+
+    productos_list = list(productos_map.values())
+    if productos_list:
+        safe_log(f"✅ [Marathon] ¡Éxito! Se indexaron {len(productos_list)} ofertas válidas.", "success")
+    else:
+        safe_log(f"⚠️ [Marathon] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
+
+    return productos_list
+
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
@@ -1783,6 +1889,7 @@ def escanear_tienda(url, limite):
     elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
     elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
+    elif "marathon.store" in dominio: return motor_marathon(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
