@@ -1188,10 +1188,10 @@ def motor_ripley(url, limite, headers=None):
 
     productos = []
     
-    # 1. Endpoint directo JSON de Ripley
-    api_ripley = "https://simple.ripley.com.pe/api/v1/catalog/products?term=televisor&per_page=50&sort=relevance_desc"
+    # 1. Reducimos la consulta a 25 ítems para que la API responda en pocos segundos
+    api_ripley = "https://simple.ripley.com.pe/api/v1/catalog/products?term=televisor&per_page=25&sort=relevance_desc"
     
-    # 2. Clave de ScraperAPI para bypass de Cloudflare 403
+    # 2. Clave de ScraperAPI
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
         if "SCRAPERAPI_KEY" in st.secrets:
@@ -1199,12 +1199,12 @@ def motor_ripley(url, limite, headers=None):
     except Exception:
         pass
 
-    # Usamos ScraperAPI sobre el JSON directo (Rápido, económico y 100% libre de bloqueo 403)
     endpoint_proxy = f"https://api.scraperapi.com/?api_key={api_key}&url={quote(api_ripley, safe='')}&country_code=pe"
 
     try:
         safe_log("🚀 [Ripley] Consultando catálogo directo vía ScraperAPI...", "info")
-        resp = requests.get(endpoint_proxy, timeout=30)
+        # 3. Aumentamos el tiempo de espera a 60 segundos
+        resp = requests.get(endpoint_proxy, timeout=60)
         
         if resp.status_code == 200:
             data = resp.json()
@@ -1235,7 +1235,7 @@ def motor_ripley(url, limite, headers=None):
                 except Exception:
                     continue
             
-            safe_log(f"✅ [Ripley] ¡Éxito! Se procesaron {len(items)} productos de la base de datos.", "info")
+            safe_log(f"✅ [Ripley] ¡Éxito! Se procesaron {len(items)} productos.", "info")
         else:
             safe_log(f"🚨 [Ripley] ScraperAPI devolvió estado: {resp.status_code}", "warning")
 
