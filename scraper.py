@@ -1464,31 +1464,37 @@ def motor_promart(url, limite, headers=None):
         parsed_url = urlparse(url)
         raw_path = parsed_url.path.rstrip('/')
         
-        # Endpoint de la API pública VTEX de Promart
-        if raw_path:
+        # Endpoint de la API pública VTEX
+        if raw_path and raw_path != "/tecnologia/tv-y-video/televisores":
             api_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{raw_path}"
         else:
             api_url = "https://www.promart.pe/api/catalog_system/pub/products/search"
 
-        params = {
-            "O": "OrderByPriceASC",
-            "_from": "0",
-            "_to": "49"
-        }
+        # Parámetros base de paginación y orden
+        params = [
+            ("O", "OrderByPriceASC"),
+            ("_from", "0"),
+            ("_to", "49")
+        ]
 
-        # Extraer parámetros de búsqueda si vienen en la URL
+        # Extraer TODOS los filtros 'fq' (categoría, tamaño, pulgadas, marca, etc.)
         query_params = parse_qs(parsed_url.query)
+        
+        if 'fq' in query_params:
+            for fq_val in query_params['fq']:
+                params.append(("fq", fq_val))
+                
         if '_query' in query_params:
-            params['ft'] = query_params['_query'][0]
+            params.append(("ft", query_params['_query'][0]))
         elif 'ft' in query_params:
-            params['ft'] = query_params['ft'][0]
+            params.append(("ft", query_params['ft'][0]))
 
-        safe_log("📡 [Promart API] Consultando catálogo VTEX oficial...", "info")
+        safe_log("📡 [Promart API] Consultando catálogo VTEX con filtros de pulgada...", "info")
         resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
 
         if resp.status_code in [200, 206]:
             data = resp.json()
-            safe_log(f"🔍 [Promart API] Se procesaron {len(data)} productos desde VTEX.", "info")
+            safe_log(f"🔍 [Promart API] Se procesaron {len(data)} productos con el filtro aplicado.", "info")
 
             for p in data:
                 try:
@@ -1509,7 +1515,7 @@ def motor_promart(url, limite, headers=None):
 
                     offer = sellers[0].get("commertialOffer", {})
                     
-                    # Validar disponibilidad de stock
+                    # Validar stock
                     stock = offer.get("AvailableQuantity", 0)
                     if stock <= 0: continue
 
@@ -1536,7 +1542,7 @@ def motor_promart(url, limite, headers=None):
     if productos_list:
         safe_log(f"✅ [Promart] ¡Éxito! Se indexaron {len(productos_list)} ofertas.", "success")
     else:
-        safe_log(f"⚠️ [Promart] No hay productos por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Promart] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
 
