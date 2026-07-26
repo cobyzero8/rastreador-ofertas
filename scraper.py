@@ -1464,37 +1464,30 @@ def motor_promart(url, limite, headers=None):
     try:
         parsed_url = urlparse(url)
         
-        # 1. Construcción dinámica de la URL base usando el path exacto
+        # 1. Construcción dinámica según la categoría de la URL enviada
         path = parsed_url.path.rstrip('/')
         api_base_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{path}"
 
-        # 2. SOLUCIÓN AL ERROR 400: Armado manual del Query String
-        # Evitamos usar el dict "params" de requests para que no codifique los ':' a '%3A'
+        # 2. Armado manual del Query String sin romper los filtros VTEX
         query_parts = []
         if parsed_url.query:
-            # Separamos la query en crudo (manteniendo los %20 y los :)
             for pair in parsed_url.query.split('&'):
-                # Descartamos el filtro de categoría duplicado (causante original del error)
+                # Elimina filtros redundantes de categoría que causan el HTTP 400
                 if pair.startswith('fq=C:') or pair.startswith('fq=C%3A'):
                     continue
-                # Descartamos la paginación si ya viene en la URL
                 if pair.startswith('_from=') or pair.startswith('_to='):
                     continue
                 query_parts.append(pair)
         
-        # Inyectamos nuestros parámetros de orden y paginación
         if not any(p.startswith('O=') for p in query_parts):
             query_parts.append("O=OrderByPriceASC")
         query_parts.append("_from=0")
         query_parts.append("_to=49")
 
-        # Ensamblamos la URL final sin codificaciones destructivas
         final_query_string = "&".join(query_parts)
         final_api_url = f"{api_base_url}?{final_query_string}"
 
         safe_log("📡 [Promart API] Consultando catálogo VTEX...", "info")
-        
-        # Pasamos la URL completa ensamblada (sin el argumento params)
         resp = requests.get(final_api_url, headers=headers, timeout=15, verify=False)
 
         if resp.status_code in [200, 206]:
@@ -1502,13 +1495,16 @@ def motor_promart(url, limite, headers=None):
             safe_log(f"🔍 [Promart API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
 
             url_decodificada = unquote(url).lower()
-            exigir_50_59 = "50-59" in url_decodificada or "specificationfilter" in url_decodificada
+            
+            # 3. FILTRO ESPECÍFICO DE TV: Solo se activa si la URL pide explícitamente el rango 50-59
+            exigir_50_59_tv = "50-59" in url_decodificada and ("televisor" in path or "tv" in path)
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    if exigir_50_59:
+                    # Validación estricta de pulgadas SOLO si es búsqueda de TVs 50-59"
+                    if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
                             pulgadas = int(match_pulgadas.group(1))
@@ -1539,6 +1535,7 @@ def motor_promart(url, limite, headers=None):
                     p_o = float(offer.get("Price", 0.0))
                     p_r = float(offer.get("ListPrice", p_o))
                     
+                    # Detección de Tarjeta oh!
                     p_tarjeta = None
                     installment_options = offer.get("PaymentOptions", {}).get("installmentOptions", [])
                     
