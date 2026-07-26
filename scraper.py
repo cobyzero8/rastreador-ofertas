@@ -1759,65 +1759,79 @@ def motor_tradicional_general(url, limite, headers):
     except Exception: pass
     return productos
 
-
-
 def motor_marathon(url, limite, headers=None):
     import requests
     import re
-    import json
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, urljoin
 
     productos_map = {}
-    
-    # 1. LOG INICIAL INMEDIATO (Confirma el arranque en el dashboard)
     safe_log("📡 [Marathon] Conectando con la tienda...", "info")
 
-    # 2. HEADERS COMPLETOS DE NAVEGADOR (Evita bloqueos de servidor/Akamai)
     headers_marathon = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "Cache-Control": "max-age=0",
+        "Referer": "https://www.marathon.store/pe/",
         "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
         "Sec-Ch-Ua-Mobile": "?0",
         "Sec-Ch-Ua-Platform": '"Windows"',
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "Referer": "https://www.marathon.store/pe/"
+        "Sec-Fetch-Site": "same-origin"
     }
 
-    if headers:
-        headers_marathon.update(headers)
+    resp = None
+
+    # 1. Intento principal con cloudscraper (si está instalado)
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+        resp = scraper.get(url, headers=headers_marathon, timeout=15)
+    except Exception:
+        pass
+
+    # 2. Fallback con requests pre-calentando la sesión
+    if not resp or resp.status_code == 403:
+        try:
+            session = requests.Session()
+            # Handshake previo a la home para obtener cookies válidas y evadir el 403
+            session.get("https://www.marathon.store/pe/", headers=headers_marathon, timeout=8, verify=False)
+            resp = session.get(url, headers=headers_marathon, timeout=15, verify=False)
+        except Exception as e:
+            safe_log(f"🛑 [Marathon] Error de red: {e}", "error")
+            return []
 
     try:
-        session = requests.Session()
-        resp = session.get(url, headers=headers_marathon, timeout=12, verify=False)
-
-        if resp.status_code == 200:
+        if resp and resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             
-            # ESTRATEGIA 1: Extracción por selectores CSS de tarjetas de producto
-            cards = soup.select('.product-item, .product-tile, .js-product-tile, div[data-product-code], .item-product, .productCard, div.product-card')
-            
-            safe_log(f"🔍 [Marathon] Respuesta 200 OK. Procesando {len(cards)} ítems en vista...", "info")
+            # Selectores extraídos directamente de tu captura de Developer Tools
+            cards = soup.select('.product-item')
+            safe_log(f"🔍 [Marathon] Respuesta 200 OK. Procesando {len(cards)} ítems...", "info")
 
             for card in cards:
                 try:
-                    name_elem = card.select_one('.name, .product-name, .js-product-name, a.title, .product-item-name, [data-product-name]')
+                    # Nombre (.nameproduct)
+                    name_elem = card.select_one('.nameproduct, .product-name, .name')
                     if not name_elem:
                         continue
                     nombre_prod = name_elem.get_text(strip=True).upper()
 
-                    link_elem = card.select_one('a[href]')
-                    if not link_elem:
-                        continue
-                    link_rel = link_elem.get('href', '')
-                    link_final = urljoin("https://www.marathon.store", link_rel)
+                    # Enlace (Extraído de data-bv-redirect-url o <a>)
+                    link_final = ""
+                    redirect_elem = card.select_one('[data-bv-redirect-url]')
+                    if redirect_elem and redirect_elem.get('data-bv-redirect-url'):
+                        link_final = urljoin("https://www.marathon.store", redirect_elem['data-bv-redirect-url'])
+                    else:
+                        link_elem = card.select_one('a[href]')
+                        if link_elem:
+                            link_final = urljoin("https://www.marathon.store", link_elem['href'])
 
+                    if not link_final:
+                        continue
+
+                    # Imagen
                     img_elem = card.select_one('img')
                     img_final = ""
                     if img_elem:
@@ -1825,21 +1839,25 @@ def motor_marathon(url, limite, headers=None):
                         if img_final.startswith('//'):
                             img_final = 'https:' + img_final
 
-                    price_text = card.get_text()
+                    # Precios (.price y .price-promotion)
+                    price_elems = card.select('.price')
                     precios_encontrados = []
-                    for match in re.finditer(r'S/\.?\s*([\d,.]+)', price_text):
-                        try:
-                            val = float(match.group(1).replace(',', ''))
-                            if val > 0:
-                                precios_encontrados.append(val)
-                        except ValueError:
-                            pass
+                    for p_elem in price_elems:
+                        text_p = p_elem.get_text(strip=True)
+                        match = re.search(r'S/\.?\s*([\d,.]+)', text_p)
+                        if match:
+                            try:
+                                val = float(match.group(1).replace(',', ''))
+                                if val > 0:
+                                    precios_encontrados.append(val)
+                            except ValueError:
+                                pass
 
                     if not precios_encontrados:
                         continue
 
-                    p_o = min(precios_encontrados)
-                    p_r = max(precios_encontrados)
+                    p_o = min(precios_encontrados)  # Oferta (ej. S/ 79.50)
+                    p_r = max(precios_encontrados)  # Lista (ej. S/ 159.00)
 
                     if 0 < p_o <= limite:
                         productos_map[link_final] = {
@@ -1852,51 +1870,12 @@ def motor_marathon(url, limite, headers=None):
                         }
                 except Exception:
                     continue
-
-            # ESTRATEGIA 2 (FALLBACK JSON-LD): Si el HTML no trajo tarjetas por CSS
-            if not productos_map:
-                scripts = soup.find_all('script', type='application/ld+json')
-                for script in scripts:
-                    try:
-                        if not script.string: continue
-                        js_data = json.loads(script.string)
-                        
-                        items_list = []
-                        if isinstance(js_data, list):
-                            items_list = js_data
-                        elif isinstance(js_data, dict):
-                            items_list = js_data.get('itemListElement', []) or [js_data]
-
-                        for item in items_list:
-                            prod_info = item.get('item', item) if isinstance(item, dict) else item
-                            if not isinstance(prod_info, dict): continue
-                            
-                            nombre_prod = prod_info.get('name', '').strip().upper()
-                            link_final = prod_info.get('url', url)
-                            img_final = prod_info.get('image', '')
-                            if isinstance(img_final, list) and img_final:
-                                img_final = img_final[0]
-
-                            offers = prod_info.get('offers', {})
-                            price = float(offers.get('price', 0) or 0)
-
-                            if nombre_prod and 0 < price <= limite:
-                                productos_map[link_final] = {
-                                    "nombre": f"MARATHON - {nombre_prod}",
-                                    "precio": price,
-                                    "precio_tarjeta": None,
-                                    "precio_regular": price,
-                                    "link": link_final,
-                                    "img": img_final
-                                }
-                    except Exception:
-                        continue
-
         else:
-            safe_log(f"🛑 [Marathon] Código HTTP: {resp.status_code}", "error")
+            status = resp.status_code if resp else "Sin Respuesta"
+            safe_log(f"🛑 [Marathon] Código HTTP: {status}", "error")
 
     except Exception as e:
-        safe_log(f"🛑 [Marathon] Error de conexión: {e}", "error")
+        safe_log(f"🛑 [Marathon] Error crítico: {e}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
@@ -1905,6 +1884,7 @@ def motor_marathon(url, limite, headers=None):
         safe_log(f"⚠️ [Marathon] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
+
 
 # =======================================================
 # ENRUTADOR AISLADO
