@@ -1760,15 +1760,19 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
-
-def motor_inretail(url, limite, headers=None):
+def motor_inretail(url, limite, headers=None, max_pages=1, retry=2):
     """
     Motor de alta precisión para Inkafarma y Mifarma.
-    Evita el renderizado cliente de Angular atacando la API de catálogo en segundo plano.
+    Guarda respuesta cruda en scrapers/inretail_debug/resp_debug.json para debugging.
     """
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
-    import random
+    import random, time, os, json
+
+    # Asegurar carpeta debug
+    debug_dir = os.path.join(os.path.dirname(__file__), "inretail_debug")
+    os.makedirs(debug_dir, exist_ok=True)
+    debug_file = os.path.join(debug_dir, "resp_debug.json")
 
     productos_map = {}
     dominio = urlparse(url).netloc.lower()
@@ -1776,19 +1780,15 @@ def motor_inretail(url, limite, headers=None):
     brand = "inkafarma" if tag == "INKAFARMA" else "mifarma"
     base_domain = f"https://www.{brand}.pe"
 
-    # 1. Extraer el término de búsqueda de la URL (?keyword=desodorante o ?q=...)
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
     keyword = query_params.get('keyword', query_params.get('q', ['']))[0]
-
     if not keyword:
-        # Fallback si la URL es una categoría navegable (ej: /categoria/cuidado-personal)
         path_segments = [s for s in parsed_url.path.split('/') if s]
         keyword = path_segments[-1] if path_segments else "desodorante"
 
     safe_log(f"📡 [{tag}] Consultando API interna para término: '{keyword}'...", "info")
 
-    # 2. Cabeceras necesarias para emular la llamada AJAX del frontend Angular
     headers_api = {
         "User-Agent": random.choice(LISTA_USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
@@ -1798,83 +1798,109 @@ def motor_inretail(url, limite, headers=None):
         "x-channel": "WEB",
         "x-brand": brand
     }
+    if headers:
+        headers_api.update(headers)
 
-    # 3. Endpoints de catálogo de InRetail / Farmacias Peruanas
     endpoints_a_probar = [
         (f"{base_domain}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50, "sort": "price_asc"}),
-        (f"{base_domain}/api/catalog/search", {"q": keyword, "limit": 50})
+        (f"{base_domain}/api/catalog/search", {"q": keyword, "limit": 50}),
+        (f"{base_domain}/search", {"q": keyword})
     ]
 
     for api_url, params in endpoints_a_probar:
-        try:
-            resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                
-                # Mapeo adaptable según la estructura JSON que devuelva el microservicio
+        for attempt in range(retry + 1):
+            try:
+                resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
+                # Guardar debug: status + body (parcial si es muy grande)
+                try:
+                    body_text = resp.text or ""
+                    debug_payload = {"api_url": api_url, "params": params, "status_code": resp.status_code, "body_snippet": body_text[:20000]}
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        json.dump(debug_payload, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+
+                safe_log(f"🔁 [{tag}] {api_url} status={resp.status_code} len={len(resp.text or '')} intento={attempt+1}", "info")
+
+                if resp.status_code != 200:
+                    time.sleep(1 + attempt * 1.5)
+                    continue
+
+                try:
+                    data = resp.json()
+                except Exception as e:
+                    safe_log(f"🛑 [{tag}] JSON inválido en {api_url}: {e}", "error")
+                    break
+
                 items = []
                 if isinstance(data, dict):
-                    items = data.get('products') or data.get('items') or data.get('content') or []
+                    items = data.get('products') or data.get('items') or data.get('content') or data.get('results') or []
                 elif isinstance(data, list):
                     items = data
 
                 if not items:
-                    continue
+                    safe_log(f"ℹ️ [{tag}] API {api_url} devolvió 0 items (intento {attempt+1}).", "info")
+                    break
 
-                safe_log(f"🔍 [{tag} API] ¡Catálogo recibido! Procesando {len(items)} ítems...", "info")
+                safe_log(f"🔍 [{tag} API] Catálogo recibido: {len(items)} ítems. Procesando...", "info")
 
                 for p in items:
                     try:
                         nombre = str(p.get('name') or p.get('productName') or p.get('description') or '').strip().upper()
-                        if not nombre or len(nombre) < 3: 
+                        if not nombre or len(nombre) < 3:
                             continue
 
-                        # Captura de precios: Normal, Regular y Oferta Monedero/Tarjeta
                         p_o = safe_float(p.get('price') or p.get('salePrice') or p.get('finalPrice'))
                         p_r = safe_float(p.get('regularPrice') or p.get('listPrice') or p_o)
                         p_monedero = safe_float(p.get('monederoPrice') or p.get('cardPrice'))
 
-                        # Usar el precio más bajo entre la oferta web y la oferta monedero
                         precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
+                        if not (0 < precio_efectivo <= limite):
+                            continue
 
-                        if 0 < precio_efectivo <= limite:
-                            slug = p.get('slug') or p.get('url') or p.get('link') or ''
-                            link_final = urljoin(base_domain, slug) if slug else url
+                        slug = p.get('slug') or p.get('url') or p.get('link') or ''
+                        link_final = urljoin(base_domain, slug) if slug else url
 
-                            # Extracción de imagen
-                            img_url = p.get('imageUrl') or p.get('image') or ''
-                            if not img_url and isinstance(p.get('media'), list) and len(p['media']) > 0:
-                                img_url = p['media'][0].get('url', '')
-                            
-                            if str(img_url).startswith('//'): 
-                                img_url = 'https:' + str(img_url)
+                        img_url = p.get('imageUrl') or p.get('image') or ''
+                        if not img_url and isinstance(p.get('media'), list) and len(p['media']) > 0:
+                            img_url = p['media'][0].get('url', '')
+                        if str(img_url).startswith('//'):
+                            img_url = 'https:' + str(img_url)
 
-                            productos_map[link_final] = {
-                                "nombre": f"{tag} - {nombre}",
-                                "precio": precio_efectivo,
-                                "precio_regular": max(p_r, precio_efectivo),
-                                "link": link_final,
-                                "img": str(img_url)
-                            }
+                        productos_map[link_final] = {
+                            "nombre": f"{tag} - {nombre}",
+                            "precio": float(precio_efectivo),
+                            "precio_regular": float(max(p_r, precio_efectivo)),
+                            "link": link_final,
+                            "img": str(img_url)
+                        }
                     except Exception:
                         continue
 
-                # Si obtuvimos ofertas en esta prueba, rompemos el ciclo
-                if len(productos_map) > 0:
+                if productos_map:
                     break
 
-        except Exception as e:
-            safe_log(f"⚠️ [{tag}] Intento de conexión fallido: {e}", "caption")
-            continue
+            except Exception as e:
+                safe_log(f"⚠️ [{tag}] Intento de conexión fallido a {api_url}: {e}", "caption")
+                time.sleep(1 + attempt * 1.5)
+                continue
+
+        if productos_map:
+            break
 
     productos_finales = list(productos_map.values())
     if productos_finales:
         safe_log(f"✅ [{tag}] ¡Éxito! Se consolidaron {len(productos_finales)} ofertas válidas.", "success")
     else:
-        safe_log(f"⚠️ [{tag}] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [{tag}] No se encontraron productos por debajo de S/. {limite:.2f}. Revisa {debug_file}", "warning")
 
     return productos_finales
+
+
+
+
+
+
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
