@@ -1763,13 +1763,9 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_inretail(url, limite, headers=None):
     """
-    Motor especializado para Inkafarma y Mifarma.
-    Soporta URLs de búsqueda (?keyword=...) y URLs de categorías.
+    Motor optimizado para Inkafarma y Mifarma vía API backend.
     """
-    import json
-    import re
     import requests
-    from bs4 import BeautifulSoup
     from urllib.parse import urlparse, parse_qs, urljoin
 
     productos_map = {}
@@ -1777,106 +1773,49 @@ def motor_inretail(url, limite, headers=None):
     tag = "INKAFARMA" if "inkafarma" in dominio else "MIFARMA"
     domain_base = f"https://www.{'inkafarma' if tag == 'INKAFARMA' else 'mifarma'}.pe"
 
-    if not headers:
-        headers = {
-            "User-Agent": random.choice(LISTA_USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-            "Referer": f"{domain_base}/"
-        }
+    parsed_url = urlparse(url)
+    query_params = parse_qs(parsed_url.query)
+    keyword = query_params.get('keyword', query_params.get('q', ['']))[0]
 
-    safe_log(f"📡 [{tag}] Iniciando escaneo en: {url}", "info")
+    # Cabeceras requeridas para emular el cliente de Angular
+    headers_api = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "es-PE,es;q=0.9",
+        "Origin": domain_base,
+        "Referer": url
+    }
+
+    safe_log(f"📡 [{tag}] Consultando API de búsqueda para: '{keyword}'...", "info")
+
+    # Endpoint directo de catálogo / búsqueda de InRetail
+    api_url = f"{domain_base}/api/v1/products/search" # Ajustar con la ruta XHR de DevTools
+    params = {
+        "keyword": keyword,
+        "page": 1,
+        "limit": 50
+    }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=15, verify=False)
-        if resp.status_code != 200 or len(resp.text) < 3000:
-            safe_log(f"🛑 [{tag}] Respuesta inválida. Código HTTP: {resp.status_code}", "error")
-            return []
-
-        soup = BeautifulSoup(resp.text, 'html.parser')
-
-        # =======================================================
-        # ESTRATEGIA 1: Extracción JSON desde __NEXT_DATA__ (Next.js State)
-        # =======================================================
-        next_script = soup.find('script', id='__NEXT_DATA__')
-        if next_script and next_script.string:
-            try:
-                json_data = json.loads(next_script.string)
-                prods_json = extraer_productos_json_universal(json_data)
-
-                if prods_json:
-                    safe_log(f"🔍 [{tag}] Se encontraron {len(prods_json)} objetos mediante __NEXT_DATA__.", "info")
-                    for item in prods_json:
-                        try:
-                            nombre = str(item.get('displayName') or item.get('productName') or item.get('title') or item.get('name') or '').strip().upper()
-                            if len(nombre) < 3: continue
-
-                            # Extracción de precios
-                            p_o = safe_float(item.get('salePrice') or item.get('price') or item.get('value'))
-                            p_r = safe_float(item.get('listPrice') or item.get('originalPrice') or item.get('regularPrice') or p_o)
-
-                            if p_o == 0.0:
-                                val_aux = []
-                                extraer_numeros_dict(item, val_aux)
-                                if val_aux:
-                                    vals = sorted(list(set(val_aux)))
-                                    p_o = vals[0]
-                                    p_r = vals[-1] if len(vals) > 1 else p_o
-
-                            if 0 < p_o <= limite:
-                                link_rel = item.get('url') or item.get('link') or item.get('href') or ''
-                                link_final = urljoin(domain_base, link_rel) if link_rel else url
-                                img_url = encontrar_foto_fala(item) or item.get('imageUrl', '')
-                                if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                                productos_map[link_final] = {
-                                    "nombre": f"{tag} - {nombre}",
-                                    "precio": p_o,
-                                    "precio_regular": max(p_r, p_o),
-                                    "link": link_final,
-                                    "img": img_url
-                                }
-                        except Exception:
-                            continue
-            except Exception as json_err:
-                safe_log(f"⚠️ [{tag}] Error al decodificar JSON-State: {json_err}", "caption")
-
-        # =======================================================
-        # ESTRATEGIA 2: Fallback HTML (Scraping directo de tarjetas)
-        # =======================================================
-        if not productos_map:
-            safe_log(f"🛡️ [{tag}] Ejecutando fallback de scraping HTML...", "info")
-            tarjetas = soup.find_all(['div', 'article', 'li', 'a'], class_=re.compile(r'(product|card|item|grid|buscador)', re.I))
-
-            for t in tarjetas:
+        resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            # Mapeo según la estructura de respuesta de la API
+            items = data.get('products', data.get('items', []))
+            
+            for p in items:
                 try:
-                    a_el = t.find('a', href=True) or (t if t.name == 'a' and t.has_attr('href') else None)
-                    if not a_el: continue
-                    link_final = urljoin(domain_base, a_el['href'])
-
-                    # Evitar enlaces repetidos o de paginación/footer
-                    if any(x in link_final.lower() for x in ['/atencion-clientes', '/legales', '/cart', '/checkout']):
-                        continue
-
-                    tit_el = t.find(['h2', 'h3', 'h4', 'p', 'span'], class_=re.compile(r'(title|name|nombre|brand|description)', re.I))
-                    nombre = tit_el.text.strip().upper() if tit_el else a_el.text.strip().upper()
-                    if len(nombre) < 3 or "INKAFARMA" in nombre or "MIFARMA" in nombre: continue
-
-                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                    if not textos_precios: continue
-
-                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
-                    if not nums: continue
-
-                    p_o = nums[0]
-                    p_r = nums[-1] if len(nums) > 1 else p_o
+                    nombre = str(p.get('name') or p.get('productName') or '').strip().upper()
+                    
+                    # Captura de precios (Precio Regular vs Precio Monedero / Oferta)
+                    p_o = float(p.get('price', p.get('salePrice', 0)))
+                    p_r = float(p.get('listPrice', p.get('regularPrice', p_o)))
 
                     if 0 < p_o <= limite:
-                        img_el = t.find('img')
-                        img_url = ""
-                        if img_el:
-                            img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or ""
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
+                        link_rel = p.get('url') or p.get('slug') or ''
+                        link_final = urljoin(domain_base, link_rel) if link_rel else url
+                        img_url = p.get('imageUrl') or p.get('image') or ''
 
                         productos_map[link_final] = {
                             "nombre": f"{tag} - {nombre}",
@@ -1887,18 +1826,19 @@ def motor_inretail(url, limite, headers=None):
                         }
                 except Exception:
                     continue
+        else:
+            safe_log(f"🛑 [{tag}] La API respondió con código {resp.status_code}", "error")
 
     except Exception as e:
-        safe_log(f"🛑 [{tag}] Error crítico de red o procesamiento: {e}", "error")
+        safe_log(f"🛑 [{tag}] Error de conexión con la API: {e}", "error")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Éxito! Se consolidaron {len(productos_finales)} ofertas.", "success")
+        safe_log(f"✅ [{tag}] ¡Éxito! Se encontraron {len(productos_finales)} ofertas.", "success")
     else:
-        safe_log(f"⚠️ [{tag}] No se encontraron ofertas bajo el límite S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 # =======================================================
 # ENRUTADOR AISLADO
