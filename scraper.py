@@ -1763,83 +1763,118 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_inretail(url, limite, headers=None):
     """
-    Motor optimizado para Inkafarma y Mifarma vía API backend.
+    Motor de alta precisión para Inkafarma y Mifarma.
+    Evita el renderizado cliente de Angular atacando la API de catálogo en segundo plano.
     """
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
+    import random
 
     productos_map = {}
     dominio = urlparse(url).netloc.lower()
     tag = "INKAFARMA" if "inkafarma" in dominio else "MIFARMA"
-    domain_base = f"https://www.{'inkafarma' if tag == 'INKAFARMA' else 'mifarma'}.pe"
+    brand = "inkafarma" if tag == "INKAFARMA" else "mifarma"
+    base_domain = f"https://www.{brand}.pe"
 
+    # 1. Extraer el término de búsqueda de la URL (?keyword=desodorante o ?q=...)
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
     keyword = query_params.get('keyword', query_params.get('q', ['']))[0]
 
-    # Cabeceras requeridas para emular el cliente de Angular
+    if not keyword:
+        # Fallback si la URL es una categoría navegable (ej: /categoria/cuidado-personal)
+        path_segments = [s for s in parsed_url.path.split('/') if s]
+        keyword = path_segments[-1] if path_segments else "desodorante"
+
+    safe_log(f"📡 [{tag}] Consultando API interna para término: '{keyword}'...", "info")
+
+    # 2. Cabeceras necesarias para emular la llamada AJAX del frontend Angular
     headers_api = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Origin": domain_base,
-        "Referer": url
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Origin": base_domain,
+        "Referer": url,
+        "x-channel": "WEB",
+        "x-brand": brand
     }
 
-    safe_log(f"📡 [{tag}] Consultando API de búsqueda para: '{keyword}'...", "info")
+    # 3. Endpoints de catálogo de InRetail / Farmacias Peruanas
+    endpoints_a_probar = [
+        (f"{base_domain}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50, "sort": "price_asc"}),
+        (f"{base_domain}/api/catalog/search", {"q": keyword, "limit": 50})
+    ]
 
-    # Endpoint directo de catálogo / búsqueda de InRetail
-    api_url = f"{domain_base}/api/v1/products/search" # Ajustar con la ruta XHR de DevTools
-    params = {
-        "keyword": keyword,
-        "page": 1,
-        "limit": 50
-    }
-
-    try:
-        resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            # Mapeo según la estructura de respuesta de la API
-            items = data.get('products', data.get('items', []))
+    for api_url, params in endpoints_a_probar:
+        try:
+            resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
             
-            for p in items:
-                try:
-                    nombre = str(p.get('name') or p.get('productName') or '').strip().upper()
-                    
-                    # Captura de precios (Precio Regular vs Precio Monedero / Oferta)
-                    p_o = float(p.get('price', p.get('salePrice', 0)))
-                    p_r = float(p.get('listPrice', p.get('regularPrice', p_o)))
+            if resp.status_code == 200:
+                data = resp.json()
+                
+                # Mapeo adaptable según la estructura JSON que devuelva el microservicio
+                items = []
+                if isinstance(data, dict):
+                    items = data.get('products') or data.get('items') or data.get('content') or []
+                elif isinstance(data, list):
+                    items = data
 
-                    if 0 < p_o <= limite:
-                        link_rel = p.get('url') or p.get('slug') or ''
-                        link_final = urljoin(domain_base, link_rel) if link_rel else url
-                        img_url = p.get('imageUrl') or p.get('image') or ''
-
-                        productos_map[link_final] = {
-                            "nombre": f"{tag} - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url
-                        }
-                except Exception:
+                if not items:
                     continue
-        else:
-            safe_log(f"🛑 [{tag}] La API respondió con código {resp.status_code}", "error")
 
-    except Exception as e:
-        safe_log(f"🛑 [{tag}] Error de conexión con la API: {e}", "error")
+                safe_log(f"🔍 [{tag} API] ¡Catálogo recibido! Procesando {len(items)} ítems...", "info")
+
+                for p in items:
+                    try:
+                        nombre = str(p.get('name') or p.get('productName') or p.get('description') or '').strip().upper()
+                        if not nombre or len(nombre) < 3: 
+                            continue
+
+                        # Captura de precios: Normal, Regular y Oferta Monedero/Tarjeta
+                        p_o = safe_float(p.get('price') or p.get('salePrice') or p.get('finalPrice'))
+                        p_r = safe_float(p.get('regularPrice') or p.get('listPrice') or p_o)
+                        p_monedero = safe_float(p.get('monederoPrice') or p.get('cardPrice'))
+
+                        # Usar el precio más bajo entre la oferta web y la oferta monedero
+                        precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
+
+                        if 0 < precio_efectivo <= limite:
+                            slug = p.get('slug') or p.get('url') or p.get('link') or ''
+                            link_final = urljoin(base_domain, slug) if slug else url
+
+                            # Extracción de imagen
+                            img_url = p.get('imageUrl') or p.get('image') or ''
+                            if not img_url and isinstance(p.get('media'), list) and len(p['media']) > 0:
+                                img_url = p['media'][0].get('url', '')
+                            
+                            if str(img_url).startswith('//'): 
+                                img_url = 'https:' + str(img_url)
+
+                            productos_map[link_final] = {
+                                "nombre": f"{tag} - {nombre}",
+                                "precio": precio_efectivo,
+                                "precio_regular": max(p_r, precio_efectivo),
+                                "link": link_final,
+                                "img": str(img_url)
+                            }
+                    except Exception:
+                        continue
+
+                # Si obtuvimos ofertas en esta prueba, rompemos el ciclo
+                if len(productos_map) > 0:
+                    break
+
+        except Exception as e:
+            safe_log(f"⚠️ [{tag}] Intento de conexión fallido: {e}", "caption")
+            continue
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Éxito! Se encontraron {len(productos_finales)} ofertas.", "success")
+        safe_log(f"✅ [{tag}] ¡Éxito! Se consolidaron {len(productos_finales)} ofertas válidas.", "success")
     else:
-        safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [{tag}] No se encontraron productos por debajo de S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
