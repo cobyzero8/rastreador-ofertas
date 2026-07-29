@@ -1761,136 +1761,89 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-def motor_marathon(url, limite, headers=None):
-    import re
-    import json
-    from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, urljoin
+def motor_inretail(url, limite, headers=None):
+    """
+    Motor unificado para Inkafarma y Mifarma (Arquitectura VTEX / InRetail)
+    """
+    import requests
+    from urllib.parse import urlparse, parse_qs, urljoin, unquote
 
     productos_map = {}
-    safe_log("📡 [Marathon] Conectando con la tienda...", "info")
+    dominio = urlparse(url).netloc.lower()
+    tag = "INKAFARMA" if "inkafarma" in dominio else "MIFARMA"
+    base_domain = f"https://www.{'inkafarma' if tag == 'INKAFARMA' else 'mifarma'}.pe"
 
-    # Cabeceras emulando llamadas AJAX internas de SAP Hybris
-    headers_marathon = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://www.marathon.store/pe/",
-        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"'
-    }
+    if not headers:
+        headers = {
+            "User-Agent": random.choice(LISTA_USER_AGENTS),
+            "Accept": "application/json",
+            "Referer": f"{base_domain}/"
+        }
 
-    html_content = None
-    status_code = None
-
-    # INTENTO 1: curl_cffi con Session Handshake
     try:
-        from curl_cffi import requests as curl_requests
-        session = curl_requests.Session(impersonate="chrome120")
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        path = parsed_url.path.rstrip('/')
+
+        # 1. Extracción del término de búsqueda o categoría
+        q_term = query_params.get('ft', query_params.get('q', [None]))[0]
         
-        # Handshake previo a la home para generar cookies válidas de Akamai
-        session.get("https://www.marathon.store/pe/", headers={"User-Agent": headers_marathon["User-Agent"]}, timeout=10)
-        
-        resp = session.get(url, headers=headers_marathon, timeout=15)
-        status_code = resp.status_code
-        if status_code == 200:
-            html_content = resp.text
-    except Exception:
-        pass
+        if q_term:
+            api_endpoint = f"{base_domain}/api/catalog_system/pub/products/search"
+            params = {"ft": q_term, "O": "OrderByPriceASC", "_from": "0", "_to": "49"}
+        else:
+            api_endpoint = f"{base_domain}/api/catalog_system/pub/products/search{path}"
+            params = {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}
 
-    # INTENTO 2: requests tradicional con Session Handshake (Fallback)
-    if not html_content:
-        try:
-            import requests
-            session = requests.Session()
-            session.headers.update(headers_marathon)
-            
-            # Petición inicial a la portada
-            session.get("https://www.marathon.store/pe/", timeout=10, verify=False)
-            
-            resp = session.get(url, timeout=15, verify=False)
-            status_code = resp.status_code
-            if status_code == 200:
-                html_content = resp.text
-        except Exception as e:
-            safe_log(f"🛑 [Marathon] Error de red: {e}", "error")
+        safe_log(f"📡 [{tag} API] Consultando catálogo directo...", "info")
+        resp = requests.get(api_endpoint, headers=headers, params=params, timeout=12, verify=False)
 
-    # PROCESAMIENTO DEL CATÁLOGO
-    if html_content:
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            cards = soup.select('.product-item')
-            safe_log(f"🔍 [Marathon] Respuesta 200 OK. Procesando {len(cards)} ítems...", "info")
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+            safe_log(f"🔍 [{tag} API] Recibidos {len(data)} productos.", "info")
 
-            for card in cards:
+            for p in data:
                 try:
-                    name_elem = card.select_one('.nameproduct, .product-name, .name')
-                    if not name_elem:
-                        continue
-                    nombre_prod = name_elem.get_text(strip=True).upper()
+                    nombre_prod = p.get("productName", "").strip().upper()
+                    link_rel = p.get("link", "")
+                    link_final = urljoin(base_domain, link_rel) if link_rel else url
 
-                    link_final = ""
-                    redirect_elem = card.select_one('[data-bv-redirect-url]')
-                    if redirect_elem and redirect_elem.get('data-bv-redirect-url'):
-                        link_final = urljoin("https://www.marathon.store", redirect_elem['data-bv-redirect-url'])
-                    else:
-                        link_elem = card.select_one('a[href]')
-                        if link_elem:
-                            link_final = urljoin("https://www.marathon.store", link_elem['href'])
+                    items = p.get("items", [])
+                    if not items: continue
 
-                    if not link_final:
-                        continue
+                    first_item = items[0]
+                    images = first_item.get("images", [])
+                    img_final = images[0].get("imageUrl", "") if images else ""
+                    if img_final.startswith('//'): img_final = 'https:' + img_final
 
-                    img_elem = card.select_one('img')
-                    img_final = ""
-                    if img_elem:
-                        img_final = img_elem.get('src') or img_elem.get('data-src') or img_elem.get('data-original') or ""
-                        if img_final.startswith('//'):
-                            img_final = 'https:' + img_final
+                    sellers = first_item.get("sellers", [])
+                    if not sellers: continue
 
-                    price_elems = card.select('.price')
-                    precios_encontrados = []
-                    for p_elem in price_elems:
-                        text_p = p_elem.get_text(strip=True)
-                        match = re.search(r'S/\.?\s*([\d,.]+)', text_p)
-                        if match:
-                            try:
-                                val = float(match.group(1).replace(',', ''))
-                                if val > 0:
-                                    precios_encontrados.append(val)
-                            except ValueError:
-                                pass
+                    offer = sellers[0].get("commertialOffer", {})
+                    if offer.get("AvailableQuantity", 0) <= 0: continue
 
-                    if not precios_encontrados:
-                        continue
-
-                    p_o = min(precios_encontrados)
-                    p_r = max(precios_encontrados)
+                    p_o = float(offer.get("Price", 0.0))
+                    p_r = float(offer.get("ListPrice", p_o))
 
                     if 0 < p_o <= limite:
                         productos_map[link_final] = {
-                            "nombre": f"MARATHON - {nombre_prod}",
+                            "nombre": f"{tag} - {nombre_prod}",
                             "precio": p_o,
-                            "precio_tarjeta": None,
                             "precio_regular": max(p_r, p_o),
                             "link": link_final,
                             "img": img_final
                         }
                 except Exception:
                     continue
-        except Exception as e:
-            safe_log(f"🛑 [Marathon] Error al procesar HTML: {e}", "error")
-    else:
-        status_msg = f"HTTP {status_code}" if status_code else "Sin Respuesta / Bloqueo WAF"
-        safe_log(f"🛑 [Marathon] Código HTTP: {status_msg}", "error")
+
+    except Exception as e:
+        safe_log(f"🛑 [{tag} API] Error crítico: {e}", "error")
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Marathon] ¡Éxito! Se indexaron {len(productos_list)} ofertas válidas.", "success")
+        safe_log(f"✅ [{tag}] Se indexaron {len(productos_list)} ofertas.", "success")
     else:
-        safe_log(f"⚠️ [Marathon] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [{tag}] Sin ofertas bajo S/. {limite:.2f}", "warning")
 
     return productos_list
 
@@ -1919,7 +1872,7 @@ def escanear_tienda(url, limite):
     elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
     elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
-    elif "marathon.store" in dominio: return motor_marathon(url, limite, headers=headers)
+    elif "inkafarma.pe" in dominio or "mifarma.pe" in dominio: return motor_inretail(url, limite, headers=headers)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
