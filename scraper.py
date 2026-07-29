@@ -1763,56 +1763,61 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_marathon(url, limite, headers=None):
     import re
+    import json
     from bs4 import BeautifulSoup
     from urllib.parse import urlparse, urljoin
 
     productos_map = {}
     safe_log("📡 [Marathon] Conectando con la tienda...", "info")
 
+    # Cabeceras emulando llamadas AJAX internas de SAP Hybris
     headers_marathon = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.marathon.store/pe/"
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.marathon.store/pe/",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"'
     }
 
     html_content = None
     status_code = None
 
-    # 1. PRIMER INTENTO: curl_cffi (Efectivo contra bloqueos Cloudflare TLS en GitHub Actions)
+    # INTENTO 1: curl_cffi con Session Handshake
     try:
         from curl_cffi import requests as curl_requests
-        resp = curl_requests.get(url, headers=headers_marathon, impersonate="chrome120", timeout=15, verify=False)
+        session = curl_requests.Session(impersonate="chrome120")
+        
+        # Handshake previo a la home para generar cookies válidas de Akamai
+        session.get("https://www.marathon.store/pe/", headers={"User-Agent": headers_marathon["User-Agent"]}, timeout=10)
+        
+        resp = session.get(url, headers=headers_marathon, timeout=15)
         status_code = resp.status_code
         if status_code == 200:
             html_content = resp.text
-    except Exception as e:
+    except Exception:
         pass
 
-    # 2. SEGUNDO INTENTO: cloudscraper (Fallback)
-    if not html_content:
-        try:
-            import cloudscraper
-            scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
-            resp = scraper.get(url, headers=headers_marathon, timeout=15)
-            status_code = resp.status_code
-            if status_code == 200:
-                html_content = resp.text
-        except Exception:
-            pass
-
-    # 3. TERCER INTENTO: requests tradicional (Fallback final)
+    # INTENTO 2: requests tradicional con Session Handshake (Fallback)
     if not html_content:
         try:
             import requests
-            resp = requests.get(url, headers=headers_marathon, timeout=15, verify=False)
+            session = requests.Session()
+            session.headers.update(headers_marathon)
+            
+            # Petición inicial a la portada
+            session.get("https://www.marathon.store/pe/", timeout=10, verify=False)
+            
+            resp = session.get(url, timeout=15, verify=False)
             status_code = resp.status_code
             if status_code == 200:
                 html_content = resp.text
         except Exception as e:
             safe_log(f"🛑 [Marathon] Error de red: {e}", "error")
 
-    # PROCESAMIENTO DEL HTML
+    # PROCESAMIENTO DEL CATÁLOGO
     if html_content:
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -1878,7 +1883,7 @@ def motor_marathon(url, limite, headers=None):
         except Exception as e:
             safe_log(f"🛑 [Marathon] Error al procesar HTML: {e}", "error")
     else:
-        status_msg = f"HTTP {status_code}" if status_code else "Sin Respuesta / Bloqueo TCP"
+        status_msg = f"HTTP {status_code}" if status_code else "Sin Respuesta / Bloqueo WAF"
         safe_log(f"🛑 [Marathon] Código HTTP: {status_msg}", "error")
 
     productos_list = list(productos_map.values())
