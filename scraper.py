@@ -1760,45 +1760,70 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
-def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
+# motor_inretail: motor robusto para Inkafarma / Mifarma
+def motor_inretail(url, limite=9999, headers=None, max_pages=1, retry=1):
     """
-    Motor robusto Inkafarma / Mifarma.
-    Intenta endpoints JSON y cae a parseo HTML si no hay JSON válido.
-    Guarda debug en scrapers/inretail_debug/resp_debug.json.
+    Motor robusto para Inkafarma / Mifarma.
+    - Prueba variantes de dominio (sin www primero).
+    - Intenta endpoints JSON/XHR y, si fallan, hace fallback a parseo HTML.
+    - Guarda debug en scrapers/inretail_debug/resp_debug.json.
+    - Devuelve lista de productos: dicts con keys: nombre, precio, precio_regular, link, img
     """
-    import os, time, json, re
+    import os
+    import time
+    import json
+    import re
     from urllib.parse import urlparse, parse_qs, urljoin
     import requests
+
+    # Intentar usar cloudscraper si está disponible (mejor para sitios con protecciones simples)
     try:
         import cloudscraper
         _have_cloudscraper = True
     except Exception:
         _have_cloudscraper = False
-    from bs4 import BeautifulSoup
 
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        raise RuntimeError("BeautifulSoup no disponible. Instala beautifulsoup4.")
+
+    # Helpers
     def safe_float_from_text(t):
         if not t:
             return 0.0
-        # extrae números con decimales, acepta coma o punto
-        m = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)', str(t))
+        s = str(t)
+        # buscar primer número con decimales o miles
+        m = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)', s)
         if not m:
             return 0.0
-        s = m.group(1).replace('.', '').replace(',', '.')
+        num = m.group(1).replace('.', '').replace(',', '.')
         try:
-            return float(s)
+            return float(num)
         except Exception:
             return 0.0
 
+    # Debug folder/file
     debug_dir = os.path.join(os.path.dirname(__file__), "inretail_debug")
     os.makedirs(debug_dir, exist_ok=True)
     debug_file = os.path.join(debug_dir, "resp_debug.json")
 
+    # Resultado
     productos_map = {}
+
+    # Parsear URL y determinar keyword
     parsed = urlparse(url)
-    dominio = parsed.netloc.lower()
-    tag = "INKAFARMA" if "inkafarma" in dominio else "MIFARMA"
-    brand = "inkafarma" if tag == "INKAFARMA" else "mifarma"
-    base_domain = f"https://www.{brand}.pe"
+    host = parsed.netloc.lower()
+    # Normalizar hosts: crear variantes sin/www
+    if host.startswith("www."):
+        host_no_www = host[len("www."):]
+        host_with_www = host
+    else:
+        host_no_www = host
+        host_with_www = "www." + host
+
+    candidate_domains = [host_no_www, host_with_www]
+    base_urls = [f"https://{d}" for d in candidate_domains]
 
     query_params = parse_qs(parsed.query)
     keyword = query_params.get('keyword', query_params.get('q', ['']))[0]
@@ -1806,243 +1831,264 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
         path_segments = [s for s in parsed.path.split('/') if s]
         keyword = path_segments[-1] if path_segments else ""
 
+    # Headers base
     headers_api = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "es-PE,es;q=0.9",
-        "Origin": base_domain,
         "Referer": url
     }
     if headers:
         headers_api.update(headers)
 
-    endpoints = [
-        (f"{base_domain}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50}),
-        (f"{base_domain}/api/catalog/search", {"q": keyword, "limit": 50}),
-        (f"{base_domain}/api/v1/search", {"keyword": keyword, "page": 1, "limit": 50}),
-        (f"{base_domain}/search", {"q": keyword}),
-        (f"{base_domain}/buscador", {"keyword": keyword}),
-        (f"{base_domain}/api/v1/products", {"q": keyword}),
+    # Endpoints relativos a probar (sin dominio)
+    relative_endpoints = [
+        ("/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50}),
+        ("/api/catalog/search", {"q": keyword, "limit": 50}),
+        ("/api/v1/search", {"keyword": keyword, "page": 1, "limit": 50}),
+        ("/search", {"q": keyword}),
+        ("/buscador", {"keyword": keyword}),
+        ("/api/v1/products", {"q": keyword}),
     ]
 
     debug_runs = []
 
-    # helper: perform GET (cloudscraper if available)
+    # helper: GET con cloudscraper si está disponible
     def do_get(u, params, hdrs, timeout=12):
-        try:
-            if _have_cloudscraper:
-                s = cloudscraper.create_scraper()
-                r = s.get(u, params=params, headers=hdrs, timeout=timeout)
-            else:
-                r = requests.get(u, params=params, headers=hdrs, timeout=timeout, verify=False)
-            return r
-        except Exception as e:
-            raise
+        if _have_cloudscraper:
+            s = cloudscraper.create_scraper()
+            return s.get(u, params=params, headers=hdrs, timeout=timeout)
+        else:
+            return requests.get(u, params=params, headers=hdrs, timeout=timeout, verify=False)
 
-    # 1) probar endpoints JSON / XHR
-    for api_url, params in endpoints:
-        for attempt in range(retry + 1):
-            try:
-                resp = do_get(api_url, params, headers_api)
-                status = resp.status_code
-                body = resp.text or ""
-                snippet = body[:20000]
-                debug_runs.append({"type": "xhr", "api_url": api_url, "params": params, "status_code": status, "body_snippet": snippet[:2000]})
-                # guardar parcial
+    # 1) Probar endpoints XHR/JSON en ambos dominios (sin www primero)
+    for base in base_urls:
+        # ajustar Host header para este dominio
+        candidate_host = base.replace("https://", "").replace("http://", "")
+        for rel, params in relative_endpoints:
+            api_url = base + rel
+            for attempt in range(retry + 1):
                 try:
-                    with open(debug_file, "w", encoding="utf-8") as f:
-                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
+                    # forzar Host header por si el servidor hace virtual hosting
+                    hdrs = dict(headers_api)
+                    hdrs["Host"] = candidate_host
 
-                if status != 200:
-                    time.sleep(0.4 + attempt * 0.3)
-                    break
+                    resp = do_get(api_url, params, hdrs)
+                    status = getattr(resp, "status_code", None)
+                    body = getattr(resp, "text", "") or ""
+                    snippet = body[:20000]
 
-                # intentar parsear JSON
-                try:
-                    data = resp.json()
-                except Exception:
-                    # si no es JSON, pasar al siguiente endpoint
-                    break
-
-                items = []
-                if isinstance(data, dict):
-                    items = data.get('products') or data.get('items') or data.get('results') or data.get('content') or data.get('data') or []
-                elif isinstance(data, list):
-                    items = data
-
-                if not items:
-                    break
-
-                # procesar items JSON
-                for p in items:
+                    debug_runs.append({
+                        "type": "xhr",
+                        "api_url": api_url,
+                        "params": params,
+                        "status_code": status,
+                        "body_snippet": snippet[:2000]
+                    })
+                    # guardar parcial
                     try:
-                        nombre = str(p.get('name') or p.get('productName') or p.get('title') or p.get('description') or '').strip().upper()
-                        if not nombre:
-                            continue
-                        p_o = safe_float_from_text(p.get('price') or p.get('salePrice') or p.get('finalPrice') or 0)
-                        p_r = safe_float_from_text(p.get('regularPrice') or p.get('listPrice') or p_o)
-                        p_monedero = safe_float_from_text(p.get('monederoPrice') or p.get('cardPrice') or 0)
-                        precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
-                        if not (0 < precio_efectivo <= limite):
-                            continue
-                        slug = p.get('slug') or p.get('url') or p.get('link') or ''
-                        link_final = urljoin(base_domain, slug) if slug else url
-                        img_url = p.get('imageUrl') or p.get('image') or ''
-                        if not img_url and isinstance(p.get('media'), list) and p['media']:
-                            img_url = p['media'][0].get('url', '')
-                        if str(img_url).startswith('//'):
-                            img_url = 'https:' + str(img_url)
-                        productos_map[link_final] = {
-                            "nombre": f"{tag} - {nombre}",
-                            "precio": float(precio_efectivo),
-                            "precio_regular": float(max(p_r, precio_efectivo)),
-                            "link": link_final,
-                            "img": str(img_url)
-                        }
+                        with open(debug_file, "w", encoding="utf-8") as f:
+                            json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
                     except Exception:
-                        continue
+                        pass
 
-                if productos_map:
-                    break
+                    if status != 200:
+                        # no es la ruta correcta, esperar y continuar
+                        time.sleep(0.4 + attempt * 0.3)
+                        break
 
-            except Exception as e:
-                debug_runs.append({"type": "xhr_error", "api_url": api_url, "params": params, "error": str(e)})
-                try:
-                    with open(debug_file, "w", encoding="utf-8") as f:
-                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                time.sleep(0.4)
-                continue
+                    # intentar parsear JSON
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        # respuesta no JSON; pasar al siguiente endpoint
+                        break
 
+                    # localizar lista de items en la respuesta
+                    items = []
+                    if isinstance(data, dict):
+                        items = data.get('products') or data.get('items') or data.get('results') or data.get('content') or data.get('data') or []
+                    elif isinstance(data, list):
+                        items = data
+
+                    if not items:
+                        break
+
+                    # procesar items JSON
+                    for p in items:
+                        try:
+                            nombre = str(p.get('name') or p.get('productName') or p.get('title') or p.get('description') or '').strip().upper()
+                            if not nombre:
+                                continue
+
+                            p_o = safe_float_from_text(p.get('price') or p.get('salePrice') or p.get('finalPrice') or 0)
+                            p_r = safe_float_from_text(p.get('regularPrice') or p.get('listPrice') or p_o)
+                            p_monedero = safe_float_from_text(p.get('monederoPrice') or p.get('cardPrice') or 0)
+
+                            precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
+                            if not (0 < precio_efectivo <= limite):
+                                continue
+
+                            slug = p.get('slug') or p.get('url') or p.get('link') or ''
+                            link_final = urljoin(base, slug) if slug else url
+
+                            img_url = p.get('imageUrl') or p.get('image') or ''
+                            if not img_url and isinstance(p.get('media'), list) and p['media']:
+                                img_url = p['media'][0].get('url', '')
+                            if str(img_url).startswith('//'):
+                                img_url = 'https:' + str(img_url)
+
+                            productos_map[link_final] = {
+                                "nombre": f"{candidate_host.upper()} - {nombre}",
+                                "precio": float(precio_efectivo),
+                                "precio_regular": float(max(p_r, precio_efectivo)),
+                                "link": link_final,
+                                "img": str(img_url)
+                            }
+                        except Exception:
+                            continue
+
+                    if productos_map:
+                        break
+
+                except Exception as e:
+                    debug_runs.append({"type": "xhr_error", "api_url": api_url, "params": params, "error": str(e)})
+                    try:
+                        with open(debug_file, "w", encoding="utf-8") as f:
+                            json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    time.sleep(0.4)
+                    continue
+
+            if productos_map:
+                break
         if productos_map:
             break
 
-    # 2) Fallback HTML parsing de la página de búsqueda pública
+    # 2) Fallback: parseo HTML de la página de búsqueda pública (probar ambos dominios)
     if not productos_map:
-        # posibles URLs de búsqueda públicas
         html_paths = [
-            f"{base_domain}/buscador?keyword={keyword}",
-            f"{base_domain}/buscador?q={keyword}",
-            f"{base_domain}/search?q={keyword}",
-            f"{base_domain}/buscador/{keyword}",
-            f"{base_domain}/?s={keyword}"
+            f"/buscador?keyword={keyword}",
+            f"/buscador?q={keyword}",
+            f"/search?q={keyword}",
+            f"/buscador/{keyword}",
+            f"/?s={keyword}"
         ]
-        for hurl in html_paths:
-            try:
-                resp = do_get(hurl, {}, headers_api)
-                status = resp.status_code
-                body = resp.text or ""
-                debug_runs.append({"type": "html", "url": hurl, "status_code": status, "body_snippet": (body[:2000])})
+        for base in base_urls:
+            candidate_host = base.replace("https://", "").replace("http://", "")
+            for rel in html_paths:
+                hurl = base + rel
                 try:
-                    with open(debug_file, "w", encoding="utf-8") as f:
-                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                if status != 200 or not body:
-                    continue
-
-                soup = BeautifulSoup(body, "html.parser")
-
-                # selectores heurísticos: probar varios patrones comunes
-                product_nodes = []
-                selectors = [
-                    "div.product-card", "div.product-item", "article.product", "div.product", "li.product",
-                    "div.card-product", "div.producto", "div.item-product", "div.grid-item"
-                ]
-                for sel in selectors:
-                    nodes = soup.select(sel)
-                    if nodes:
-                        product_nodes = nodes
-                        break
-
-                # si no hay nodes, buscar por atributos data-product o enlaces con /producto/
-                if not product_nodes:
-                    product_nodes = soup.select("[data-product]") or soup.select("a[href*='/producto/']")
-
-                for node in product_nodes:
+                    hdrs = dict(headers_api)
+                    hdrs["Host"] = candidate_host
+                    resp = do_get(hurl, {}, hdrs)
+                    status = getattr(resp, "status_code", None)
+                    body = getattr(resp, "text", "") or ""
+                    debug_runs.append({"type": "html", "url": hurl, "status_code": status, "body_snippet": (body[:2000])})
                     try:
-                        # nombre
-                        name = ""
-                        n = node.select_one(".product-name, .name, .title, .product-title, .producto-nombre")
-                        if n:
-                            name = n.get_text(strip=True)
-                        else:
-                            # fallback: texto del enlace
-                            a = node.select_one("a")
-                            if a:
-                                name = a.get_text(strip=True)
-                        if not name:
-                            continue
-                        nombre = name.strip().upper()
-
-                        # imagen
-                        img = ""
-                        img_tag = node.select_one("img")
-                        if img_tag:
-                            img = img_tag.get("data-src") or img_tag.get("src") or ""
-
-                        # precio: buscar dentro del nodo
-                        price_text = ""
-                        psel = node.select_one(".price, .product-price, .precio, .price-final, .price-amount")
-                        if psel:
-                            price_text = psel.get_text(" ", strip=True)
-                        else:
-                            # buscar cualquier texto con S/ o PEN or numbers
-                            txt = node.get_text(" ", strip=True)
-                            m = re.search(r'(S\/\s?\d[\d.,]*)', txt)
-                            if m:
-                                price_text = m.group(1)
-                            else:
-                                # buscar números
-                                m2 = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)', txt)
-                                if m2:
-                                    price_text = m2.group(1)
-
-                        precio = safe_float_from_text(price_text)
-                        if not (0 < precio <= limite):
-                            continue
-
-                        # link
-                        link = ""
-                        a = node.select_one("a[href]")
-                        if a:
-                            link = a.get("href")
-                        if link and not link.startswith("http"):
-                            link = urljoin(base_domain, link)
-
-                        productos_map[link or nombre] = {
-                            "nombre": f"{tag} - {nombre}",
-                            "precio": float(precio),
-                            "precio_regular": float(precio),
-                            "link": link or url,
-                            "img": img or ""
-                        }
+                        with open(debug_file, "w", encoding="utf-8") as f:
+                            json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
                     except Exception:
+                        pass
+                    if status != 200 or not body:
                         continue
 
-                if productos_map:
-                    break
+                    soup = BeautifulSoup(body, "html.parser")
 
-            except Exception as e:
-                debug_runs.append({"type": "html_error", "url": hurl, "error": str(e)})
-                try:
-                    with open(debug_file, "w", encoding="utf-8") as f:
-                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                continue
+                    # selectores heurísticos
+                    product_nodes = []
+                    selectors = [
+                        "div.product-card", "div.product-item", "article.product", "div.product", "li.product",
+                        "div.card-product", "div.producto", "div.item-product", "div.grid-item"
+                    ]
+                    for sel in selectors:
+                        nodes = soup.select(sel)
+                        if nodes:
+                            product_nodes = nodes
+                            break
 
-    # guardar debug final
+                    if not product_nodes:
+                        product_nodes = soup.select("[data-product]") or soup.select("a[href*='/producto/']")
+
+                    for node in product_nodes:
+                        try:
+                            # nombre
+                            name = ""
+                            n = node.select_one(".product-name, .name, .title, .product-title, .producto-nombre, a")
+                            if n:
+                                name = n.get_text(strip=True)
+                            if not name:
+                                continue
+                            nombre = name.strip().upper()
+
+                            # imagen
+                            img = ""
+                            img_tag = node.select_one("img")
+                            if img_tag:
+                                img = img_tag.get("data-src") or img_tag.get("src") or ""
+
+                            # precio
+                            price_text = ""
+                            psel = node.select_one(".price, .product-price, .precio, .price-final, .price-amount")
+                            if psel:
+                                price_text = psel.get_text(" ", strip=True)
+                            else:
+                                txt = node.get_text(" ", strip=True)
+                                m = re.search(r'(S\/\s?\d[\d.,]*)', txt)
+                                if m:
+                                    price_text = m.group(1)
+                                else:
+                                    m2 = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)', txt)
+                                    if m2:
+                                        price_text = m2.group(1)
+
+                            precio = safe_float_from_text(price_text)
+                            if not (0 < precio <= limite):
+                                continue
+
+                            # link
+                            link = ""
+                            a = node.select_one("a[href]")
+                            if a:
+                                link = a.get("href")
+                            if link and not link.startswith("http"):
+                                link = urljoin(base, link)
+
+                            productos_map[link or nombre] = {
+                                "nombre": f"{candidate_host.upper()} - {nombre}",
+                                "precio": float(precio),
+                                "precio_regular": float(precio),
+                                "link": link or url,
+                                "img": img or ""
+                            }
+                        except Exception:
+                            continue
+
+                    if productos_map:
+                        break
+
+                except Exception as e:
+                    debug_runs.append({"type": "html_error", "url": hurl, "error": str(e)})
+                    try:
+                        with open(debug_file, "w", encoding="utf-8") as f:
+                            json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    continue
+            if productos_map:
+                break
+
+    # Guardar debug final
     try:
         with open(debug_file, "w", encoding="utf-8") as f:
             json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
+    # Devolver lista de productos
     return list(productos_map.values())
+
 
 
 
