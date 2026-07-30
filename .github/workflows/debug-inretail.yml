@@ -6,9 +6,9 @@ jobs:
   run-scraper:
     runs-on: ubuntu-latest
     env:
-      SUPABASE_KEY: ${{ sb_secret_henvH_l9v0fZ8KuStXRpnQ_S4hSrQym}}
-      SUPABASE_URL: ${{ https://uxornuepdxqlhzizjnhr.supabase.co }}    # opcional si lo usas
-      TELEGRAM_TOKEN: ${{ 8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI }}# opcional si lo usas
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}    # opcional si lo usas
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}# opcional si lo usas
     steps:
       - uses: actions/checkout@v4
 
