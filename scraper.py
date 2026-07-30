@@ -1764,18 +1764,20 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_inretail(url, limite, headers=None, keyword=None):
     """
-    Motor definitivo para Inkafarma y Mifarma usando la API de Algolia.
+    Motor definitivo para Inkafarma y Mifarma vía Algolia Engine.
+    Incluye inspector profundo de JSON para garantizar la captura de precios anidados.
     """
+    import json
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
 
     productos_map = {}
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.replace("www.", "")
+    netloc = parsed.netloc.replace("www.", "")  # inkafarma.pe o mifarma.pe
     base_url = f"{scheme}://{netloc}"
 
-    # Extraer palabra clave de la URL
+    # 1. Extraer palabra clave de la URL
     query_params = parse_qs(parsed.query)
     if not keyword:
         kw_list = query_params.get('keyword', query_params.get('q', ['']))
@@ -1784,7 +1786,7 @@ def motor_inretail(url, limite, headers=None, keyword=None):
     tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
     safe_log(f"⚡ [{tag}] Consultando Algolia Search Engine para: '{keyword}'...", "info")
 
-    # Credenciales del cURL de DevTools
+    # Credenciales oficiales del clúster de Algolia InRetail
     ALGOLIA_APP_ID = "15W622LAQ4"
     ALGOLIA_API_KEY = "ccd8cbda203928003f7fe6f44ddbfc3a"
     algolia_url = f"https://{ALGOLIA_APP_ID.lower()}-dsn.algolia.net/1/indexes/*/queries"
@@ -1808,6 +1810,27 @@ def motor_inretail(url, limite, headers=None, keyword=None):
         ]
     }
 
+    # Helper interno para extraer todos los precios flotantes de una estructura compleja
+    def extraer_precios_profundo(nodo, clave=""):
+        precios = []
+        if isinstance(nodo, (int, float)):
+            val = float(nodo)
+            # Evitar capturar IDs, SKUs o códigos de barras que parezcan números
+            if 0.5 <= val <= 5000 and not any(bad in clave.lower() for bad in ['id', 'sku', 'stock', 'code', 'quantity', 'score', 'count', 'date']):
+                precios.append(val)
+        elif isinstance(nodo, str):
+            if any(p in clave.lower() for p in ['price', 'precio', 'sale', 'list', 'cost', 'val']):
+                val = limpiar_precio_pnp(nodo)
+                if 0.5 <= val <= 5000:
+                    precios.append(val)
+        elif isinstance(nodo, dict):
+            for k, v in nodo.items():
+                precios.extend(extraer_precios_profundo(v, f"{clave}.{k}"))
+        elif isinstance(nodo, list):
+            for elem in nodo:
+                precios.extend(extraer_precios_profundo(elem, clave))
+        return precios
+
     try:
         resp = requests.post(algolia_url, headers=headers_algolia, json=payload, timeout=10)
         
@@ -1816,57 +1839,57 @@ def motor_inretail(url, limite, headers=None, keyword=None):
             results = data.get("results", [])
             if results:
                 hits = results[0].get("hits", [])
-                safe_log(f"🔍 [{tag}] ¡Algolia devolvió {len(hits)} productos! Procesando...", "info")
+                safe_log(f"🔍 [{tag}] ¡Algolia devolvió {len(hits)} productos! Analizando estructuras de precio...", "info")
 
                 for item in hits:
                     try:
-                        nombre = str(item.get("name") or item.get("productName") or "").strip().upper()
+                        nombre = str(item.get("name") or item.get("productName") or item.get("description") or item.get("displayName") or "").strip().upper()
                         if not nombre or len(nombre) < 3:
                             continue
 
-                        # Captura de precio oferta / lista
-                        p_o = safe_float(item.get("price") or item.get("salePrice") or item.get("price_sale") or 0.0)
-                        p_r = safe_float(item.get("regularPrice") or item.get("listPrice") or p_o)
-                        p_monedero = safe_float(item.get("monederoPrice") or item.get("cardPrice") or 0.0)
+                        # Extracción profunda de precios del producto
+                        precios_hallados = extraer_precios_profundo(item)
+                        if not precios_hallados:
+                            continue
 
-                        precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
-                        if precio_efectivo == 0.0:
-                            precio_efectivo = p_r
+                        precios_ordenados = sorted(list(set(precios_hallados)))
+                        p_o = precios_ordenados[0]   # Menor precio (Monedero / Oferta)
+                        p_r = precios_ordenados[-1]  # Mayor precio (Regular / Tacho)
 
-                        if 0 < precio_efectivo <= limite:
-                            slug = item.get("slug") or item.get("url") or item.get("link") or ""
+                        if 0 < p_o <= limite:
+                            slug = item.get("slug") or item.get("url") or item.get("link") or item.get("productUrl") or ""
                             
-                            if slug.startswith("http"):
+                            if str(slug).startswith("http"):
                                 link_final = slug
                             elif slug:
-                                link_final = urljoin(base_url, slug if slug.startswith("/") else f"/producto/{slug}")
+                                slug_clean = str(slug) if str(slug).startswith("/") else f"/{slug}"
+                                link_final = f"{base_url}{slug_clean}" if "/producto/" in slug_clean else f"{base_url}/producto{slug_clean}"
                             else:
                                 link_final = f"{base_url}/buscador?keyword={keyword}"
 
-                            img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or ""
+                            img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
                             if str(img_url).startswith("//"):
                                 img_url = "https:" + str(img_url)
 
                             productos_map[link_final] = {
                                 "nombre": f"{tag} - {nombre}",
-                                "precio": precio_efectivo,
-                                "precio_regular": max(p_r, precio_efectivo),
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
                                 "link": link_final,
                                 "img": str(img_url)
                             }
                     except Exception:
                         continue
     except Exception as e:
-        safe_log(f"🛑 [{tag}] Error al conectar con Algolia: {e}", "error")
+        safe_log(f"🛑 [{tag}] Error al procesar respuesta de Algolia: {e}", "error")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Éxito! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
+        safe_log(f"✅ [{tag}] ¡Éxito absoluto! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
     else:
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
