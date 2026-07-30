@@ -1772,19 +1772,14 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 
-# Nota: este motor asume que existen las siguientes utilidades en tu proyecto:
-# safe_log(msg, level), extraer_productos_json_universal(json_obj),
-# limpiar_precio_pnp(text), encontrar_foto_fala(obj), extraer_numeros_dict(obj, out_list),
-# safe_float(value), LISTA_USER_AGENTS (lista de user agents), y la instancia `supabase` si la usas.
-
 def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
     """
-    Motor para InRetail / Inkafarma.
-    - url: URL base o endpoint de búsqueda.
-    - limite: precio máximo aceptable.
+    Motor para InRetail / Inkafarma (versión robusta).
+    - url: URL base o endpoint de búsqueda (puede ser /buscador?... o /api/v1/products/search).
+    - limite: precio máximo aceptable (float).
     - headers: cabeceras opcionales.
     - keyword: término de búsqueda (si aplica).
-    - max_pages: número máximo de páginas a iterar (si aplica).
+    - max_pages: número máximo de páginas a iterar.
     Retorna: lista de dicts con keys: nombre, precio, precio_regular, link, img
     """
     productos = []
@@ -1796,7 +1791,6 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                 "Accept-Language": "es-PE,es;q=0.9"
             }
 
-        # Normalizar host: quitar www si existe
         parsed = urlparse(url)
         scheme = parsed.scheme or "https"
         netloc = parsed.netloc.replace("www.", "")
@@ -1810,29 +1804,42 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
         page = 1
         while page <= max_pages:
             params = {}
+            # construir request_url y params
             if original_query:
                 request_url = f"{request_url_base}?{original_query}"
             else:
                 request_url = request_url_base
                 if keyword:
-                    if "api" in request_url or "/search" in request_url or "buscador" in request_url:
-                        params = {"q": keyword, "keyword": keyword, "page": page}
-                    else:
-                        params = {"keyword": keyword, "page": page}
+                    # intentar parámetros comunes
+                    params = {"keyword": keyword, "page": page, "limit": 20}
 
             safe_log(f"[InRetail] Request URL: {request_url} params: {params}", "info")
 
-            # Reintentos simples con backoff
+            # 1) Intentar llamar la API forzando cabeceras que devuelven JSON
             resp = None
-            for intento in range(1, 4):
-                try:
-                    resp = session.get(request_url, params=params, timeout=15, verify=False)
-                    safe_log(f"[InRetail] intento {intento} status {getattr(resp, 'status_code', 'N/A')}", "caption")
-                    if resp is not None and resp.status_code == 200:
-                        break
-                except Exception as e:
-                    safe_log(f"[InRetail] intento {intento} fallo: {e}", "warning")
-                    time.sleep(random.uniform(1.0, 2.0))
+            try:
+                api_headers = dict(session.headers)
+                api_headers.update({
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                    "X-Requested-With": "XMLHttpRequest",
+                })
+                resp = session.get(request_url, params=params, headers=api_headers, timeout=15, verify=False)
+                safe_log(f"[InRetail] intento API status {getattr(resp, 'status_code', 'N/A')}", "caption")
+            except Exception as e_api:
+                safe_log(f"[InRetail] fallo llamada API: {e_api}", "warning")
+                resp = None
+
+            # 2) Si la respuesta no es 200 o es HTML, intentar sin X-Requested-With (fallback)
+            if not resp or resp.status_code != 200:
+                for intento in range(1, 3):
+                    try:
+                        resp = session.get(request_url, params=params, timeout=15, verify=False)
+                        safe_log(f"[InRetail] intento fallback {intento} status {getattr(resp, 'status_code', 'N/A')}", "caption")
+                        if resp is not None and resp.status_code == 200:
+                            break
+                    except Exception as e:
+                        safe_log(f"[InRetail] intento fallback {intento} fallo: {e}", "warning")
+                        time.sleep(1.0)
 
             if not resp:
                 safe_log("[InRetail] No se obtuvo respuesta del servidor.", "warning")
@@ -1841,40 +1848,56 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
             ctype = resp.headers.get("Content-Type", "").lower()
             safe_log(f"[InRetail] Status: {resp.status_code} Content-Type: {ctype}", "info")
 
-            # Guardar raw para depuración (opcional)
+            texto = resp.text or ""
+
+            # Guardar raw: preferir raw_search_results, si no existe guardar control en historial_precios
             try:
                 if 'supabase' in globals():
-                    supabase.table("raw_search_results").insert({
-                        "source_url": request_url,
-                        "payload": resp.text[:200000],
-                        "created_at": datetime.utcnow().isoformat()
-                    }).execute()
-                    safe_log("[InRetail] Payload guardado en raw_search_results", "success")
+                    try:
+                        supabase.table("raw_search_results").insert({
+                            "source_url": request_url,
+                            "payload": texto[:200000],
+                            "created_at": datetime.utcnow().isoformat()
+                        }).execute()
+                        safe_log("[InRetail] Payload guardado en raw_search_results", "success")
+                    except Exception as e_raw:
+                        # fallback: guardar un registro de control en historial_precios para inspección
+                        try:
+                            supabase.table("historial_precios").insert({
+                                "identificador": f"RAW-INRETAIL-{int(time.time())}",
+                                "precio": 0.0,
+                                "precio_regular": 0.0,
+                                "fecha": datetime.utcnow().isoformat(),
+                                "imagen_producto": "",
+                                "link_producto": request_url
+                            }).execute()
+                            safe_log(f"[InRetail] Payload no guardable en raw_search_results, guardado control en historial_precios", "warning")
+                        except Exception as e_hist:
+                            safe_log(f"[InRetail] No se pudo guardar payload en historial_precios tampoco: {e_hist}", "warning")
             except Exception as e:
-                safe_log(f"[InRetail] No se pudo guardar payload: {e}", "warning")
+                safe_log(f"[InRetail] Error guardando payload: {e}", "warning")
 
-            texto = resp.text or ""
             encontrados = []
 
-            # Si JSON directo
-            if "application/json" in ctype:
+            # Si la respuesta parece JSON (cabecera o contenido)
+            if "application/json" in ctype or texto.strip().startswith("{") or texto.strip().startswith("["):
                 try:
                     j = resp.json()
                     encontrados = extraer_productos_json_universal(j)
+                    safe_log(f"[InRetail] extraidos {len(encontrados)} nodos desde JSON directo/embebido", "info")
                 except Exception as e:
                     safe_log(f"[InRetail] JSON parse error: {e}", "warning")
                     encontrados = []
 
-            else:
-                # Buscar JSON embebido en scripts
+            # Si no hay productos desde JSON directo, buscar JSON embebido en scripts
+            if not encontrados:
                 try:
                     soup = BeautifulSoup(texto, "html.parser")
-                    script_candidates = soup.find_all("script")
-                    for s in script_candidates:
+                    scripts = soup.find_all("script")
+                    for s in scripts:
                         txt = s.text.strip()
-                        if not txt or len(txt) < 200:
-                            continue
-                        if txt.startswith("{") or "displayName" in txt or "__NEXT_DATA__" in (s.get("id") or "") or "products" in txt:
+                        if not txt or len(txt) < 200: continue
+                        if "__NEXT_DATA__" in (s.get("id") or "") or "products" in txt or "items" in txt or "displayName" in txt:
                             start = txt.find("{")
                             end = txt.rfind("}")
                             if start != -1 and end != -1 and end > start:
@@ -1887,95 +1910,108 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                                 except Exception:
                                     continue
                 except Exception as e:
-                    safe_log(f"[InRetail] Error parseando HTML para JSON embebido: {e}", "warning")
+                    safe_log(f"[InRetail] Error parseando scripts para JSON: {e}", "warning")
 
-                # Fallback: parseo por selectores HTML
-                if not encontrados:
-                    try:
-                        tarjetas = soup.find_all(
-                            ['div', 'article', 'li', 'a'],
-                            class_=re.compile(r'(product|card|item|pod|product-item|product-summary|product-card|grid-item)', re.I)
-                        )
-                        for t in tarjetas:
-                            try:
-                                a_el = t.find('a', href=True) or (t if t.name == 'a' and t.get('href') else None)
-                                if not a_el:
-                                    continue
-                                link_final = urljoin(base_url, a_el['href']) if a_el and a_el.get('href') else request_url
-                                nombre_el = t.find(['h2','h3','span','p','a'], class_=re.compile(r'(title|name|displayName|product-name|product-title)', re.I)) or a_el
-                                nombre = nombre_el.text.strip().upper() if nombre_el else (a_el.text.strip().upper() if a_el else "")
-                                if len(nombre) < 3:
-                                    continue
+            # Fallback HTML agresivo si aún no hay encontrados
+            if not encontrados:
+                try:
+                    soup = BeautifulSoup(texto, "html.parser")
+                    posibles = []
+                    # buscar por atributos data-*
+                    posibles += soup.find_all(attrs={"data-product-id": True})
+                    posibles += soup.find_all(attrs={"data-sku": True})
+                    posibles += soup.find_all(attrs={"data-product": True})
+                    # buscar por clases comunes
+                    posibles += soup.find_all(['div','article','li','a'], class_=re.compile(r'(product|card|item|pod|product-item|product-summary|product-card|grid-item|product-list|product__card)', re.I))
+                    # buscar bloques que contengan "S/" en su texto (posibles tarjetas)
+                    posibles += [el.parent for el in soup.find_all(text=re.compile(r'S/\s*\d'))]
 
-                                precio_text = ""
-                                price_el = t.find(attrs={"data-price": True}) or t.find(class_=re.compile(r'(price|sale|oferta|current-price|price-item|oferta|precio)', re.I))
-                                if price_el:
-                                    precio_text = price_el.get('data-price') or price_el.text
+                    # deduplicar
+                    posibles = list(dict.fromkeys(posibles))
+
+                    for t in posibles:
+                        try:
+                            a_el = t.find('a', href=True) or (t if t.name == 'a' and t.get('href') else None)
+                            link_final = request_url
+                            if a_el and a_el.get('href'):
+                                link_final = urljoin(base_url, a_el['href'])
+
+                            nombre_el = t.find(['h2','h3','span','p','a'], class_=re.compile(r'(title|name|displayName|product-name|product-title|nombre|titulo)', re.I)) or t.find(['h2','h3','span','p','a'])
+                            nombre = nombre_el.text.strip() if nombre_el else ""
+                            nombre = re.sub(r'\s+', ' ', nombre).strip()
+                            if not nombre or len(nombre) < 3:
+                                txt = t.get_text(separator=" ").strip()
+                                nombre = txt.split("\n")[0].strip()[:200]
+
+                            # imagen
+                            img = ""
+                            img_el = t.find('img')
+                            if img_el:
+                                for attr in ['data-srcset','srcset','data-src','src','data-lazy']:
+                                    val = img_el.get(attr)
+                                    if val and len(val) > 10 and 'data:image' not in val:
+                                        img = str(val).split(' ')[0].strip()
+                                        break
+                            if img and img.startswith('//'): img = 'https:' + img
+
+                            # precio
+                            precio_text = ""
+                            price_el = t.find(attrs={"data-price": True}) or t.find(class_=re.compile(r'(price|sale|oferta|current-price|price-item|precio|amount)', re.I))
+                            if price_el:
+                                precio_text = price_el.get('data-price') or price_el.text
+                            else:
+                                txt = t.get_text(" ", strip=True)
+                                m = re.search(r'S/\s*([\d\.,]+)', txt)
+                                if m:
+                                    precio_text = m.group(1)
                                 else:
-                                    precio_text = t.text
+                                    m2 = re.search(r'(\d{1,4}(?:[.,]\d{2})?)', txt)
+                                    if m2:
+                                        precio_text = m2.group(1)
 
-                                p_o = limpiar_precio_pnp(precio_text)
-                                if p_o == 0.0:
-                                    nums = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', t.text)
-                                    if nums:
-                                        p_o = limpiar_precio_pnp(nums[0])
+                            p_o = limpiar_precio_pnp(precio_text)
+                            if p_o == 0.0:
+                                nums = re.findall(r'([\d\.,]+)', precio_text or t.get_text())
+                                if nums:
+                                    p_o = limpiar_precio_pnp(nums[0])
 
-                                if 0 < p_o <= limite:
-                                    img = ""
-                                    img_el = t.find('img')
-                                    if img_el:
-                                        for attr in ['data-srcset','srcset','data-src','src','data-lazy']:
-                                            val = img_el.get(attr)
-                                            if val and len(val) > 10 and 'data:image' not in val:
-                                                img = str(val).split(' ')[0].strip()
-                                                break
-                                    if img and img.startswith('//'):
-                                        img = 'https:' + img
-                                    if not img:
-                                        img = encontrar_foto_fala(t) or ''
-
-                                    productos.append({
-                                        "nombre": f"INRETAIL - {nombre}",
-                                        "precio": p_o,
-                                        "precio_regular": p_o,
-                                        "link": link_final,
-                                        "img": img
-                                    })
-                            except Exception:
+                            if not nombre:
                                 continue
-                    except Exception as e:
-                        safe_log(f"[InRetail] Error en fallback HTML: {e}", "warning")
 
-            # Normalizar productos desde JSON embebido si se encontraron
-            if encontrados:
-                for prod in encontrados:
-                    try:
-                        nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or prod.get('name') or '').strip().upper()
-                        if len(nombre) < 3:
+                            if 0 < p_o <= limite:
+                                encontrados.append({
+                                    "displayName": nombre,
+                                    "salePrice": p_o,
+                                    "listPrice": p_o,
+                                    "url": link_final,
+                                    "image": img
+                                })
+                        except Exception:
                             continue
-                        p_o = safe_float(prod.get('salePrice') or prod.get('price') or prod.get('value'))
-                        p_r = safe_float(prod.get('listPrice') or prod.get('regularPrice') or prod.get('originalPrice') or p_o)
-                        if p_o == 0.0:
-                            valores_aux = []
-                            extraer_numeros_dict(prod, valores_aux)
-                            if valores_aux:
-                                p_o = sorted(list(set(valores_aux)))[0]
-                                p_r = max(p_r, p_o)
-                        if 0 < p_o <= limite:
-                            link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
-                            link_final = urljoin(base_url, link_rel) if link_rel else request_url
-                            img = encontrar_foto_fala(prod) or ''
-                            if str(img).startswith('//'):
-                                img = 'https:' + img
-                            productos.append({
-                                "nombre": f"INRETAIL - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img
-                            })
-                    except Exception:
-                        continue
+                except Exception as e:
+                    safe_log(f"[InRetail] Error en fallback HTML agresivo: {e}", "warning")
+
+            # Normalizar encontrados (JSON o heurística)
+            for prod in encontrados:
+                try:
+                    nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or prod.get('name') or '').strip()
+                    if len(nombre) < 3: continue
+                    p_o = safe_float(prod.get('salePrice') or prod.get('price') or prod.get('value') or 0.0)
+                    p_r = safe_float(prod.get('listPrice') or prod.get('regularPrice') or prod.get('originalPrice') or p_o)
+                    link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
+                    link_final = urljoin(base_url, link_rel) if link_rel else request_url
+                    img = prod.get('image') or prod.get('img') or encontrar_foto_fala(prod) or ''
+                    if str(img).startswith('//'): img = 'https:' + img
+                    if 0 < p_o <= limite:
+                        productos.append({
+                            "nombre": f"INRETAIL - {nombre.upper()}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img
+                        })
+                except Exception:
+                    continue
 
             # Deduplicar por link
             vistos = set()
@@ -1985,12 +2021,12 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                     vistos.add(p['link'])
                     productos_unicos.append(p)
 
-            # --- Guardado robusto en historial_precios con comparación de precios ---
+            safe_log(f"[InRetail] Extracción final: {len(productos_unicos)} productos únicos", "info")
+
+            # Guardado en historial_precios (solo resumen del primer producto)
             try:
                 if 'supabase' in globals():
                     primer_prod = productos_unicos[0] if productos_unicos else None
-
-                    # Generar identificador estable (intenta sku/id, data-product-id, número en link, fallback)
                     identificador = None
                     if primer_prod:
                         for key in ("sku", "id", "productId", "product_id"):
@@ -2001,12 +2037,10 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                             parts = [p for p in re.split(r'[\-/\?&=#]', primer_prod.get("link")) if p.isdigit() and len(p) >= 4]
                             if parts:
                                 identificador = parts[-1]
-
                     if not identificador:
                         url_for_hash = (primer_prod.get("link") if primer_prod and primer_prod.get("link") else request_url)
                         short_hash = abs(hash(url_for_hash)) % (10**8)
                         identificador = f"INRETAIL-{(keyword or 'NOKEY')}-{short_hash}"
-
                     identificador = str(identificador)[:255]
 
                     nuevo_precio = float(primer_prod.get("precio", 0.0)) if primer_prod else 0.0
@@ -2020,7 +2054,7 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                         "link_producto": primer_prod.get("link", request_url) if primer_prod else request_url
                     }
 
-                    # Comprobar existencia y comparar precios
+                    # comprobar existencia y actualizar solo si baja
                     try:
                         existing = supabase.table("historial_precios").select("id,precio").eq("identificador", identificador).limit(1).execute()
                         existe = bool(existing.data and len(existing.data) > 0)
@@ -2032,7 +2066,6 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                         try:
                             current_row = existing.data[0]
                             precio_actual = float(current_row.get("precio", 0.0))
-                            # Si el nuevo precio es menor, actualizar registro
                             if nuevo_precio > 0 and nuevo_precio < precio_actual:
                                 supabase.table("historial_precios").update({
                                     "precio": nuevo_precio,
@@ -2054,11 +2087,9 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                             safe_log(f"[InRetail] Error insertando en historial_precios: {e_ins}", "warning")
             except Exception as e:
                 safe_log(f"[InRetail] Error en bloque de guardado: {e}", "warning")
-            # --- fin guardado robusto ---
 
-            # Si hay resultados, log y retornar (comportamiento conservador)
+            # retornar si encontramos productos
             if productos_unicos:
-                safe_log(f"✅ [InRetail] Página {page}: indexados {len(productos_unicos)} productos.", "success")
                 return productos_unicos
 
             page += 1
