@@ -1760,6 +1760,8 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
+
+
 def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
     """
     Motor para InRetail / Inkafarma.
@@ -1968,6 +1970,24 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
                     vistos.add(p['link'])
                     productos_unicos.append(p)
 
+            # --- Guardar resumen en historial_precios (ajustar según columnas existentes) ---
+            try:
+                if 'supabase' in globals():
+                    # tomar primer producto como resumen; si no hay productos, guardar registro de control
+                    primer_prod = productos_unicos[0] if productos_unicos else {}
+                    supabase.table("historial_precios").insert({
+                        "identificador": (primer_prod.get("nombre") or f"INRETAIL-{keyword or ''}")[:255],
+                        "precio": float(primer_prod.get("precio", 0.0)),
+                        "precio_regular": float(primer_prod.get("precio_regular", primer_prod.get("precio", 0.0))),
+                        "fecha": datetime.utcnow().isoformat(),
+                        "imagen_producto": primer_prod.get("img", ""),
+                        "link_producto": primer_prod.get("link", request_url)
+                    }).execute()
+                    safe_log("[InRetail] Guardado en historial_precios", "success")
+            except Exception as e:
+                safe_log(f"[InRetail] No se pudo guardar en historial_precios: {e}", "warning")
+            # --- fin inserción ---
+
             # Si hay resultados, log y retornar (comportamiento conservador)
             if productos_unicos:
                 safe_log(f"✅ [InRetail] Página {page}: indexados {len(productos_unicos)} productos.", "success")
@@ -1981,6 +2001,7 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
         safe_log(f"Error en motor_inretail: {e}", "error")
 
     return []
+
 
 
 
