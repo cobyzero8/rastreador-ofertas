@@ -1760,99 +1760,114 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
-def motor_inretail(url, limite, headers=None, max_pages=1, retry=2):
+def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
     """
-    Motor de alta precisión para Inkafarma y Mifarma.
-    Guarda respuesta cruda en scrapers/inretail_debug/resp_debug.json para debugging.
+    Motor robusto para Inkafarma / Mifarma.
+    Intenta múltiples endpoints, guarda debug en scrapers/inretail_debug/resp_debug.json.
     """
-    import requests
+    import requests, os, time, json, random
     from urllib.parse import urlparse, parse_qs, urljoin
-    import random, time, os, json
 
-    # Asegurar carpeta debug
+    # Debug folder
     debug_dir = os.path.join(os.path.dirname(__file__), "inretail_debug")
     os.makedirs(debug_dir, exist_ok=True)
     debug_file = os.path.join(debug_dir, "resp_debug.json")
 
     productos_map = {}
-    dominio = urlparse(url).netloc.lower()
+    parsed = urlparse(url)
+    dominio = parsed.netloc.lower()
     tag = "INKAFARMA" if "inkafarma" in dominio else "MIFARMA"
     brand = "inkafarma" if tag == "INKAFARMA" else "mifarma"
     base_domain = f"https://www.{brand}.pe"
 
-    parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
+    query_params = parse_qs(parsed.query)
     keyword = query_params.get('keyword', query_params.get('q', ['']))[0]
     if not keyword:
-        path_segments = [s for s in parsed_url.path.split('/') if s]
-        keyword = path_segments[-1] if path_segments else "desodorante"
+        path_segments = [s for s in parsed.path.split('/') if s]
+        keyword = path_segments[-1] if path_segments else ""
 
-    safe_log(f"📡 [{tag}] Consultando API interna para término: '{keyword}'...", "info")
-
+    # Headers (puedes ajustar LISTA_USER_AGENTS)
     headers_api = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9",
         "Origin": base_domain,
-        "Referer": url,
-        "x-channel": "WEB",
-        "x-brand": brand
+        "Referer": url
     }
     if headers:
         headers_api.update(headers)
 
-    endpoints_a_probar = [
-        (f"{base_domain}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50, "sort": "price_asc"}),
+    # Endpoints a probar (orden sugerido)
+    endpoints = [
+        (f"{base_domain}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50}),
         (f"{base_domain}/api/catalog/search", {"q": keyword, "limit": 50}),
-        (f"{base_domain}/search", {"q": keyword})
+        (f"{base_domain}/api/v1/search", {"keyword": keyword, "page": 1, "limit": 50}),
+        (f"{base_domain}/search", {"q": keyword}),
+        (f"{base_domain}/api/v1/products", {"q": keyword}),
     ]
 
-    for api_url, params in endpoints_a_probar:
+    debug_runs = []
+
+    for api_url, params in endpoints:
         for attempt in range(retry + 1):
             try:
                 resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
-                # Guardar debug: status + body (parcial si es muy grande)
+                status = resp.status_code
+                body = resp.text or ""
+                snippet = body[:20000]
+
+                debug_runs.append({
+                    "api_url": api_url,
+                    "params": params,
+                    "status_code": status,
+                    "body_snippet": snippet[:2000]
+                })
+
+                # Guardar debug parcial en cada intento
                 try:
-                    body_text = resp.text or ""
-                    debug_payload = {"api_url": api_url, "params": params, "status_code": resp.status_code, "body_snippet": body_text[:20000]}
                     with open(debug_file, "w", encoding="utf-8") as f:
-                        json.dump(debug_payload, f, ensure_ascii=False, indent=2)
+                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
 
-                safe_log(f"🔁 [{tag}] {api_url} status={resp.status_code} len={len(resp.text or '')} intento={attempt+1}", "info")
-
-                if resp.status_code != 200:
-                    time.sleep(1 + attempt * 1.5)
-                    continue
-
+                if status != 200:
+                    # no es la ruta correcta, esperar y continuar
+                    time.sleep(0.5 + attempt * 0.5)
+                    break  # pasar al siguiente endpoint
+                # intentar parsear JSON
                 try:
                     data = resp.json()
-                except Exception as e:
-                    safe_log(f"🛑 [{tag}] JSON inválido en {api_url}: {e}", "error")
+                except Exception:
+                    # respuesta no JSON; registrar y pasar a siguiente endpoint
                     break
 
+                # localizar lista de items en la respuesta
                 items = []
                 if isinstance(data, dict):
-                    items = data.get('products') or data.get('items') or data.get('content') or data.get('results') or []
+                    items = data.get('products') or data.get('items') or data.get('results') or data.get('content') or data.get('data') or []
                 elif isinstance(data, list):
                     items = data
 
                 if not items:
-                    safe_log(f"ℹ️ [{tag}] API {api_url} devolvió 0 items (intento {attempt+1}).", "info")
+                    # si no hay items, registrar y probar siguiente endpoint
                     break
 
-                safe_log(f"🔍 [{tag} API] Catálogo recibido: {len(items)} ítems. Procesando...", "info")
-
+                # procesar items
                 for p in items:
                     try:
-                        nombre = str(p.get('name') or p.get('productName') or p.get('description') or '').strip().upper()
-                        if not nombre or len(nombre) < 3:
+                        nombre = str(p.get('name') or p.get('productName') or p.get('title') or p.get('description') or '').strip().upper()
+                        if not nombre:
                             continue
 
-                        p_o = safe_float(p.get('price') or p.get('salePrice') or p.get('finalPrice'))
+                        def safe_float(v):
+                            try:
+                                return float(v)
+                            except Exception:
+                                return 0.0
+
+                        p_o = safe_float(p.get('price') or p.get('salePrice') or p.get('finalPrice') or 0)
                         p_r = safe_float(p.get('regularPrice') or p.get('listPrice') or p_o)
-                        p_monedero = safe_float(p.get('monederoPrice') or p.get('cardPrice'))
+                        p_monedero = safe_float(p.get('monederoPrice') or p.get('cardPrice') or 0)
 
                         precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
                         if not (0 < precio_efectivo <= limite):
@@ -1862,7 +1877,7 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=2):
                         link_final = urljoin(base_domain, slug) if slug else url
 
                         img_url = p.get('imageUrl') or p.get('image') or ''
-                        if not img_url and isinstance(p.get('media'), list) and len(p['media']) > 0:
+                        if not img_url and isinstance(p.get('media'), list) and p['media']:
                             img_url = p['media'][0].get('url', '')
                         if str(img_url).startswith('//'):
                             img_url = 'https:' + str(img_url)
@@ -1877,24 +1892,33 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=2):
                     except Exception:
                         continue
 
+                # si encontramos productos, salir
                 if productos_map:
                     break
 
             except Exception as e:
-                safe_log(f"⚠️ [{tag}] Intento de conexión fallido a {api_url}: {e}", "caption")
-                time.sleep(1 + attempt * 1.5)
+                debug_runs.append({"api_url": api_url, "params": params, "error": str(e)})
+                try:
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                time.sleep(0.5)
                 continue
 
         if productos_map:
             break
 
-    productos_finales = list(productos_map.values())
-    if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Éxito! Se consolidaron {len(productos_finales)} ofertas válidas.", "success")
-    else:
-        safe_log(f"⚠️ [{tag}] No se encontraron productos por debajo de S/. {limite:.2f}. Revisa {debug_file}", "warning")
+    # guardar debug final
+    try:
+        with open(debug_file, "w", encoding="utf-8") as f:
+            json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
+    productos_finales = list(productos_map.values())
     return productos_finales
+
 
 
 
