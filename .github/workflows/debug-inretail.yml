@@ -1,17 +1,35 @@
-- name: Run motor_inretail and save debug
-  run: |
-    python - <<'PY'
-    import sys, os
-    # Aseguramos que la raíz del repo esté en sys.path
-    repo_root = os.getcwd()
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-    from scraper import motor_inretail
-    motor_inretail("https://inkafarma.pe/buscador?keyword=desodorante", limite=9999, max_pages=1)
-    PY
-- name: Upload debug artifact
-  uses: actions/upload-artifact@v4
-  with:
-    name: inretail-debug
-    path: inretail_debug/resp_debug.json
+name: Debug InRetail API
+on:
+  workflow_dispatch:
 
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run motor_inretail and save debug
+        run: |
+          python - <<'PY'
+          import sys, os
+          # Aseguramos que la raíz del repo esté en sys.path
+          repo_root = os.getcwd()
+          if repo_root not in sys.path:
+              sys.path.insert(0, repo_root)
+          from scraper import motor_inretail
+          motor_inretail("https://inkafarma.pe/buscador?keyword=desodorante", limite=9999, max_pages=1)
+          PY
+
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inretail-debug
+          path: inretail_debug/resp_debug.json
