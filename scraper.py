@@ -1762,150 +1762,141 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-import re
-import time
-import random
-import json
-from urllib.parse import urlparse, urljoin
-import requests
-from bs4 import BeautifulSoup
-
 def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
     """
-    Motor desacoplado para InRetail / Inkafarma / Mifarma.
-    Enfocado exclusivamente en la extracción de datos (Sin acoplamiento a DB).
+    Motor optimizado para Inkafarma y Mifarma.
+    Mantiene el dominio nativo estricto (sin forzar www) y realiza fallback de APIs.
     """
+    import re
+    import time
+    import random
+    import json
+    from urllib.parse import urlparse, parse_qs, urljoin
+    import requests
+    from bs4 import BeautifulSoup
+
     productos_unicos = []
     vistos = set()
+
+    # 1. Parsing estricto manteniendo el dominio exacto proporcionado (SIN FORZAR www)
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc  # Conserva 'inkafarma.pe' exactamente
+    base_url = f"{scheme}://{netloc}"
 
     if headers is None:
         headers = {
             "User-Agent": random.choice(LISTA_USER_AGENTS),
             "Accept": "application/json, text/html, */*;q=0.8",
             "Accept-Language": "es-PE,es;q=0.9",
-            "Referer": "https://inkafarma.pe/"
+            "Referer": base_url,
+            "Origin": base_url
         }
 
-    parsed = urlparse(url)
-    scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.replace("www.", "")
-    base_url = f"{scheme}://www.{netloc}"
-    
-    # Extraer keyword si no viene explícita
-    if not keyword and "keyword=" in parsed.query:
-        match_kw = re.search(r'keyword=([^&]+)', parsed.query)
-        if match_kw:
-            keyword = match_kw.group(1)
+    # Extraer término de búsqueda si no viene explícito
+    query_params = parse_qs(parsed.query)
+    if not keyword:
+        kw_list = query_params.get('keyword', query_params.get('q', query_params.get('ft', [''])))
+        keyword = kw_list[0] if kw_list else ""
 
     session = requests.Session()
     session.headers.update(headers)
 
-    for page in range(1, max_pages + 1):
-        # 1. Definir endpoint según la estrategia (API REST vs Frontend HTML)
-        if keyword:
-            request_url = f"{base_url}/api/v1/products/search"
-            params = {"keyword": keyword, "page": page, "limit": 40}
-        else:
-            request_url = url
-            params = {}
+    # 2. Plan de consultas secuenciales sobre la URL base nativa
+    urls_a_probar = []
+    
+    # Intento 1: La URL tal cual fue ingresada (ej: https://inkafarma.pe/buscador?keyword=desodorante)
+    urls_a_probar.append((url, {}))
 
-        safe_log(f"📡 [InRetail] Escaneando {request_url} | Params: {params}", "info")
+    # Intento 2: Backend de catálogo VTEX/InRetail sobre el dominio sin www
+    if keyword:
+        urls_a_probar.append((f"{base_url}/api/catalog_system/pub/products/search", {"ft": keyword, "O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
+        urls_a_probar.append((f"{base_url}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 40}))
 
+    encontrados_nodos = []
+
+    for req_url, params in urls_a_probar:
         try:
-            resp = session.get(request_url, params=params, timeout=12, verify=False)
-            if resp.status_code != 200:
-                # Si falló la API interna, fallback a la URL original
-                resp = session.get(url, timeout=12, verify=False)
-                if resp.status_code != 200:
-                    continue
+            safe_log(f"📡 [InRetail] Escaneando {req_url} | Params: {params}", "info")
+            resp = session.get(req_url, params=params, timeout=12, verify=False)
+            
+            if resp.status_code not in [200, 206]:
+                continue
 
             ctype = resp.headers.get("Content-Type", "").lower()
             texto = resp.text or ""
-            encontrados = []
 
             # ESTRATEGIA A: Respuesta JSON Directa
             if "application/json" in ctype or texto.strip().startswith(("{", "[")):
                 try:
                     j_data = resp.json()
-                    encontrados = extraer_productos_json_universal(j_data)
-                except Exception as e:
-                    safe_log(f"⚠️ [InRetail] Error parseando JSON directo: {e}", "caption")
-
-            # ESTRATEGIA B: Scripts JSON embebidos (__NEXT_DATA__ o estado de Angular)
-            if not encontrados:
-                soup = BeautifulSoup(texto, "html.parser")
-                for s in soup.find_all("script"):
-                    txt = s.text.strip()
-                    if len(txt) > 200 and ("products" in txt or "displayName" in txt or "__NEXT_DATA__" in (s.get("id") or "")):
-                        start, end = txt.find("{"), txt.rfind("}")
-                        if start != -1 and end > start:
-                            try:
-                                j_data = json.loads(txt[start:end+1])
-                                encontrados = extraer_productos_json_universal(j_data)
-                                if encontrados: break
-                            except Exception:
-                                continue
-
-            # ESTRATEGIA C: Parsing DOM directo de respaldo
-            if not encontrados:
-                soup = BeautifulSoup(texto, "html.parser")
-                cards = soup.select('[class*="product"], [class*="card"], fp-product-card')
-                for card in cards:
-                    try:
-                        tit_el = card.select_one('[class*="name"], [class*="title"], h2, h3, p')
-                        if not tit_el: continue
-                        nombre_txt = tit_el.text.strip()
-
-                        a_el = card.find('a', href=True) or (card if card.name == 'a' else None)
-                        link_txt = urljoin(base_url, a_el['href']) if a_el else url
-
-                        precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', card.text)
-                        if precios:
-                            p_val = limpiar_precio_pnp(precios[0])
-                            if 0 < p_val <= limite:
-                                encontrados.append({
-                                    "displayName": nombre_txt,
-                                    "salePrice": p_val,
-                                    "listPrice": p_val,
-                                    "url": link_txt
-                                })
-                    except Exception:
-                        continue
-
-            # Mapeo y Normalización de Resultados
-            for prod in encontrados:
-                try:
-                    nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or prod.get('name') or '').strip().upper()
-                    if len(nombre) < 3: continue
-
-                    p_o = safe_float(prod.get('salePrice') or prod.get('price') or prod.get('value') or 0.0)
-                    p_r = safe_float(prod.get('listPrice') or prod.get('regularPrice') or p_o)
-                    
-                    link_rel = prod.get('url') or prod.get('link') or ''
-                    link_final = urljoin(base_url, link_rel) if link_rel else url
-
-                    img_url = prod.get('image') or prod.get('img') or encontrar_foto_fala(prod) or ''
-                    if str(img_url).startswith('//'): img_url = 'https:' + str(img_url)
-
-                    if 0 < p_o <= limite and link_final not in vistos:
-                        vistos.add(link_final)
-                        productos_unicos.append({
-                            "nombre": f"INRETAIL - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url
-                        })
+                    encontrados_nodos = extraer_productos_json_universal(j_data)
+                    if encontrados_nodos:
+                        safe_log(f"🔍 [InRetail] ¡Éxito! {len(encontrados_nodos)} objetos extraídos vía API JSON.", "info")
+                        break
                 except Exception:
-                    continue
+                    pass
+
+            # ESTRATEGIA B: JSON embebido en Scripts del HTML
+            soup = BeautifulSoup(texto, "html.parser")
+            for s in soup.find_all("script"):
+                txt = s.text.strip()
+                if len(txt) > 200 and ("products" in txt or "displayName" in txt or "productName" in txt or "__NEXT_DATA__" in (s.get("id") or "")):
+                    start, end = txt.find("{"), txt.rfind("}")
+                    if start != -1 and end > start:
+                        try:
+                            j_data = json.loads(txt[start:end+1])
+                            encontrados_nodos = extraer_productos_json_universal(j_data)
+                            if encontrados_nodos:
+                                safe_log(f"🔍 [InRetail] ¡Éxito! {len(encontrados_nodos)} objetos hallados en script embebido.", "info")
+                                break
+                        except Exception:
+                            continue
+
+            if encontrados_nodos:
+                break
 
         except Exception as e:
-            safe_log(f"🛑 [InRetail] Error en iteración de página {page}: {e}", "error")
+            safe_log(f"⚠️ [InRetail] Fallo al consultar {req_url}: {e}", "caption")
+            continue
 
-        time.sleep(random.uniform(0.5, 1.0))
+    # 3. Mapeo y Normalización de Resultados
+    tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
+    for prod in encontrados_nodos:
+        try:
+            nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or prod.get('name') or '').strip().upper()
+            if len(nombre) < 3: 
+                continue
+
+            # Precios
+            p_o = safe_float(prod.get('salePrice') or prod.get('price') or prod.get('value') or 0.0)
+            p_r = safe_float(prod.get('listPrice') or prod.get('regularPrice') or prod.get('originalPrice') or p_o)
+            
+            # Enlace de producto
+            link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
+            link_final = urljoin(base_url, link_rel) if link_rel else url
+
+            # Imagen
+            img_url = prod.get('image') or prod.get('img') or encontrar_foto_fala(prod) or ''
+            if str(img_url).startswith('//'): 
+                img_url = 'https:' + str(img_url)
+
+            if 0 < p_o <= limite and link_final not in vistos:
+                vistos.add(link_final)
+                productos_unicos.append({
+                    "nombre": f"{tag} - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": str(img_url)
+                })
+        except Exception:
+            continue
 
     safe_log(f"✅ [InRetail] Total extraído: {len(productos_unicos)} productos únicos.", "success")
     return productos_unicos
+
+
 
 
 
