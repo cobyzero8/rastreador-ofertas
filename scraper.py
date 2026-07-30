@@ -1762,140 +1762,123 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-def motor_inretail(url, limite, headers=None, keyword=None, max_pages=1):
+def motor_inretail(url, limite, headers=None, keyword=None):
     """
-    Motor optimizado para Inkafarma y Mifarma.
-    Mantiene el dominio nativo estricto (sin forzar www) y realiza fallback de APIs.
+    Motor de alto rendimiento para Inkafarma / Mifarma.
+    Consulta directamente el índice público de Algolia descubierto en Network.
     """
-    import re
-    import time
-    import random
     import json
-    from urllib.parse import urlparse, parse_qs, urljoin
     import requests
-    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, parse_qs, urljoin
 
-    productos_unicos = []
-    vistos = set()
-
-    # 1. Parsing estricto manteniendo el dominio exacto proporcionado (SIN FORZAR www)
+    productos_map = {}
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
-    netloc = parsed.netloc  # Conserva 'inkafarma.pe' exactamente
+    netloc = parsed.netloc.replace("www.", "")  # inkafarma.pe o mifarma.pe
     base_url = f"{scheme}://{netloc}"
 
-    if headers is None:
-        headers = {
-            "User-Agent": random.choice(LISTA_USER_AGENTS),
-            "Accept": "application/json, text/html, */*;q=0.8",
-            "Accept-Language": "es-PE,es;q=0.9",
-            "Referer": base_url,
-            "Origin": base_url
-        }
-
-    # Extraer término de búsqueda si no viene explícito
+    # 1. Extraer palabra clave de la URL
     query_params = parse_qs(parsed.query)
     if not keyword:
-        kw_list = query_params.get('keyword', query_params.get('q', query_params.get('ft', [''])))
-        keyword = kw_list[0] if kw_list else ""
+        kw_list = query_params.get('keyword', query_params.get('q', ['']))
+        keyword = kw_list[0] if kw_list else "desodorante"
 
-    session = requests.Session()
-    session.headers.update(headers)
-
-    # 2. Plan de consultas secuenciales sobre la URL base nativa
-    urls_a_probar = []
-    
-    # Intento 1: La URL tal cual fue ingresada (ej: https://inkafarma.pe/buscador?keyword=desodorante)
-    urls_a_probar.append((url, {}))
-
-    # Intento 2: Backend de catálogo VTEX/InRetail sobre el dominio sin www
-    if keyword:
-        urls_a_probar.append((f"{base_url}/api/catalog_system/pub/products/search", {"ft": keyword, "O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
-        urls_a_probar.append((f"{base_url}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 40}))
-
-    encontrados_nodos = []
-
-    for req_url, params in urls_a_probar:
-        try:
-            safe_log(f"📡 [InRetail] Escaneando {req_url} | Params: {params}", "info")
-            resp = session.get(req_url, params=params, timeout=12, verify=False)
-            
-            if resp.status_code not in [200, 206]:
-                continue
-
-            ctype = resp.headers.get("Content-Type", "").lower()
-            texto = resp.text or ""
-
-            # ESTRATEGIA A: Respuesta JSON Directa
-            if "application/json" in ctype or texto.strip().startswith(("{", "[")):
-                try:
-                    j_data = resp.json()
-                    encontrados_nodos = extraer_productos_json_universal(j_data)
-                    if encontrados_nodos:
-                        safe_log(f"🔍 [InRetail] ¡Éxito! {len(encontrados_nodos)} objetos extraídos vía API JSON.", "info")
-                        break
-                except Exception:
-                    pass
-
-            # ESTRATEGIA B: JSON embebido en Scripts del HTML
-            soup = BeautifulSoup(texto, "html.parser")
-            for s in soup.find_all("script"):
-                txt = s.text.strip()
-                if len(txt) > 200 and ("products" in txt or "displayName" in txt or "productName" in txt or "__NEXT_DATA__" in (s.get("id") or "")):
-                    start, end = txt.find("{"), txt.rfind("}")
-                    if start != -1 and end > start:
-                        try:
-                            j_data = json.loads(txt[start:end+1])
-                            encontrados_nodos = extraer_productos_json_universal(j_data)
-                            if encontrados_nodos:
-                                safe_log(f"🔍 [InRetail] ¡Éxito! {len(encontrados_nodos)} objetos hallados en script embebido.", "info")
-                                break
-                        except Exception:
-                            continue
-
-            if encontrados_nodos:
-                break
-
-        except Exception as e:
-            safe_log(f"⚠️ [InRetail] Fallo al consultar {req_url}: {e}", "caption")
-            continue
-
-    # 3. Mapeo y Normalización de Resultados
     tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
-    for prod in encontrados_nodos:
-        try:
-            nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or prod.get('name') or '').strip().upper()
-            if len(nombre) < 3: 
-                continue
+    safe_log(f"⚡ [{tag}] Consultando Algolia Search Engine para: '{keyword}'...", "info")
 
-            # Precios
-            p_o = safe_float(prod.get('salePrice') or prod.get('price') or prod.get('value') or 0.0)
-            p_r = safe_float(prod.get('listPrice') or prod.get('regularPrice') or prod.get('originalPrice') or p_o)
-            
-            # Enlace de producto
-            link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
-            link_final = urljoin(base_url, link_rel) if link_rel else url
+    # 2. Configuración de API Keys extraídas de tu DevTools
+    ALGOLIA_APP_ID = "15W622LAQ4"
+    ALGOLIA_API_KEY = "ccd8cbda203928003f7fe6f44ddbfc3a"
+    algolia_url = f"https://{ALGOLIA_APP_ID.lower()}-dsn.algolia.net/1/indexes/*/queries"
 
-            # Imagen
-            img_url = prod.get('image') or prod.get('img') or encontrar_foto_fala(prod) or ''
-            if str(img_url).startswith('//'): 
-                img_url = 'https:' + str(img_url)
+    headers_algolia = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Algolia-Application-Id": ALGOLIA_APP_ID,
+        "X-Algolia-API-Key": ALGOLIA_API_KEY,
+        "Origin": base_url,
+        "Referer": f"{base_url}/"
+    }
 
-            if 0 < p_o <= limite and link_final not in vistos:
-                vistos.add(link_final)
-                productos_unicos.append({
-                    "nombre": f"{tag} - {nombre}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": str(img_url)
-                })
-        except Exception:
-            continue
+    # Query optimizada para Algolia
+    payload = {
+        "requests": [
+            {
+                "indexName": "products",
+                "params": f"query={keyword}&hitsPerPage=100&facetFilters=[[\"channels:WEB\"]]"
+            }
+        ]
+    }
 
-    safe_log(f"✅ [InRetail] Total extraído: {len(productos_unicos)} productos únicos.", "success")
-    return productos_unicos
+    try:
+        resp = requests.post(algolia_url, headers=headers_algolia, json=payload, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                safe_log(f"⚠️ [{tag}] Algolia respondió sin lista de resultados.", "warning")
+                return []
 
+            hits = results[0].get("hits", [])
+            safe_log(f"🔍 [{tag}] ¡Algolia devolvió {len(hits)} productos! Procesando...", "info")
+
+            for item in hits:
+                try:
+                    nombre = str(item.get("name") or item.get("productName") or item.get("description") or "").strip().upper()
+                    if not nombre or len(nombre) < 3:
+                        continue
+
+                    # Captura de precios desde los atributos de Algolia
+                    # Probar claves comunes en el payload de Algolia
+                    p_o = safe_float(item.get("price") or item.get("salePrice") or item.get("price_sale") or 0.0)
+                    p_r = safe_float(item.get("regularPrice") or item.get("listPrice") or item.get("price_regular") or p_o)
+                    p_monedero = safe_float(item.get("monederoPrice") or item.get("cardPrice") or 0.0)
+
+                    # Seleccionar la mejor oferta
+                    precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
+                    if precio_efectivo == 0.0:
+                        precio_efectivo = p_r
+
+                    if 0 < precio_efectivo <= limite:
+                        slug = item.get("slug") or item.get("url") or item.get("link") or ""
+                        
+                        # Construcción del enlace final
+                        if slug.startswith("http"):
+                            link_final = slug
+                        elif slug:
+                            link_final = urljoin(base_url, slug if slug.startswith("/") else f"/producto/{slug}")
+                        else:
+                            link_final = f"{base_url}/buscador?keyword={keyword}"
+
+                        # Captura de imagen
+                        img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or ""
+                        if str(img_url).startswith("//"):
+                            img_url = "https:" + str(img_url)
+
+                        productos_map[link_final] = {
+                            "nombre": f"{tag} - {nombre}",
+                            "precio": precio_efectivo,
+                            "precio_regular": max(p_r, precio_efectivo),
+                            "link": link_final,
+                            "img": str(img_url)
+                        }
+                except Exception:
+                    continue
+        else:
+            safe_log(f"🛑 [{tag}] Algolia respondió con estado HTTP {resp.status_code}", "error")
+
+    except Exception as e:
+        safe_log(f"🛑 [{tag}] Error al conectar con Algolia: {e}", "error")
+
+    productos_finales = list(productos_map.values())
+    if productos_finales:
+        safe_log(f"✅ [{tag}] ¡Éxito absoluto! Se indexaron {len(productos_finales)} ofertas reales.", "success")
+    else:
+        safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
+
+    return productos_finales
 
 
 
