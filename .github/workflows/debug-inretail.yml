@@ -5,6 +5,10 @@ on:
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_KEY: ${{ sb_secret_henvH_l9v0fZ8KuStXRpnQ_S4hSrQym}}
+      SUPABASE_URL: ${{ https://uxornuepdxqlhzizjnhr.supabase.co }}    # opcional si lo usas
+      TELEGRAM_TOKEN: ${{ 8941748787:AAHBNGK3IFVzB-nEwm_HOkSxhtotplpplxI }}# opcional si lo usas
     steps:
       - uses: actions/checkout@v4
 
@@ -19,12 +23,9 @@ jobs:
       - name: Run motor_inretail and save debug
         run: |
           python - <<'PY'
-          import sys, os
-          # Aseguramos que la raíz del repo esté en sys.path
-          repo_root = os.getcwd()
-          if repo_root not in sys.path:
-              sys.path.insert(0, repo_root)
+          import os
           from scraper import motor_inretail
+          print("SUPABASE_KEY present:", bool(os.environ.get("SUPABASE_KEY")))
           motor_inretail("https://inkafarma.pe/buscador?keyword=desodorante", limite=9999, max_pages=1)
           PY
 
