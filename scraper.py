@@ -1764,20 +1764,18 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_inretail(url, limite, headers=None, keyword=None):
     """
-    Motor de alto rendimiento para Inkafarma / Mifarma.
-    Consulta directamente el índice público de Algolia descubierto en Network.
+    Motor definitivo para Inkafarma y Mifarma usando la API de Algolia.
     """
-    import json
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
 
     productos_map = {}
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.replace("www.", "")  # inkafarma.pe o mifarma.pe
+    netloc = parsed.netloc.replace("www.", "")
     base_url = f"{scheme}://{netloc}"
 
-    # 1. Extraer palabra clave de la URL
+    # Extraer palabra clave de la URL
     query_params = parse_qs(parsed.query)
     if not keyword:
         kw_list = query_params.get('keyword', query_params.get('q', ['']))
@@ -1786,7 +1784,7 @@ def motor_inretail(url, limite, headers=None, keyword=None):
     tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
     safe_log(f"⚡ [{tag}] Consultando Algolia Search Engine para: '{keyword}'...", "info")
 
-    # 2. Configuración de API Keys extraídas de tu DevTools
+    # Credenciales del cURL de DevTools
     ALGOLIA_APP_ID = "15W622LAQ4"
     ALGOLIA_API_KEY = "ccd8cbda203928003f7fe6f44ddbfc3a"
     algolia_url = f"https://{ALGOLIA_APP_ID.lower()}-dsn.algolia.net/1/indexes/*/queries"
@@ -1801,7 +1799,6 @@ def motor_inretail(url, limite, headers=None, keyword=None):
         "Referer": f"{base_url}/"
     }
 
-    # Query optimizada para Algolia
     payload = {
         "requests": [
             {
@@ -1817,64 +1814,54 @@ def motor_inretail(url, limite, headers=None, keyword=None):
         if resp.status_code == 200:
             data = resp.json()
             results = data.get("results", [])
-            if not results:
-                safe_log(f"⚠️ [{tag}] Algolia respondió sin lista de resultados.", "warning")
-                return []
+            if results:
+                hits = results[0].get("hits", [])
+                safe_log(f"🔍 [{tag}] ¡Algolia devolvió {len(hits)} productos! Procesando...", "info")
 
-            hits = results[0].get("hits", [])
-            safe_log(f"🔍 [{tag}] ¡Algolia devolvió {len(hits)} productos! Procesando...", "info")
+                for item in hits:
+                    try:
+                        nombre = str(item.get("name") or item.get("productName") or "").strip().upper()
+                        if not nombre or len(nombre) < 3:
+                            continue
 
-            for item in hits:
-                try:
-                    nombre = str(item.get("name") or item.get("productName") or item.get("description") or "").strip().upper()
-                    if not nombre or len(nombre) < 3:
+                        # Captura de precio oferta / lista
+                        p_o = safe_float(item.get("price") or item.get("salePrice") or item.get("price_sale") or 0.0)
+                        p_r = safe_float(item.get("regularPrice") or item.get("listPrice") or p_o)
+                        p_monedero = safe_float(item.get("monederoPrice") or item.get("cardPrice") or 0.0)
+
+                        precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
+                        if precio_efectivo == 0.0:
+                            precio_efectivo = p_r
+
+                        if 0 < precio_efectivo <= limite:
+                            slug = item.get("slug") or item.get("url") or item.get("link") or ""
+                            
+                            if slug.startswith("http"):
+                                link_final = slug
+                            elif slug:
+                                link_final = urljoin(base_url, slug if slug.startswith("/") else f"/producto/{slug}")
+                            else:
+                                link_final = f"{base_url}/buscador?keyword={keyword}"
+
+                            img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or ""
+                            if str(img_url).startswith("//"):
+                                img_url = "https:" + str(img_url)
+
+                            productos_map[link_final] = {
+                                "nombre": f"{tag} - {nombre}",
+                                "precio": precio_efectivo,
+                                "precio_regular": max(p_r, precio_efectivo),
+                                "link": link_final,
+                                "img": str(img_url)
+                            }
+                    except Exception:
                         continue
-
-                    # Captura de precios desde los atributos de Algolia
-                    # Probar claves comunes en el payload de Algolia
-                    p_o = safe_float(item.get("price") or item.get("salePrice") or item.get("price_sale") or 0.0)
-                    p_r = safe_float(item.get("regularPrice") or item.get("listPrice") or item.get("price_regular") or p_o)
-                    p_monedero = safe_float(item.get("monederoPrice") or item.get("cardPrice") or 0.0)
-
-                    # Seleccionar la mejor oferta
-                    precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
-                    if precio_efectivo == 0.0:
-                        precio_efectivo = p_r
-
-                    if 0 < precio_efectivo <= limite:
-                        slug = item.get("slug") or item.get("url") or item.get("link") or ""
-                        
-                        # Construcción del enlace final
-                        if slug.startswith("http"):
-                            link_final = slug
-                        elif slug:
-                            link_final = urljoin(base_url, slug if slug.startswith("/") else f"/producto/{slug}")
-                        else:
-                            link_final = f"{base_url}/buscador?keyword={keyword}"
-
-                        # Captura de imagen
-                        img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or ""
-                        if str(img_url).startswith("//"):
-                            img_url = "https:" + str(img_url)
-
-                        productos_map[link_final] = {
-                            "nombre": f"{tag} - {nombre}",
-                            "precio": precio_efectivo,
-                            "precio_regular": max(p_r, precio_efectivo),
-                            "link": link_final,
-                            "img": str(img_url)
-                        }
-                except Exception:
-                    continue
-        else:
-            safe_log(f"🛑 [{tag}] Algolia respondió con estado HTTP {resp.status_code}", "error")
-
     except Exception as e:
         safe_log(f"🛑 [{tag}] Error al conectar con Algolia: {e}", "error")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Éxito absoluto! Se indexaron {len(productos_finales)} ofertas reales.", "success")
+        safe_log(f"✅ [{tag}] ¡Éxito! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
     else:
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
