@@ -1762,13 +1762,33 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
     """
-    Motor robusto para Inkafarma / Mifarma.
-    Intenta múltiples endpoints, guarda debug en scrapers/inretail_debug/resp_debug.json.
+    Motor robusto Inkafarma / Mifarma.
+    Intenta endpoints JSON y cae a parseo HTML si no hay JSON válido.
+    Guarda debug en scrapers/inretail_debug/resp_debug.json.
     """
-    import requests, os, time, json, random
+    import os, time, json, re
     from urllib.parse import urlparse, parse_qs, urljoin
+    import requests
+    try:
+        import cloudscraper
+        _have_cloudscraper = True
+    except Exception:
+        _have_cloudscraper = False
+    from bs4 import BeautifulSoup
 
-    # Debug folder
+    def safe_float_from_text(t):
+        if not t:
+            return 0.0
+        # extrae números con decimales, acepta coma o punto
+        m = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)', str(t))
+        if not m:
+            return 0.0
+        s = m.group(1).replace('.', '').replace(',', '.')
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
     debug_dir = os.path.join(os.path.dirname(__file__), "inretail_debug")
     os.makedirs(debug_dir, exist_ok=True)
     debug_file = os.path.join(debug_dir, "resp_debug.json")
@@ -1786,7 +1806,6 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
         path_segments = [s for s in parsed.path.split('/') if s]
         keyword = path_segments[-1] if path_segments else ""
 
-    # Headers (puedes ajustar LISTA_USER_AGENTS)
     headers_api = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json, text/plain, */*",
@@ -1797,33 +1816,39 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
     if headers:
         headers_api.update(headers)
 
-    # Endpoints a probar (orden sugerido)
     endpoints = [
         (f"{base_domain}/api/v1/products/search", {"keyword": keyword, "page": 1, "limit": 50}),
         (f"{base_domain}/api/catalog/search", {"q": keyword, "limit": 50}),
         (f"{base_domain}/api/v1/search", {"keyword": keyword, "page": 1, "limit": 50}),
         (f"{base_domain}/search", {"q": keyword}),
+        (f"{base_domain}/buscador", {"keyword": keyword}),
         (f"{base_domain}/api/v1/products", {"q": keyword}),
     ]
 
     debug_runs = []
 
+    # helper: perform GET (cloudscraper if available)
+    def do_get(u, params, hdrs, timeout=12):
+        try:
+            if _have_cloudscraper:
+                s = cloudscraper.create_scraper()
+                r = s.get(u, params=params, headers=hdrs, timeout=timeout)
+            else:
+                r = requests.get(u, params=params, headers=hdrs, timeout=timeout, verify=False)
+            return r
+        except Exception as e:
+            raise
+
+    # 1) probar endpoints JSON / XHR
     for api_url, params in endpoints:
         for attempt in range(retry + 1):
             try:
-                resp = requests.get(api_url, headers=headers_api, params=params, timeout=12, verify=False)
+                resp = do_get(api_url, params, headers_api)
                 status = resp.status_code
                 body = resp.text or ""
                 snippet = body[:20000]
-
-                debug_runs.append({
-                    "api_url": api_url,
-                    "params": params,
-                    "status_code": status,
-                    "body_snippet": snippet[:2000]
-                })
-
-                # Guardar debug parcial en cada intento
+                debug_runs.append({"type": "xhr", "api_url": api_url, "params": params, "status_code": status, "body_snippet": snippet[:2000]})
+                # guardar parcial
                 try:
                     with open(debug_file, "w", encoding="utf-8") as f:
                         json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
@@ -1831,17 +1856,16 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
                     pass
 
                 if status != 200:
-                    # no es la ruta correcta, esperar y continuar
-                    time.sleep(0.5 + attempt * 0.5)
-                    break  # pasar al siguiente endpoint
+                    time.sleep(0.4 + attempt * 0.3)
+                    break
+
                 # intentar parsear JSON
                 try:
                     data = resp.json()
                 except Exception:
-                    # respuesta no JSON; registrar y pasar a siguiente endpoint
+                    # si no es JSON, pasar al siguiente endpoint
                     break
 
-                # localizar lista de items en la respuesta
                 items = []
                 if isinstance(data, dict):
                     items = data.get('products') or data.get('items') or data.get('results') or data.get('content') or data.get('data') or []
@@ -1849,39 +1873,27 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
                     items = data
 
                 if not items:
-                    # si no hay items, registrar y probar siguiente endpoint
                     break
 
-                # procesar items
+                # procesar items JSON
                 for p in items:
                     try:
                         nombre = str(p.get('name') or p.get('productName') or p.get('title') or p.get('description') or '').strip().upper()
                         if not nombre:
                             continue
-
-                        def safe_float(v):
-                            try:
-                                return float(v)
-                            except Exception:
-                                return 0.0
-
-                        p_o = safe_float(p.get('price') or p.get('salePrice') or p.get('finalPrice') or 0)
-                        p_r = safe_float(p.get('regularPrice') or p.get('listPrice') or p_o)
-                        p_monedero = safe_float(p.get('monederoPrice') or p.get('cardPrice') or 0)
-
+                        p_o = safe_float_from_text(p.get('price') or p.get('salePrice') or p.get('finalPrice') or 0)
+                        p_r = safe_float_from_text(p.get('regularPrice') or p.get('listPrice') or p_o)
+                        p_monedero = safe_float_from_text(p.get('monederoPrice') or p.get('cardPrice') or 0)
                         precio_efectivo = p_monedero if (0 < p_monedero < p_o) else p_o
                         if not (0 < precio_efectivo <= limite):
                             continue
-
                         slug = p.get('slug') or p.get('url') or p.get('link') or ''
                         link_final = urljoin(base_domain, slug) if slug else url
-
                         img_url = p.get('imageUrl') or p.get('image') or ''
                         if not img_url and isinstance(p.get('media'), list) and p['media']:
                             img_url = p['media'][0].get('url', '')
                         if str(img_url).startswith('//'):
                             img_url = 'https:' + str(img_url)
-
                         productos_map[link_final] = {
                             "nombre": f"{tag} - {nombre}",
                             "precio": float(precio_efectivo),
@@ -1892,22 +1904,136 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
                     except Exception:
                         continue
 
-                # si encontramos productos, salir
                 if productos_map:
                     break
 
             except Exception as e:
-                debug_runs.append({"api_url": api_url, "params": params, "error": str(e)})
+                debug_runs.append({"type": "xhr_error", "api_url": api_url, "params": params, "error": str(e)})
                 try:
                     with open(debug_file, "w", encoding="utf-8") as f:
                         json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
-                time.sleep(0.5)
+                time.sleep(0.4)
                 continue
 
         if productos_map:
             break
+
+    # 2) Fallback HTML parsing de la página de búsqueda pública
+    if not productos_map:
+        # posibles URLs de búsqueda públicas
+        html_paths = [
+            f"{base_domain}/buscador?keyword={keyword}",
+            f"{base_domain}/buscador?q={keyword}",
+            f"{base_domain}/search?q={keyword}",
+            f"{base_domain}/buscador/{keyword}",
+            f"{base_domain}/?s={keyword}"
+        ]
+        for hurl in html_paths:
+            try:
+                resp = do_get(hurl, {}, headers_api)
+                status = resp.status_code
+                body = resp.text or ""
+                debug_runs.append({"type": "html", "url": hurl, "status_code": status, "body_snippet": (body[:2000])})
+                try:
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                if status != 200 or not body:
+                    continue
+
+                soup = BeautifulSoup(body, "html.parser")
+
+                # selectores heurísticos: probar varios patrones comunes
+                product_nodes = []
+                selectors = [
+                    "div.product-card", "div.product-item", "article.product", "div.product", "li.product",
+                    "div.card-product", "div.producto", "div.item-product", "div.grid-item"
+                ]
+                for sel in selectors:
+                    nodes = soup.select(sel)
+                    if nodes:
+                        product_nodes = nodes
+                        break
+
+                # si no hay nodes, buscar por atributos data-product o enlaces con /producto/
+                if not product_nodes:
+                    product_nodes = soup.select("[data-product]") or soup.select("a[href*='/producto/']")
+
+                for node in product_nodes:
+                    try:
+                        # nombre
+                        name = ""
+                        n = node.select_one(".product-name, .name, .title, .product-title, .producto-nombre")
+                        if n:
+                            name = n.get_text(strip=True)
+                        else:
+                            # fallback: texto del enlace
+                            a = node.select_one("a")
+                            if a:
+                                name = a.get_text(strip=True)
+                        if not name:
+                            continue
+                        nombre = name.strip().upper()
+
+                        # imagen
+                        img = ""
+                        img_tag = node.select_one("img")
+                        if img_tag:
+                            img = img_tag.get("data-src") or img_tag.get("src") or ""
+
+                        # precio: buscar dentro del nodo
+                        price_text = ""
+                        psel = node.select_one(".price, .product-price, .precio, .price-final, .price-amount")
+                        if psel:
+                            price_text = psel.get_text(" ", strip=True)
+                        else:
+                            # buscar cualquier texto con S/ o PEN or numbers
+                            txt = node.get_text(" ", strip=True)
+                            m = re.search(r'(S\/\s?\d[\d.,]*)', txt)
+                            if m:
+                                price_text = m.group(1)
+                            else:
+                                # buscar números
+                                m2 = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)', txt)
+                                if m2:
+                                    price_text = m2.group(1)
+
+                        precio = safe_float_from_text(price_text)
+                        if not (0 < precio <= limite):
+                            continue
+
+                        # link
+                        link = ""
+                        a = node.select_one("a[href]")
+                        if a:
+                            link = a.get("href")
+                        if link and not link.startswith("http"):
+                            link = urljoin(base_domain, link)
+
+                        productos_map[link or nombre] = {
+                            "nombre": f"{tag} - {nombre}",
+                            "precio": float(precio),
+                            "precio_regular": float(precio),
+                            "link": link or url,
+                            "img": img or ""
+                        }
+                    except Exception:
+                        continue
+
+                if productos_map:
+                    break
+
+            except Exception as e:
+                debug_runs.append({"type": "html_error", "url": hurl, "error": str(e)})
+                try:
+                    with open(debug_file, "w", encoding="utf-8") as f:
+                        json.dump({"attempts": debug_runs}, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                continue
 
     # guardar debug final
     try:
@@ -1916,8 +2042,8 @@ def motor_inretail(url, limite, headers=None, max_pages=1, retry=1):
     except Exception:
         pass
 
-    productos_finales = list(productos_map.values())
-    return productos_finales
+    return list(productos_map.values())
+
 
 
 
