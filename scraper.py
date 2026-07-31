@@ -2042,17 +2042,18 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     #else: return motor_tradicional_general(url, limite, headers)
 def escanear_tienda(url, limite):
     dominio = urlparse(url).netloc.lower()
-    url_completa = str(url).lower()
     
     safe_log(f"🔎 [Enrutador] Analizando URL: {url} | Dominio detectado: {dominio}", "info")
     
-    # 🛡️ Validación robusta usando la URL completa (evita errores por URLs mal copiadas en Supabase)
-    if "nike.com.pe" in url_completa: 
-        safe_log("🎯 [Enrutador] ¡Match detectado con Nike! Lanzando motor_nike...", "success")
+    # 🚀 ÚNICO MOTOR ACTIVO
+    if "nike.com.pe" in dominio: 
+        safe_log("🎯 [Enrutador] ¡Match exacto con Nike! Lanzando motor_nike...", "success")
         return motor_nike(url, limite)
     else: 
         safe_log(f"💤 [Enrutador] Tienda omitida (motores desactivados temporalmente para pruebas).", "info")
         return []
+
+
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
 # =======================================================
