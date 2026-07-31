@@ -335,124 +335,164 @@ elif menu == "🛠️ Configurar Radares y URLs":
         st.error(f"Error Supabase: {e}")
 
 # ---------------------------
-# Forzar Escaneo Intensivo (Thread Blindado)
+# Forzar Escaneo Intensivo
 # ---------------------------
-# 📊 REPORTE EN VIVO (Con Vista de Tarjetas e Imágenes Grandes)
-    if st.session_state.scraper_result:
-        st.write("---")
-        st.subheader("📊 Reporte de Ofertas del Escaneo")
+elif menu == "💥 Forzar Escaneo Intensivo":
+    st.title("💥 Módulo de Patrullaje Activo")
+    botonera_independiente()
+    st.write("---")
 
-        raw_res = st.session_state.scraper_result
-        
+    col_run, col_status = st.columns([3, 2])
+    with col_run:
+        start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
+    with col_status:
+        if st.session_state.get("scraper_running", False):
+            st.warning("🟡 El patrullaje está en curso. Espera a que termine.")
+        else:
+            st.info("🔵 Listo para iniciar patrullaje manual.")
+
+    def _worker(target):
+        try:
+            result_msg = revisar_ofertas(target)
+            st.session_state.scraper_result = {"resumen": result_msg, "target": target}
+
+            os.makedirs("ml_debug", exist_ok=True)
+            combined = {
+                "metadata": {"target": target, "timestamp": datetime.now(timezone.utc).isoformat()},
+                "result": result_msg
+            }
+            with open("ml_debug/combined_debug.json", "w", encoding="utf-8") as fh:
+                json.dump(combined, fh, ensure_ascii=False, indent=2)
+        except Exception as e:
+            st.session_state.scraper_result = {"error": str(e), "target": target}
+        finally:
+            st.session_state.scraper_running = False
+
+    if start_btn and not st.session_state.get("scraper_running", False):
+        st.session_state.scraper_running = True
+        target = st.session_state.get("filtro_activo", "TODOS")
+        st.toast(f"🕵️‍♂️ Buscando {target}...")
+
+        thread = threading.Thread(target=_worker, args=(target,), daemon=True)
+        add_script_run_ctx(thread)
+        thread.start()
+        st.success("Patrullaje iniciado en segundo plano.")
+
+    # 📊 REPORTE DE OFERTAS EN VIVO
+    st.write("---")
+    st.subheader("📊 Reporte de Ofertas del Escaneo")
+
+    raw_res = st.session_state.get("scraper_result", None)
+
+    if raw_res:
         if isinstance(raw_res, dict):
             resumen_txt = raw_res.get("resumen", raw_res.get("error", str(raw_res)))
-            target_escaneado = raw_res.get("target", st.session_state.filtro_activo)
+            target_escaneado = raw_res.get("target", st.session_state.get("filtro_activo", "TODOS"))
         elif isinstance(raw_res, str):
             resumen_txt = raw_res
-            target_escaneado = st.session_state.filtro_activo
+            target_escaneado = st.session_state.get("filtro_activo", "TODOS")
         else:
             resumen_txt = str(raw_res)
-            target_escaneado = st.session_state.filtro_activo
+            target_escaneado = st.session_state.get("filtro_activo", "TODOS")
 
         if resumen_txt:
             st.success(f"**Resumen:** {resumen_txt}")
+    else:
+        target_escaneado = st.session_state.get("filtro_activo", "TODOS")
+        st.info("📌 Consulta las ofertas almacenadas abajo o presiona **INICIAR BARRIDO QUIRÚRGICO** para actualizar.")
 
-        # Consulta a Supabase
-        try:
-            q = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
-            if target_escaneado and target_escaneado != "TODOS":
-                q = q.ilike("identificador", f"%{target_escaneado}%")
-            
-            res_recientes = q.limit(100).execute()
-            
-            if res_recientes.data:
-                reporte_items = []
-                vistos_ui = set()
-                for reg in res_recientes.data:
-                    p_o = float(reg.get("precio") or 0.0)
-                    p_r = float(reg.get("precio_regular") or p_o)
-                    id_p = str(reg.get("identificador", "")).upper()
-                    
-                    if not id_p or id_p in vistos_ui or p_o <= 0:
-                        continue
-                    vistos_ui.add(id_p)
-                    
-                    parts = id_p.split("-")
-                    tienda = parts[0] if len(parts) > 0 else "GENERAL"
-                    nombre_prod = "-".join(parts[2:]).replace("_", " ").title() if len(parts) >= 3 else id_p
-                    
-                    reporte_items.append({
-                        "Tienda": tienda,
-                        "Producto": nombre_prod,
-                        "Vista": reg.get("imagen_producto", ""),
-                        "Precio Regular": p_r,
-                        "Precio Oferta": p_o,
-                        "Ahorro": max(0.0, p_r - p_o),
-                        "Link": reg.get("link_producto", "#")
-                    })
+    # Consulta a Supabase
+    try:
+        q = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
+        if target_escaneado and target_escaneado != "TODOS":
+            q = q.ilike("identificador", f"%{target_escaneado}%")
+        
+        res_recientes = q.limit(60).execute()
+        
+        if res_recientes.data:
+            reporte_items = []
+            vistos_ui = set()
+            for reg in res_recientes.data:
+                p_o = float(reg.get("precio") or 0.0)
+                p_r = float(reg.get("precio_regular") or p_o)
+                id_p = str(reg.get("identificador", "")).upper()
+                
+                if not id_p or id_p in vistos_ui or p_o <= 0:
+                    continue
+                vistos_ui.add(id_p)
+                
+                parts = id_p.split("-")
+                tienda = parts[0] if len(parts) > 0 else "GENERAL"
+                nombre_prod = "-".join(parts[2:]).replace("_", " ").title() if len(parts) >= 3 else id_p
+                
+                reporte_items.append({
+                    "Tienda": tienda,
+                    "Producto": nombre_prod,
+                    "Vista": reg.get("imagen_producto", ""),
+                    "Precio Regular": p_r,
+                    "Precio Oferta": p_o,
+                    "Ahorro": max(0.0, p_r - p_o),
+                    "Link": reg.get("link_producto", "#")
+                })
 
-                if reporte_items:
-                    # 🖼️ SELECTOR DE VISTA: TARJETAS O TABLA
-                    modo_vista = st.radio(
-                        "👁️ Selecciona cómo quieres ver las ofertas:",
-                        ["🖼️ Tarjetas Grandes (Ampliable al hacer clic)", "📊 Tabla Compacta"],
-                        horizontal=True
+            if reporte_items:
+                modo_vista = st.radio(
+                    "👁️ Selecciona el formato de visualización:",
+                    ["🖼️ Tarjetas Grandes (Ampliable al hacer clic)", "📊 Tabla Compacta"],
+                    horizontal=True
+                )
+                st.write("")
+
+                if "Tarjetas" in modo_vista:
+                    cols = st.columns(3)
+                    for idx, item in enumerate(reporte_items):
+                        col = cols[idx % 3]
+                        with col:
+                            with st.container(border=True):
+                                if item["Vista"]:
+                                    st.image(item["Vista"], use_container_width=True)
+                                else:
+                                    st.caption("📷 Sin vista previa")
+                                
+                                st.markdown(f"**🏪 {item['Tienda']}**")
+                                st.markdown(f"**{item['Producto']}**")
+                                st.markdown(f"🏷️ **Precio Oferta:** `S/. {item['Precio Oferta']:.2f}`")
+                                
+                                if item["Ahorro"] > 0:
+                                    st.caption(f"~~Antes: S/. {item['Precio Regular']:.2f}~~ | 📉 Ahorro: S/. {item['Ahorro']:.2f}")
+                                
+                                st.markdown(f"🛒 [**IR A LA OFERTA**]({item['Link']})")
+                else:
+                    df_reporte = pd.DataFrame(reporte_items).sort_values(by="Ahorro", ascending=False)
+                    st.dataframe(
+                        df_reporte,
+                        column_config={
+                            "Tienda": "🏪 Tienda",
+                            "Producto": "📦 Producto",
+                            "Vista": st.column_config.ImageColumn("🖼️ Foto"),
+                            "Precio Regular": st.column_config.NumberColumn("💰 P. Regular", format="S/. %.2f"),
+                            "Precio Oferta": st.column_config.NumberColumn("🏷️ P. Oferta", format="S/. %.2f"),
+                            "Ahorro": st.column_config.NumberColumn("📉 Ahorro", format="S/. %.2f"),
+                            "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver Oferta")
+                        },
+                        hide_index=True,
+                        use_container_width=True
                     )
-                    st.write("")
+        else:
+            st.info("No hay registros almacenados para esta categoría.")
+    except Exception as err_rep:
+        st.error(f"Error cargando catálogo: {err_rep}")
 
-                    if "Tarjetas" in modo_vista:
-                        # Renderizado en Grid de 3 Columnas con Imágenes Grandes
-                        cols = st.columns(3)
-                        for idx, item in enumerate(reporte_items):
-                            col = cols[idx % 3]
-                            with col:
-                                with st.container(border=True):
-                                    if item["Vista"]:
-                                        # 💡 Al hacer clic en esta imagen, Streamlit la abrirá en pantalla completa
-                                        st.image(item["Vista"], use_container_width=True)
-                                    else:
-                                        st.caption("📷 Sin vista previa")
-                                    
-                                    st.markdown(f"**🏪 {item['Tienda']}**")
-                                    st.markdown(f"**{item['Producto']}**")
-                                    st.markdown(f"🏷️ **Precio Oferta:** `S/. {item['Precio Oferta']:.2f}`")
-                                    
-                                    if item["Ahorro"] > 0:
-                                        st.caption(f"~~Antes: S/. {item['Precio Regular']:.2f}~~ | 📉 Ahorro: S/. {item['Ahorro']:.2f}")
-                                    
-                                    st.markdown(f"🛒 [**IR A LA OFERTA**]({item['Link']})")
-                    else:
-                        # Renderizado en Tabla Clásica
-                        df_reporte = pd.DataFrame(reporte_items).sort_values(by="Ahorro", ascending=False)
-                        st.dataframe(
-                            df_reporte,
-                            column_config={
-                                "Tienda": "🏪 Tienda",
-                                "Producto": "📦 Producto",
-                                "Vista": st.column_config.ImageColumn("🖼️ Foto"),
-                                "Precio Regular": st.column_config.NumberColumn("💰 P. Regular", format="S/. %.2f"),
-                                "Precio Oferta": st.column_config.NumberColumn("🏷️ P. Oferta", format="S/. %.2f"),
-                                "Ahorro": st.column_config.NumberColumn("📉 Ahorro", format="S/. %.2f"),
-                                "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver Oferta")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-            else:
-                st.info("No hay registros recientes para este filtro.")
-        except Exception as err_rep:
-            st.error(f"Error cargando reporte en UI: {err_rep}")
+    # Descarga de logs de depuración
+    c_dl1, c_dl2 = st.columns(2)
+    debug_path = "ml_debug/combined_debug.json"
+    if os.path.exists(debug_path):
+        with open(debug_path, "rb") as fh:
+            with c_dl1:
+                st.download_button("📥 Descargar Debug JSON", fh, file_name="combined_debug.json", use_container_width=True)
 
-        # Botones para descargar logs
-        c_dl1, c_dl2 = st.columns(2)
-        debug_path = "ml_debug/combined_debug.json"
-        if os.path.exists(debug_path):
-            with open(debug_path, "rb") as fh:
-                with c_dl1:
-                    st.download_button("📥 Descargar Debug JSON", fh, file_name="combined_debug.json", use_container_width=True)
-
-        raw_html = "ml_debug/raw_html_last.html"
-        if os.path.exists(raw_html):
-            with open(raw_html, "rb") as fh:
-                with c_dl2:
-                    st.download_button("📥 Descargar HTML Crudo", fh, file_name="raw_html_last.html", use_container_width=True)
+    raw_html = "ml_debug/raw_html_last.html"
+    if os.path.exists(raw_html):
+        with open(raw_html, "rb") as fh:
+            with c_dl2:
+                st.download_button("📥 Descargar HTML Crudo", fh, file_name="raw_html_last.html", use_container_width=True)
