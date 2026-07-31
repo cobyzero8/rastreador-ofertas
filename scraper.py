@@ -1762,83 +1762,76 @@ def motor_tradicional_general(url, limite, headers):
 
 def motor_mercadolibre(url, limite):
     import requests
-    from urllib.parse import urlparse, parse_qs, unquote
+    from urllib.parse import urlparse, parse_qs
     import re
 
     productos = []
-    
     try:
-        # 1. Extraer el término de búsqueda o categoría desde la URL
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
-        
-        keyword = ""
-        if 'q' in query_params:
-            keyword = query_params['q'][0]
+
+        # 🔍 Extracción inteligente de keyword
+        if "q" in query_params:
+            keyword = query_params["q"][0]
         else:
-            # Si es una URL limpia tipo: https://listado.mercadolibre.com.pe/zapatillas-nike
-            path = parsed_url.path.strip('/')
-            path_clean = re.sub(r'_Desde_\d+.*', '', path)
-            path_clean = re.sub(r'#.*', '', path_clean)
-            keyword = path_clean.replace('-', ' ')
+            path = parsed_url.path.strip("/")
+            path_limpio = re.sub(r"_[A-Za-z0-9]+", "", path)
+            segmentos = [seg.replace("-", " ") for seg in path_limpio.split("/") if seg]
+            palabras_ignorar = {"nuevo", "usado", "reacondicionado", "noindex", "true", "false"}
+            keyword = " ".join([s for s in segmentos if s.lower() not in palabras_ignorar])
 
         if not keyword:
-            keyword = "ofertas"
+            keyword = "ropa deportiva adidas"
 
         safe_log(f"⚡ [Mercado Libre] Consultando API oficial para '{keyword}'...", "info")
 
-        # 2. Petición a la API pública de Mercado Libre Perú (MPE)
+        # 📡 API pública de Mercado Libre Perú
         api_url = "https://api.mercadolibre.com/sites/MPE/search"
-        params = {
-            "q": keyword,
-            "sort": "price_asc",  # Ordenar de menor a mayor precio
-            "limit": 50
-        }
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
+        params = {"q": keyword, "sort": "price_asc", "limit": 50}
+        headers = {"User-Agent": random.choice(LISTA_USER_AGENTS)}
+
         resp = requests.get(api_url, params=params, headers=headers, timeout=12)
+        resp.raise_for_status()
 
-        if resp.status_code == 200:
-            data = resp.json()
-            results = data.get("results", [])
-            safe_log(f"🔍 [Mercado Libre] API respondió con {len(results)} productos.", "info")
+        data = resp.json()
+        results = data.get("results", [])
+        safe_log(f"🔍 [Mercado Libre] API devolvió {len(results)} productos.", "info")
 
-            for item in results:
-                try:
-                    nombre = item.get("title", "").strip().upper()
-                    if not nombre or len(nombre) < 3:
-                        continue
+        vistos = set()
+        for item in results:
+            nombre = item.get("title", "").strip().upper()
+            if not nombre or len(nombre) < 3:
+                continue
 
-                    p_o = float(item.get("price", 0.0))
-                    p_r = float(item.get("original_price") or p_o)
+            p_o = float(item.get("price", 0.0))
+            p_r = float(item.get("original_price") or p_o)
 
-                    # Filtro de presupuesto
-                    if 0 < p_o <= limite:
-                        link_final = item.get("permalink", url)
-                        
-                        # Calidad de imagen HD
-                        img_url = item.get("thumbnail", "")
-                        if img_url:
-                            # Convertir thumbnail de baja resolución en imagen de alta calidad
-                            img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
-                            if img_url.startswith("http:"):
-                                img_url = img_url.replace("http:", "https:")
+            if 0 < p_o <= limite:
+                link_final = item.get("permalink", url)
+                identificador = f"ML-{link_final.split('/')[-1].split('?')[0]}"
 
-                        productos.append({
-                            "nombre": f"MERCADO LIBRE - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url
-                        })
-                except Exception:
+                if identificador in vistos:
                     continue
-        else:
-            safe_log(f"🛑 [Mercado Libre] Código HTTP de error: {resp.status_code}", "error")
+                vistos.add(identificador)
 
+                # 🖼️ Imagen HD
+                img_url = item.get("thumbnail", "")
+                if img_url:
+                    img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
+                    img_url = img_url.replace("http:", "https:")
+
+                productos.append({
+                    "nombre": f"MERCADO LIBRE - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url,
+                    "identificador": identificador,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+
+    except requests.exceptions.RequestException as e:
+        safe_log(f"🛑 [Mercado Libre] Error HTTP: {e}", "error")
     except Exception as e:
         safe_log(f"🛑 [Mercado Libre] Error crítico: {e}", "error")
 
@@ -1848,6 +1841,7 @@ def motor_mercadolibre(url, limite):
         safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas bajo S/. {limite:.2f}", "warning")
 
     return productos
+
 
 
 
