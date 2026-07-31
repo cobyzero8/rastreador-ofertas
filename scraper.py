@@ -1761,9 +1761,10 @@ def motor_tradicional_general(url, limite, headers):
 
 
 def motor_mercadolibre(url, limite):
-    import requests
-    from urllib.parse import urlparse, parse_qs
-    import re
+    import requests, re, random, json
+    from urllib.parse import urlparse, parse_qs, urljoin
+    from bs4 import BeautifulSoup
+    from datetime import datetime, timezone
 
     productos = []
     try:
@@ -1781,7 +1782,7 @@ def motor_mercadolibre(url, limite):
             keyword = " ".join([s for s in segmentos if s.lower() not in palabras_ignorar])
 
         if not keyword:
-            keyword = "ropa deportiva adidas"
+            keyword = "adidas"
 
         safe_log(f"⚡ [Mercado Libre] Consultando API oficial para '{keyword}'...", "info")
 
@@ -1791,57 +1792,57 @@ def motor_mercadolibre(url, limite):
         headers = {"User-Agent": random.choice(LISTA_USER_AGENTS)}
 
         resp = requests.get(api_url, params=params, headers=headers, timeout=12)
-        resp.raise_for_status()
 
-        data = resp.json()
-        results = data.get("results", [])
-        safe_log(f"🔍 [Mercado Libre] API devolvió {len(results)} productos.", "info")
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("results", [])
+            safe_log(f"🔍 [Mercado Libre] API devolvió {len(results)} productos.", "info")
 
-        vistos = set()
-        for item in results:
-            nombre = item.get("title", "").strip().upper()
-            if not nombre or len(nombre) < 3:
-                continue
-
-            p_o = float(item.get("price", 0.0))
-            p_r = float(item.get("original_price") or p_o)
-
-            if 0 < p_o <= limite:
-                link_final = item.get("permalink", url)
-                identificador = f"ML-{link_final.split('/')[-1].split('?')[0]}"
-
-                if identificador in vistos:
+            vistos = set()
+            for item in results:
+                nombre = item.get("title", "").strip().upper()
+                if not nombre or len(nombre) < 3:
                     continue
-                vistos.add(identificador)
 
-                # 🖼️ Imagen HD
-                img_url = item.get("thumbnail", "")
-                if img_url:
-                    img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
-                    img_url = img_url.replace("http:", "https:")
+                p_o = float(item.get("price", 0.0))
+                p_r = float(item.get("original_price") or p_o)
 
-                productos.append({
-                    "nombre": f"MERCADO LIBRE - {nombre}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url,
-                    "identificador": identificador,
-                    "fecha": datetime.now(timezone.utc).isoformat()
-                })
+                if 0 < p_o <= limite:
+                    link_final = item.get("permalink", url)
+                    identificador = f"ML-{link_final.split('/')[-1].split('?')[0]}"
 
-    except requests.exceptions.RequestException as e:
-        safe_log(f"🛑 [Mercado Libre] Error HTTP: {e}", "error")
-    except Exception as e:
-        safe_log(f"🛑 [Mercado Libre] Error crítico: {e}", "error")
+                    if identificador in vistos:
+                        continue
+                    vistos.add(identificador)
 
-    if productos:
-        safe_log(f"✅ [Mercado Libre] Se indexaron {len(productos)} ofertas válidas.", "success")
-    else:
-        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas bajo S/. {limite:.2f}", "warning")
+                    # 🖼️ Imagen HD
+                    img_url = item.get("thumbnail", "")
+                    if img_url:
+                        img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
+                        img_url = img_url.replace("http:", "https:")
 
-    return productos
-
+                    productos.append({
+                        "nombre": f"MERCADO LIBRE - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url,
+                        "identificador": identificador,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+        else:
+            safe_log(f"🛑 [Mercado Libre] API bloqueada ({resp.status_code}), usando fallback HTML...", "warning")
+            # Fallback: scraping HTML
+            html_resp = requests.get(url, headers=headers, timeout=15)
+            if html_resp.status_code == 200:
+                soup = BeautifulSoup(html_resp.text, "html.parser")
+                tarjetas = soup.select(".ui-search-result__wrapper")
+                for t in tarjetas:
+                    try:
+                        a_el = t.select_one("a.ui-search-link")
+                        if not a_el:
+                            continue
+                        link_final = a_el
 
 
 
