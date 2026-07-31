@@ -1816,20 +1816,20 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     sz = sz or step
     STEP_SIZE = int(step)
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.nike.com.pe/"
-    }
-    session.headers.update(headers)
+    # Configuración de ScraperAPI (igual que en Adidas)
+    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        import streamlit as st
+        if "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+    except Exception: pass
 
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
     vistos = set()
     total_checked = 0
 
-    _safe_log(f"🚀 Iniciando motor_nike para URL: {url}")
+    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI para URL: {url}")
 
     try:
         for page in range(1, max_pages + 1):
@@ -1839,14 +1839,18 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             new_query = urlencode(query_params, doseq=True)
             page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            _safe_log(f"⚡ Escaneando Página {page} (start={offset})...")
+            _safe_log(f"⚡ Escaneando Página {page} (start={offset}) a través de Proxy...")
 
             resp = None
             attempts, backoff = 0, 1
             while attempts < 3:
                 try:
-                    session.headers.update({"User-Agent": headers["User-Agent"]})
-                    resp = session.get(page_url, timeout=15)
+                    # Petición enrutada por ScraperAPI para evitar el bloqueo 403 de Nike
+                    payload = {
+                        'api_key': api_key,
+                        'url': page_url
+                    }
+                    resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
                     break
                 except requests.RequestException as e:
                     attempts += 1
@@ -1855,14 +1859,14 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                     backoff *= 2
 
             if not resp:
-                _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP de Nike.", "error")
+                _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP mediante el proxy.", "error")
                 break
 
             _save_debug("raw_html_nike.html", resp.text)
             _save_debug("raw_html_last.html", resp.text)
 
             if resp.status_code != 200:
-                _safe_log(f"🛑 HTTP {resp.status_code} devuelto por Nike en {page_url}", "error")
+                _safe_log(f"🛑 HTTP {resp.status_code} devuelto en {page_url}", "error")
                 break
 
             text = resp.text
@@ -1944,11 +1948,9 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                             if p_r_val > 0: p_r = p_r_val
 
                         if p_o < 30.0:
-                            _safe_log(f"🛡️ Descartado por ser banner publicitario (S/. {p_o:.2f}): {nombre}")
                             continue
 
                         if not (0 < p_o <= limite):
-                            _safe_log(f"💸 Fuera de presupuesto (S/. {p_o:.2f} > S/. {limite:.2f}): {nombre}")
                             continue
 
                         identificador = _normalize_identifier(link_final)
@@ -1987,7 +1989,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     except Exception as e:
         _safe_log(f"💥 Error crítico general en motor_nike: {e}", "error")
 
-    # Guardar Debug JSON con logs de ejecución
     combined = {
         "metadata": {"url_tested": url, "limit": limite, "max_pages": max_pages, "step": STEP_SIZE, "sz": sz, "timestamp": start_ts, "checked": total_checked},
         "logs": logs_ejecucion,
@@ -1998,7 +1999,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     except Exception: pass
 
     return productos
-
 
 
 
