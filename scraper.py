@@ -1761,88 +1761,123 @@ def motor_tradicional_general(url, limite, headers):
 
 
 def motor_mercadolibre(url, limite):
-    import requests, re, random, json
-    from urllib.parse import urlparse, parse_qs, urljoin
+    import requests, re, random
+    from urllib.parse import urlparse
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
     productos = []
+    headers = {
+        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.mercadolibre.com.pe/"
+    }
+
     try:
-        parsed_url = urlparse(url)
-        query_params = parse_qs(parsed_url.query)
+        safe_log(f"⚡ [Mercado Libre] Escaneando catálogo web directo...", "info")
+        
+        # 1. Petición HTTP al HTML de Mercado Libre
+        resp = requests.get(url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Mercado Libre] Error HTTP de respuesta: {resp.status_code}", "error")
+            return []
 
-        # 🔍 Extracción inteligente de keyword
-        if "q" in query_params:
-            keyword = query_params["q"][0]
-        else:
-            path = parsed_url.path.strip("/")
-            path_limpio = re.sub(r"_[A-Za-z0-9]+", "", path)
-            segmentos = [seg.replace("-", " ") for seg in path_limpio.split("/") if seg]
-            palabras_ignorar = {"nuevo", "usado", "reacondicionado", "noindex", "true", "false"}
-            keyword = " ".join([s for s in segmentos if s.lower() not in palabras_ignorar])
+        soup = BeautifulSoup(resp.text, "html.parser")
+        
+        # 2. Localizar tarjetas de productos con selectores actualizados
+        tarjetas = (
+            soup.select(".poly-card") or 
+            soup.select(".ui-search-layout__item") or 
+            soup.select(".ui-search-result__wrapper") or 
+            soup.select(".ui-search-result__content-wrapper")
+        )
 
-        if not keyword:
-            keyword = "adidas"
+        safe_log(f"🔍 [Mercado Libre] Se detectaron {len(tarjetas)} tarjetas en la página.", "info")
 
-        safe_log(f"⚡ [Mercado Libre] Consultando API oficial para '{keyword}'...", "info")
+        vistos = set()
+        for t in tarjetas:
+            try:
+                # Enlace del producto
+                a_el = t.find("a", href=re.compile(r"mercadolibre\.com\.pe", re.I)) or t.find("a", href=True)
+                if not a_el or not a_el.get("href"):
+                    continue
 
-        # 📡 API pública de Mercado Libre Perú
-        api_url = "https://api.mercadolibre.com/sites/MPE/search"
-        params = {"q": keyword, "sort": "price_asc", "limit": 50}
-        headers = {"User-Agent": random.choice(LISTA_USER_AGENTS)}
+                link_final = a_el["href"].split("#")[0]
+                identificador = f"ML-{link_final.split('/')[-1].split('?')[0]}"
 
-        resp = requests.get(api_url, params=params, headers=headers, timeout=12)
+                if identificador in vistos:
+                    continue
 
-        if resp.status_code == 200:
-            data = resp.json()
-            results = data.get("results", [])
-            safe_log(f"🔍 [Mercado Libre] API devolvió {len(results)} productos.", "info")
-
-            vistos = set()
-            for item in results:
-                nombre = item.get("title", "").strip().upper()
+                # Título del producto
+                tit_el = (
+                    t.find(["h2", "h3", "a"], class_=re.compile(r"(title|item__title|poly-component__title)", re.I)) or 
+                    t.find(["h2", "h3"])
+                )
+                nombre = tit_el.text.strip().upper() if tit_el else ""
                 if not nombre or len(nombre) < 3:
                     continue
 
-                p_o = float(item.get("price", 0.0))
-                p_r = float(item.get("original_price") or p_o)
-
-                if 0 < p_o <= limite:
-                    link_final = item.get("permalink", url)
-                    identificador = f"ML-{link_final.split('/')[-1].split('?')[0]}"
-
-                    if identificador in vistos:
+                # Extraer Precios
+                precios_el = t.find_all("span", class_=re.compile(r"andes-money-amount__fraction", re.I))
+                if not precios_el:
+                    textos_precios = re.findall(r"(?:S/\.?\s*)(\d[\d\.,]*)", t.text)
+                    nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos_precios if limpiar_precio_pnp(p) > 0])))
+                    if not nums:
                         continue
-                    vistos.add(identificador)
+                    p_o = nums[0]
+                    p_r = nums[-1] if len(nums) > 1 else p_o
+                else:
+                    nums = [limpiar_precio_pnp(p.text) for p in precios_el if limpiar_precio_pnp(p.text) > 0]
+                    if not nums:
+                        continue
+                    p_o = nums[0]
+                    p_r = nums[1] if len(nums) > 1 else p_o
 
-                    # 🖼️ Imagen HD
-                    img_url = item.get("thumbnail", "")
+                    # Verificar si existe precio anterior tachado
+                    del_el = t.find(["s", "del"], class_=re.compile(r"andes-money-amount", re.I))
+                    if del_el:
+                        p_r_val = limpiar_precio_pnp(del_el.text)
+                        if p_r_val > 0:
+                            p_r = p_r_val
+
+                # Filtro de presupuesto
+                if not (0 < p_o <= limite):
+                    continue
+
+                # Imagen HD
+                img_el = t.find("img")
+                img_url = ""
+                if img_el:
+                    img_url = img_el.get("data-src") or img_el.get("src") or img_el.get("data-lazy") or ""
                     if img_url:
                         img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
-                        img_url = img_url.replace("http:", "https:")
+                        if img_url.startswith("//"):
+                            img_url = "https:" + img_url
 
-                    productos.append({
-                        "nombre": f"MERCADO LIBRE - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "identificador": identificador,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-        else:
-            safe_log(f"🛑 [Mercado Libre] API bloqueada ({resp.status_code}), usando fallback HTML...", "warning")
-            # Fallback: scraping HTML
-            html_resp = requests.get(url, headers=headers, timeout=15)
-            if html_resp.status_code == 200:
-                soup = BeautifulSoup(html_resp.text, "html.parser")
-                tarjetas = soup.select(".ui-search-result__wrapper")
-                for t in tarjetas:
-                    try:
-                        a_el = t.select_one("a.ui-search-link")
-                        if not a_el:
-                            continue
-                        link_final = a_el
+                vistos.add(identificador)
+
+                productos.append({
+                    "nombre": f"MERCADO LIBRE - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url,
+                    "identificador": identificador,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+            except Exception:
+                continue
+
+    except Exception as e:
+        safe_log(f"🛑 [Mercado Libre] Error crítico: {e}", "error")
+
+    if productos:
+        safe_log(f"✅ [Mercado Libre] Se indexaron {len(productos)} ofertas válidas.", "success")
+    else:
+        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas bajo S/. {limite:.2f}", "warning")
+
+    return productos
 
 
 
