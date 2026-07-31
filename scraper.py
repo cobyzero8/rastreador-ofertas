@@ -2069,8 +2069,9 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     }
     
     # 🚀 CONTENEDOR DE DIAGNÓSTICO EN TIEMPO REAL (Aparece PRIMERO arriba)
-    with st.status("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", expanded=True) as status_box:
-        
+    status_container = st.status("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", expanded=True)
+    
+    with status_container:
         for item in res.data:
             ident = item['identificador'].upper()
             url_low = item['url'].lower()
@@ -2100,7 +2101,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             tienda_actual = ident.replace('_', '-').split('-')[0]
             st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
             
-            # Aquí se ejecuta el motor (y sus logs de diagnóstico saldrán dentro de esta caja en vivo)
+            # Aquí se ejecuta el motor y los logs de diagnóstico saldrán en vivo dentro de la caja
             prods = escanear_tienda(item['url'], item['precio_max'])
             
             for p in prods:
@@ -2175,8 +2176,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                             time.sleep(0.3)
                 except Exception: continue
 
-        # Actualizamos el estado de la caja cuando finaliza con éxito
-        status_box.update(label="✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**", state="complete", expanded=False)
+        st.success("✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**")
 
     # 📊 REPORTE VISUAL DE PRODUCTOS (Se muestra DESPUÉS del diagnóstico)
     if len(lista_html_streamlit) > 0:
