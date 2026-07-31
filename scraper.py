@@ -1760,37 +1760,19 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
-def motor_mercadolibre(url, limite, max_pages=1):
-    import os, time, re, random, json, requests
-    from urllib.parse import urlparse, urljoin
+def scrape_nike_paginado(base_url, limite=9999, max_pages=10, step=12, sz=36, session=None, use_playwright_fallback=False):
+    import time, random, re, json, os
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
+    import requests
     from datetime import datetime, timezone
 
-    productos = []
-    session = requests.Session()
-
-    # Headers + Cookies anti-login wall
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    session = session or requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate",
-        "Referer": "https://www.google.com/"
-    }
-    cookies = {
-        "org_login_guest": "1",
-        "cp": "15001"
-    }
-    session.headers.update(headers)
-    session.cookies.update(cookies)
-
-    def pick_src_from_srcset(srcset):
-        try:
-            parts = [p.strip() for p in srcset.split(',') if p.strip()]
-            best = sorted(parts, key=lambda x: int(re.findall(r'(\d+)w', x)[0]) if re.findall(r'(\d+)w', x) else 0)[-1]
-            return best.split()[0]
-        except Exception:
-            return srcset.split(',')[0].split()[0] if srcset else ""
+        "Referer": "https://www.nike.com.pe/"
+    })
 
     def SafeLimpiarPrecio(val):
         if 'limpiar_precio_pnp' in globals():
@@ -1801,117 +1783,140 @@ def motor_mercadolibre(url, limite, max_pages=1):
             return float(limpio) if limpio else 0.0
         except Exception: return 0.0
 
-    page_url = url
+    productos = []
     vistos = set()
+    start = 0
+    page_count = 0
 
-    for page in range(1, max_pages + 1):
+    parsed_url = urlparse(base_url)
+    query_params = parse_qs(parsed_url.query)
+
+    os.makedirs("ml_debug", exist_ok=True)
+
+    while page_count < max_pages:
+        page_count += 1
+        query_params["start"] = [str(start)]
+        query_params["sz"] = [str(sz)]
+        if "srule" not in query_params:
+            query_params["srule"] = ["Descuentos"]
+
+        new_query = urlencode(query_params, doseq=True)
+        url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
+
         try:
-            resp = session.get(page_url, timeout=15)
+            resp = session.get(url, timeout=15)
+            text = resp.text
+            with open("ml_debug/raw_html_last.html", "w", encoding="utf-8") as fh:
+                fh.write(text[:300000])
+        except Exception as e:
+            break
 
-            # Si detecta pantalla de login, intentar vía dominio móvil
-            if "ingresa a tu cuenta" in resp.text.lower() or "jms/mpe/lgz" in resp.url.lower():
-                if 'safe_log' in globals(): safe_log("⚠️ [Mercado Libre] Muro de login detectado. Reintentando por versión móvil...", "warning")
-                mobile_url = page_url.replace("listado.mercadolibre.com.pe", "m.mercadolibre.com.pe")
-                resp = session.get(mobile_url, timeout=15)
+        if resp.status_code != 200:
+            break
 
-            if resp.status_code != 200:
-                break
+        page_products = []
 
-            # Guardar HTML para inspección
+        # 1️⃣ Intentar JSON Embebido
+        if '"results"' in text or '"products"' in text or '"searchResults"' in text:
             try:
-                os.makedirs("ml_debug", exist_ok=True)
-                with open("ml_debug/raw_html_last.html", "w", encoding="utf-8") as fh:
-                    fh.write(resp.text[:200000])
+                json_blocks = re.findall(r'(\{(?:[^{}]|(?1))*\})', text[:300000])
+                for jb in json_blocks:
+                    if '"results"' in jb and '"price"' in jb:
+                        parsed = json.loads(jb)
+                        results = parsed.get("results") or parsed.get("products") or parsed.get("searchResults") or []
+                        for it in results:
+                            nombre = (it.get("title") or it.get("name") or "").strip().upper()
+                            p_o = float(it.get("price") or 0.0)
+                            p_r = float(it.get("original_price") or it.get("list_price") or p_o)
+                            link = urljoin("https://www.nike.com.pe", it.get("permalink") or it.get("url") or "")
+                            img = it.get("thumbnail") or it.get("image") or ""
+                            
+                            if nombre and 0 < p_o <= limite:
+                                page_products.append({"nombre": nombre, "precio": p_o, "precio_regular": max(p_r, p_o), "link": link, "img": img})
+            except Exception:
+                page_products = []
+
+        # 2️⃣ Parsear DOM HTML si no se extrajo JSON
+        if not page_products:
+            soup = BeautifulSoup(text, "html.parser")
+            cards = soup.select(".product-tile, div.product, li.product, div.product-card, a[href*='/product/']")
+            for c in cards:
+                try:
+                    a = c if c.name == "a" else c.select_one("a.link, a[href]")
+                    if not a or not a.get("href"): continue
+                    
+                    link = urljoin("https://www.nike.com.pe", a.get("href").split("#")[0])
+                    tit_el = c.select_one(".pdp-link, .product-name") or a
+                    title = tit_el.text.strip().upper()
+                    
+                    sales_el = c.select_one(".sales .value, span.price, span.product-price")
+                    strike_el = c.select_one(".strike-through .value")
+                    
+                    p_o = SafeLimpiarPrecio(sales_el.text) if sales_el else 0.0
+                    p_r = SafeLimpiarPrecio(strike_el.text) if strike_el else p_o
+
+                    img_el = c.select_one("img.tile-image, img")
+                    img = img_el.get("data-src") or img_el.get("src") if img_el else ""
+
+                    if title and 0 < p_o <= limite:
+                        page_products.append({"nombre": title, "precio": p_o, "precio_regular": max(p_r, p_o), "link": link, "img": img})
+                except Exception:
+                    continue
+
+        # 3️⃣ Fallback Playwright si no se hallaron tarjetas
+        if not page_products and use_playwright_fallback:
+            try:
+                from playwright.sync_api import sync_playwright
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                    pg = browser.new_page()
+                    pg.goto(url, timeout=30000)
+                    try: pg.wait_for_selector(".product-tile, div.product", timeout=10000)
+                    except: pass
+                    for _ in range(2):
+                        pg.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+                        time.sleep(1)
+                    rendered = pg.content()
+                    browser.close()
+                soup = BeautifulSoup(rendered, "html.parser")
+                cards = soup.select(".product-tile, div.product")
+                for c in cards:
+                    try:
+                        a = c.select_one("a.link, a[href]")
+                        if not a: continue
+                        link = urljoin("https://www.nike.com.pe", a.get("href"))
+                        title = c.select_one(".pdp-link, .product-name").text.strip().upper()
+                        p_o = SafeLimpiarPrecio(c.select_one(".sales .value").text)
+                        p_r = SafeLimpiarPrecio(c.select_one(".strike-through .value").text) or p_o
+                        img_el = c.select_one("img")
+                        img = img_el.get("data-src") or img_el.get("src") if img_el else ""
+                        if title and 0 < p_o <= limite:
+                            page_products.append({"nombre": title, "precio": p_o, "precio_regular": max(p_r, p_o), "link": link, "img": img})
+                    except Exception: continue
             except Exception: pass
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            tarjetas = (
-                soup.select("div.poly-card") or 
-                soup.select("a.poly-component__title") or 
-                soup.select("li.ui-search-layout__item") or
-                soup.select(".ui-search-result__wrapper") or
-                soup.select(".results-item")
-            )
+        if not page_products:
+            break
 
-            for t in tarjetas:
-                try:
-                    if t.name == "a" and "poly-component__title" in t.get("class", []):
-                        a_el = t
-                        container = t.find_parent(["div", "li"]) or t
-                    else:
-                        a_el = t.select_one("a.poly-component__title") or t.find("a", href=re.compile(r"mercadolibre\.com\.pe", re.I)) or t.find("a", href=True)
-                        container = t
+        # Deduplicación y formato exacto para Supabase
+        for p in page_products:
+            sku_match = re.search(r'([A-Z0-9]{6,10}-\d{3})', p["link"], re.IGNORECASE)
+            identificador = f"NIKE-{sku_match.group(1).upper()}" if sku_match else f"NIKE-{p['link'].split('?')[0].rstrip('/').split('/')[-1]}"
 
-                    if not a_el or not a_el.get("href"): continue
+            if identificador not in vistos:
+                vistos.add(identificador)
+                productos.append({
+                    "nombre": f"NIKE - {p['nombre']}",
+                    "precio": p["precio"],
+                    "precio_regular": p["precio_regular"],
+                    "link": p["link"],
+                    "img": p["img"],
+                    "identificador": identificador,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
 
-                    link_raw = a_el.get("href").split("#")[0]
-                    link_final = urljoin(page_url, link_raw)
-
-                    match_id = re.search(r'(MPE-?\d+)', link_final, re.IGNORECASE)
-                    if match_id:
-                        identificador = f"ML-{match_id.group(1).upper().replace('-', '')}"
-                    else:
-                        url_clean = link_final.split('?')[0].rstrip('/')
-                        identificador = f"ML-{url_clean.split('/')[-1]}"
-
-                    if identificador in vistos: continue
-
-                    nombre = a_el.text.strip().upper()
-                    if not nombre or len(nombre) < 3: continue
-
-                    precios_el = container.select("span.andes-money-amount__fraction")
-                    if precios_el:
-                        nums = [SafeLimpiarPrecio(p.text) for p in precios_el if SafeLimpiarPrecio(p.text) > 0]
-                        if not nums: continue
-                        p_o = nums[0]
-                        p_r = nums[1] if len(nums) > 1 else p_o
-                    else:
-                        textos = re.findall(r"(?:S/\.?\s*)(\d[\d\.,]*)", container.text)
-                        nums = sorted(list(set([SafeLimpiarPrecio(p) for p in textos if SafeLimpiarPrecio(p) > 0])))
-                        if not nums: continue
-                        p_o = nums[0]
-                        p_r = nums[-1] if len(nums) > 1 else p_o
-
-                    del_el = container.select_one("s.andes-money-amount, del.andes-money-amount")
-                    if del_el:
-                        p_r_val = SafeLimpiarPrecio(del_el.text)
-                        if p_r_val > 0: p_r = p_r_val
-
-                    if not (0 < p_o <= limite): continue
-
-                    img_url = ""
-                    img_el = container.select_one("img")
-                    if img_el:
-                        for attr in ("data-srcset", "srcset", "data-src", "src", "data-lazy"):
-                            val = img_el.get(attr)
-                            if val:
-                                img_url = pick_src_from_srcset(val) if "srcset" in attr else val
-                                break
-                        if img_url:
-                            img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
-                            if img_url.startswith("//"): img_url = "https:" + img_url
-
-                    vistos.add(identificador)
-                    productos.append({
-                        "nombre": f"MERCADO LIBRE - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "identificador": identificador,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception: continue
-
-            if page < max_pages:
-                next_btn = soup.select_one("a.andes-pagination__link--next")
-                if next_btn and next_btn.get("href"):
-                    page_url = urljoin(page_url, next_btn.get("href"))
-                    time.sleep(random.uniform(1.0, 2.0))
-                else: break
-            else: break
-
-        except Exception as e: break
+        start += step
+        time.sleep(random.uniform(0.6, 1.2))
 
     return productos
 
@@ -1947,7 +1952,7 @@ def escanear_tienda(url, limite):
     elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
     elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
-    elif "mercadolibre.com.pe" in dominio: return motor_mercadolibre(url, limite)
+    elif "nike.com.pe" in dominio: return motor_nike(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
