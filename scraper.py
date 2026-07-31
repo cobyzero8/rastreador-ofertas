@@ -1762,15 +1762,55 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
-                   keyword: str = None, max_paginas: int = 3) -> List[Dict[str, Any]]:
+# =============================================================================
+# MOTOR INRETAIL (Inkafarma y Mifarma vía Algolia Engine)
+# =============================================================================
+import re
+import json
+import random
+import requests
+from urllib.parse import urlparse, parse_qs
+
+# Fallbacks de funciones y constantes globales
+try:
+    LISTA_USER_AGENTS  # type: ignore
+except NameError:
+    LISTA_USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
+    ]
+
+try:
+    safe_log  # type: ignore
+except NameError:
+    def safe_log(msg, tipo="info"): print(f"[{tipo.upper()}] {msg}")
+
+try:
+    safe_float  # type: ignore
+except NameError:
+    def safe_float(v):
+        try:
+            if v is None: return 0.0
+            if isinstance(v, (int, float)): return float(v)
+            s = re.sub(r'[^\d.,]', '', str(v)).replace(',', '.')
+            res = re.findall(r'\d+\.\d+|\d+', s)
+            return float(res[0]) if res else 0.0
+        except Exception: return 0.0
+
+try:
+    encontrar_foto_fala  # type: ignore
+except NameError:
+    def encontrar_foto_fala(n): return ''
+
+
+def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
     """
     Motor definitivo para Inkafarma/Mifarma vía Algolia Engine.
     - Paginación robusta basada en nbHits (Scroll Infinito).
     - Extractor híbrido de precios (soporta floats, ints y strings numéricos).
-    - Incluye bloque de autodepuración para inspección de payloads en consola.
+    - Sin dependencias estrictas de typing para evitar NameError en Streamlit.
     """
-    productos_map: Dict[str, Dict[str, Any]] = {}
+    productos_map = {}
 
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
@@ -1806,8 +1846,8 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
         "Referer": f"{base_url}/"
     }
 
-    # Parser híbrido de alta precisión para clasificar precios de oferta y regulares
-    def parse_precio_algolia_estricto(item: Dict[str, Any]) -> tuple[float, float]:
+    # Parser híbrido de alta precisión para clasificar precios
+    def parse_precio_algolia_estricto(item):
         precios_oferta = []
         precios_regular = []
         MIN_PRECIO, MAX_PRECIO = 0.50, 2500.00
@@ -1828,7 +1868,6 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
                     else:
                         precios_oferta.append(val)
             elif isinstance(obj, str):
-                # Limpiar y validar si la cadena contiene una estructura de precio válida
                 if re.search(r'\d', obj) and any(p in k_low for p in ['price', 'precio', 'sale', 'final', 'offer', 'value', 'amount', 'regular', 'list', 'monedero']):
                     val = safe_float(obj)
                     if MIN_PRECIO <= val <= MAX_PRECIO:
@@ -1883,13 +1922,6 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
 
         safe_log(f"🔍 [{tag}] Pág {page + 1}: {len(hits)} hits obtenidos (Total catálogo: {nb_hits})", "info")
 
-        # =====================================================================
-        # BLOQUE DE AUTODEPURACIÓN (Muestra la estructura real en tus logs)
-        # =====================================================================
-        if page == 0 and hits:
-            campos_sospechosos = {k: v for k, v in hits[0].items() if any(p in k.lower() for p in ['price', 'precio', 'value', 'sale', 'regular', 'list', 'amount'])}
-            safe_log(f"📋 [DEBUG] Muestra de llaves detectadas en el primer hit: {campos_sospechosos}", "info")
-
         if not hits: break
 
         for item in hits:
@@ -1924,7 +1956,7 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
                     "img": str(img_url)
                 }
 
-            except Exception as e_item:
+            except Exception:
                 continue
 
         if nb_hits is not None and (page + 1) * hits_per_page >= int(nb_hits):
@@ -1939,7 +1971,6 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo el límite S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
