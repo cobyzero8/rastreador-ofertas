@@ -1816,20 +1816,20 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     sz = sz or step
     STEP_SIZE = int(step)
 
-    # Configuración de ScraperAPI (igual que en Adidas)
-    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
-    try:
-        import streamlit as st
-        if "SCRAPERAPI_KEY" in st.secrets:
-            api_key = st.secrets["SCRAPERAPI_KEY"]
-    except Exception: pass
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.nike.com.pe/"
+    }
+    session.headers.update(headers)
 
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
     vistos = set()
     total_checked = 0
 
-    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI para URL: {url}")
+    _safe_log(f"🚀 Iniciando motor_nike para URL: {url}")
 
     try:
         for page in range(1, max_pages + 1):
@@ -1839,18 +1839,14 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             new_query = urlencode(query_params, doseq=True)
             page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            _safe_log(f"⚡ Escaneando Página {page} (start={offset}) a través de Proxy...")
+            _safe_log(f"⚡ Escaneando Página {page} (start={offset})...")
 
             resp = None
             attempts, backoff = 0, 1
             while attempts < 3:
                 try:
-                    # Petición enrutada por ScraperAPI para evitar el bloqueo 403 de Nike
-                    payload = {
-                        'api_key': api_key,
-                        'url': page_url
-                    }
-                    resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
+                    session.headers.update({"User-Agent": headers["User-Agent"]})
+                    resp = session.get(page_url, timeout=15)
                     break
                 except requests.RequestException as e:
                     attempts += 1
@@ -1859,17 +1855,30 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                     backoff *= 2
 
             if not resp:
-                _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP mediante el proxy.", "error")
+                _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP de Nike.", "error")
                 break
+
+            # 🔍 BLOQUE DE DIAGNÓSTICO EN VIVO
+            _safe_log(f"📡 [DIAGNÓSTICO NIKE] Status Code recibido: {resp.status_code}")
+            _safe_log(f"📡 [DIAGNÓSTICO NIKE] Tamaño del contenido: {len(resp.text)} caracteres")
+            
+            # Tomamos una muestra de los primeros 300 caracteres para ver qué respondió exactamente el servidor
+            preview_texto = resp.text[:300].replace('\n', ' ').strip()
+            _safe_log(f"🔍 [DIAGNÓSTICO NIKE] Preview HTML: {preview_texto}...")
 
             _save_debug("raw_html_nike.html", resp.text)
             _save_debug("raw_html_last.html", resp.text)
 
             if resp.status_code != 200:
-                _safe_log(f"🛑 HTTP {resp.status_code} devuelto en {page_url}", "error")
+                _safe_log(f"🛑 HTTP {resp.status_code} devuelto por Nike en {page_url}", "error")
                 break
 
             text = resp.text
+            
+            # Verificación extra por si la respuesta contiene avisos de bloqueo ocultos
+            if any(term in text.lower() for term in ["access denied", "cloudflare", "captcha", "security check"]):
+                _safe_log("🚨 [ALERTA] El servidor devolvió una página de seguridad/bloqueo anti-bot de Nike.", "error")
+
             soup = BeautifulSoup(text, "html.parser")
             page_products = []
 
@@ -1907,7 +1916,7 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             # 2️⃣ Capa 2: DOM HTML
             if not page_products:
                 cards = soup.select(".product-tile, .product-card, .product-grid li, .product-grid div.product, a[href*='/product/'], a[href*='/productos/']")
-                _safe_log(f"🔍 Tarjetas detectadas en HTML: {len(cards)}")
+                _safe_log(f"🔍 Tarjetas detectadas en HTML mediante selectores: {len(cards)}")
 
                 for t in cards:
                     if len(productos) + len(page_products) >= max_items: break
@@ -1999,7 +2008,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     except Exception: pass
 
     return productos
-
 
 
 
