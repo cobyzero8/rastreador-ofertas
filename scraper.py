@@ -1757,7 +1757,7 @@ def motor_tradicional_general(url, limite, headers):
                                 productos.append({"nombre": tit.text.strip().upper(), "precio": p_o, "precio_regular": p_r, "link": urljoin(url, a_el['href']), "img": img_el['src'] if img_el else ""})
                 except Exception: continue
     except Exception: pass
-    return productos
+    return productos 
 
 
 def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, session=None, step=12, sz=None, max_items=500):
@@ -2059,6 +2059,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
     zona_peru = timezone(timedelta(hours=-5))
     fecha_hoy = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
     target = str(filtro_objetivo).strip().upper()
+    
     mapa_emojis = {
         "PERFUMES": "🧪", "ZAPATILLAS": "👟", "MEDIAS": "🧦", "POLOS": "👕", 
         "CASACAS": "🧥", "SHORTS": "🩳", "BUZOS": "👖", "AUDIFONOS": "🎧", 
@@ -2067,130 +2068,121 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         "CAMA": "🛏️", "OTROS": "📦"
     }
     
-    for item in res.data:
-        ident = item['identificador'].upper()
-        url_low = item['url'].lower()
+    # 🚀 CONTENEDOR DE DIAGNÓSTICO EN TIEMPO REAL (Aparece PRIMERO arriba)
+    with st.status("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", expanded=True) as status_box:
         
-        # Categorización del Radar
-        if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
-        elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
-        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
-        elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
-        elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
-        elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
-        elif "BUZO" in ident or "buzo" in url_low or "pantalon" in url_low: grupo = "BUZOS"
-        elif "AUDIFONO" in ident or "audifono" in url_low: grupo = "AUDIFONOS"
-        elif "TV" in ident or "smart-tv" in url_low: grupo = "TV"
-        elif "PARLANTE" in ident or "speaker" in url_low: grupo = "PARLANTE"
-        elif "BARRA" in ident or "soundbar" in url_low: grupo = "BARRA DE SONIDO"
-        elif "CELULAR" in ident or "phone" in url_low or "celular" in url_low: grupo = "CELULAR"
-        elif "PC" in ident or "laptop" in url_low: grupo = "PC"
-        elif "REFRIGERADORA" in ident or "refrig" in url_low: grupo = "REFRIGERADORA"
-        elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
-        elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
-        elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
-        else: grupo = "OTROS"
-
-        if target != "TODOS" and target != grupo: continue
+        for item in res.data:
+            ident = item['identificador'].upper()
+            url_low = item['url'].lower()
             
-        tienda_actual = ident.replace('_', '-').split('-')[0]
-        safe_log(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...", "write")
-        
-        prods = escanear_tienda(item['url'], item['precio_max'])
-        for p in prods:
-            try:
-                n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
+            # Categorización del Radar (Incluyendo el parche de Nike en Zapatillas)
+            if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
+            elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
+            elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
+            elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
+            elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
+            elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
+            elif "BUZO" in ident or "buzo" in url_low or "pantalon" in url_low: grupo = "BUZOS"
+            elif "AUDIFONO" in ident or "audifono" in url_low: grupo = "AUDIFONOS"
+            elif "TV" in ident or "smart-tv" in url_low: grupo = "TV"
+            elif "PARLANTE" in ident or "speaker" in url_low: grupo = "PARLANTE"
+            elif "BARRA" in ident or "soundbar" in url_low: grupo = "BARRA DE SONIDO"
+            elif "CELULAR" in ident or "phone" in url_low or "celular" in url_low: grupo = "CELULAR"
+            elif "PC" in ident or "laptop" in url_low: grupo = "PC"
+            elif "REFRIGERADORA" in ident or "refrig" in url_low: grupo = "REFRIGERADORA"
+            elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
+            elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
+            elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
+            else: grupo = "OTROS"
+
+            if target != "TODOS" and target != grupo: continue
                 
-                # Filtro de palabras prohibidas para categoría Audio/Hogar
-                if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
-                    palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA"]
-                    if any(bad in n_u for bad in palabras_prohibidas): continue
-                
-                if n_u in enviados: continue
-                enviados.add(n_u)
-                total += 1
-                p_v = float(p['precio'])
-                p_r = max(float(p.get('precio_regular', p_v)), p_v)
-                p['tienda_origen'] = tienda_actual
-                lista_html_streamlit.append(p)
-                
-                id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
-                id_registro = f"{item['identificador']}-{id_limpio}"[:200]
-                
-                # 1. Consultar si el producto ya existe en la Base de Datos
-                precio_anterior = None
+            tienda_actual = ident.replace('_', '-').split('-')[0]
+            st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
+            
+            # Aquí se ejecuta el motor (y sus logs de diagnóstico saldrán dentro de esta caja en vivo)
+            prods = escanear_tienda(item['url'], item['precio_max'])
+            
+            for p in prods:
                 try:
-                    res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
-                    if res_ant.data and len(res_ant.data) > 0:
-                        precio_anterior = float(res_ant.data[0]['precio'])
-                except Exception as e_sel:
-                    safe_log(f"⚠️ Error al consultar historial ({id_registro[:25]}...): {e_sel}", "caption")
-                
-                datos_guardar = {
-                    "identificador": id_registro, 
-                    "precio": p_v, 
-                    "precio_regular": p_r, 
-                    "link_producto": p['link'], 
-                    "imagen_producto": p.get('img', ''), 
-                    "fecha": fecha_hoy
-                }
-                
-                emoji = mapa_emojis.get(grupo, "🔥")
-
-                # =======================================================
-                # ⚡ LÓGICA DE ALERTAS Y REGISTRO
-                # =======================================================
-
-                # CASO 1: ES UN PRODUCTO COMPLETAMENTE NUEVO
-                if precio_anterior is None:
+                    n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
+                    
+                    if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
+                        palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA"]
+                        if any(bad in n_u for bad in palabras_prohibidas): continue
+                    
+                    if n_u in enviados: continue
+                    enviados.add(n_u)
+                    total += 1
+                    p_v = float(p['precio'])
+                    p_r = max(float(p.get('precio_regular', p_v)), p_v)
+                    p['tienda_origen'] = tienda_actual
+                    lista_html_streamlit.append(p)
+                    
+                    id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
+                    id_registro = f"{item['identificador']}-{id_limpio}"[:200]
+                    
+                    precio_anterior = None
                     try:
-                        supabase.table("historial_precios").insert(datos_guardar).execute()
-                    except Exception as e_in:
-                        safe_log(f"🛑 Error al registrar producto nuevo: {e_in}", "error")
+                        res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
+                        if res_ant.data and len(res_ant.data) > 0:
+                            precio_anterior = float(res_ant.data[0]['precio'])
+                    except Exception: pass
+                    
+                    datos_guardar = {
+                        "identificador": id_registro, 
+                        "precio": p_v, 
+                        "precio_regular": p_r, 
+                        "link_producto": p['link'], 
+                        "imagen_producto": p.get('img', ''), 
+                        "fecha": fecha_hoy
+                    }
+                    
+                    emoji = mapa_emojis.get(grupo, "🔥")
 
-                    msg_t = (
-                        f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
-                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                        f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
-                    )
-                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
-                        alertas += 1
-                        time.sleep(0.3)
+                    if precio_anterior is None:
+                        try: supabase.table("historial_precios").insert(datos_guardar).execute()
+                        except Exception: pass
 
-                # CASO 2: EL PRODUCTO YA EXISTÍA Y BAJÓ DE PRECIO
-                elif p_v < precio_anterior:
-                    try:
-                        supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
-                    except Exception as e_up:
-                        safe_log(f"🛑 Error al actualizar precio más bajo: {e_up}", "error")
+                        msg_t = (
+                            f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                            f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                            f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
+                        )
+                        if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                            alertas += 1
+                            time.sleep(0.3)
+
+                    elif p_v < precio_anterior:
+                        try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
+                        except Exception: pass
 
                     ahorro = precio_anterior - p_v
-                    msg_t = (
-                        f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
-                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                        f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
-                        f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
-                        f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
-                    )
-                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
-                        alertas += 1
-                        time.sleep(0.3)
+                    if p_v < precio_anterior:
+                        msg_t = (
+                            f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                            f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                            f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
+                            f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
+                            f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
+                        )
+                        if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                            alertas += 1
+                            time.sleep(0.3)
+                except Exception: continue
 
-                # CASO 3: EL PRECIO SUBIÓ O SE MANTUVO IGUAL
-                else:
-                    pass
+        # Actualizamos el estado de la caja cuando finaliza con éxito
+        status_box.update(label="✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**", state="complete", expanded=False)
 
-            except Exception as e_p:
-                safe_log(f"⚠️ Error al procesar ítem en patrulla: {e_p}", "caption")
-                
+    # 📊 REPORTE VISUAL DE PRODUCTOS (Se muestra DESPUÉS del diagnóstico)
     if len(lista_html_streamlit) > 0:
         try:
-            safe_log("---", "write")
-            safe_log(f"### 🎯 Modelos encontrados e indexados en vivo ({len(lista_html_streamlit)}):", "write")
+            st.markdown("---")
+            st.markdown(f"### 🎯 Modelos encontrados e indexados en vivo ({len(lista_html_streamlit)}):")
             for prod in lista_html_streamlit:
                 with st.container(border=True):
                     col1, col2 = st.columns([2, 8])
@@ -2212,5 +2204,5 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                             st.markdown(f"💰 **Precio Actual: S/. {prod['precio']:.2f}**")
                         st.markdown(f"🔗 [🌐 IR A COMPRAR DIRECTO]({prod['link']})")
         except Exception: pass
-            
+
     return f"Éxito. Modelos procesados: {total}. Alertas Telegram: {alertas}."
