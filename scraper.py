@@ -1760,29 +1760,26 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
-def motor_mercadolibre(url, limite, max_pages=1):
+def motor_mercadolibre(url, limite, max_pages=1, use_playwright_fallback=False):
     import os, time, re, random, json, requests
     from urllib.parse import urlparse, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
     productos = []
-    
-    # Cabeceras completas que imitan exactamente a Microsoft Edge / Chrome
+
+    # Reutilizar conexión HTTP
+    session = requests.Session()
+
+    # Cabeceras realistas (sin 'br' en Accept-Encoding para evitar problemas si no hay brotli)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "es-PE,es-ES;q=0.9,es;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Microsoft Edge";v="124"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
+        "User-Agent": random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "Referer": "https://www.mercadolibre.com.pe/"
     }
+    session.headers.update(headers)
 
     def pick_src_from_srcset(srcset):
         try:
@@ -1792,32 +1789,202 @@ def motor_mercadolibre(url, limite, max_pages=1):
         except Exception:
             return srcset.split(',')[0].split()[0] if srcset else ""
 
+    def SafeLimpiarPrecio(val):
+        if 'limpiar_precio_pnp' in globals():
+            try:
+                return limpiar_precio_pnp(val)
+            except Exception:
+                pass
+        try:
+            limpio = re.sub(r'[^\d\.,]', '', str(val)).replace(',', '')
+            return float(limpio) if limpio else 0.0
+        except Exception:
+            return 0.0
+
+    # Intentar API oficial primero (si falla, fallback a scraping)
+    def try_api(keyword):
+        try:
+            api_url = "https://api.mercadolibre.com/sites/MPE/search"
+            params = {"q": keyword, "sort": "price_asc", "limit": 50}
+            resp = session.get(api_url, params=params, timeout=12)
+            # Guardar respuesta cruda para debug
+            os.makedirs("ml_debug", exist_ok=True)
+            with open("ml_debug/raw_api_last.json", "w", encoding="utf-8") as fh:
+                try:
+                    json.dump({"status": resp.status_code, "text": resp.text[:20000]}, fh, ensure_ascii=False, indent=2)
+                except Exception:
+                    fh.write(resp.text[:20000])
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("results", [])
+        except Exception:
+            pass
+        return None
+
+    # Extraer keyword corta desde la URL
+    def extract_keyword(u):
+        parsed = urlparse(u)
+        q = {}
+        try:
+            q = dict([p.split('=') for p in parsed.query.split('&') if '=' in p])
+        except Exception:
+            q = {}
+        if 'q' in q and q['q'].strip():
+            kw = q['q']
+        else:
+            path = parsed.path.strip("/")
+            path = re.sub(r"_[A-Za-z0-9]+", "", path)
+            segs = [s.replace("-", " ") for s in path.split("/") if s]
+            ignore = {"nuevo","usado","reacondicionado","noindex","true","false"}
+            kw = " ".join([s for s in segs if s.lower() not in ignore])
+        return " ".join(kw.split()[:3]).strip() or "adidas"
+
+    # 1) Intento API
+    keyword = extract_keyword(url)
+    safe_log(f"⚡ [Mercado Libre] Intentando API con keyword: '{keyword}'", "info") if 'safe_log' in globals() else print(f"API keyword: {keyword}")
+    api_results = try_api(keyword)
+    if api_results is not None:
+        vistos = set()
+        for item in api_results:
+            try:
+                nombre = item.get("title", "").strip().upper()
+                if not nombre or len(nombre) < 3:
+                    continue
+                p_o = float(item.get("price", 0.0))
+                p_r = float(item.get("original_price") or p_o)
+                if not (0 < p_o <= limite):
+                    continue
+                link_final = item.get("permalink", url)
+                # Normalizar identificador
+                from urllib.parse import urlparse as _up
+                path = _up(link_final).path.rstrip('/')
+                identificador = f"ML-{path.split('/')[-1]}"
+                if identificador in vistos:
+                    continue
+                vistos.add(identificador)
+                img = item.get("thumbnail", "") or ""
+                if img:
+                    img = img.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg").replace("http:", "https:")
+                productos.append({
+                    "nombre": f"MERCADO LIBRE - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img,
+                    "identificador": identificador,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+            except Exception:
+                continue
+        if productos:
+            safe_log(f"✅ [Mercado Libre] API devolvió {len(productos)} ofertas válidas.", "success") if 'safe_log' in globals() else print(f"API found {len(productos)}")
+            return productos
+        safe_log("⚠️ [Mercado Libre] API devolvió 0 ofertas útiles, caer al scraping...", "warning") if 'safe_log' in globals() else print("API empty, fallback to scraping")
+
+    # 2) Fallback scraping HTML (robusto)
     page_url = url
     vistos = set()
-
     for page in range(1, max_pages + 1):
         try:
-            resp = requests.get(page_url, headers=headers, timeout=15)
+            # Reintentos simples
+            attempts, backoff = 0, 1
+            resp = None
+            while attempts < 3:
+                try:
+                    resp = session.get(page_url, timeout=15)
+                    break
+                except requests.RequestException as e:
+                    attempts += 1
+                    safe_log(f"⚠️ Intento {attempts} fallo: {e}", "warning") if 'safe_log' in globals() else print(f"Intento {attempts} fallo: {e}")
+                    time.sleep(backoff)
+                    backoff *= 2
+
+            if not resp:
+                break
+
+            # Guardar HTML crudo para debug siempre
+            os.makedirs("ml_debug", exist_ok=True)
+            with open("ml_debug/raw_html_last.html", "w", encoding="utf-8") as fh:
+                fh.write(resp.text[:200000])
 
             if resp.status_code != 200:
-                safe_log(f"🛑 [Mercado Libre] HTTP {resp.status_code} en {page_url}", "warning")
+                safe_log(f"🛑 [Mercado Libre] HTTP {resp.status_code} en {page_url}", "warning") if 'safe_log' in globals() else print(f"HTTP {resp.status_code}")
                 break
 
             soup = BeautifulSoup(resp.text, "html.parser")
-            
-            # Selectores exactos según la inspección del DOM
             tarjetas = (
-                soup.select("div.poly-card") or 
-                soup.select("a.poly-component__title") or 
+                soup.select("div.poly-card") or
+                soup.select("a.poly-component__title") or
                 soup.select("li.ui-search-layout__item") or
-                soup.select(".ui-search-result__wrapper")
+                soup.select(".ui-search-result__wrapper") or
+                soup.select(".ui-search-result__content-wrapper")
             )
 
-            safe_log(f"🔍 [Mercado Libre] Página {page} - Tarjetas detectadas: {len(tarjetas)}", "info")
+            safe_log(f"🔍 Página {page} - tarjetas detectadas: {len(tarjetas)}", "info") if 'safe_log' in globals() else print(f"tarjetas: {len(tarjetas)}")
+
+            if not tarjetas:
+                # Si no hay tarjetas, intentar detectar JSON embebido
+                if "window.__INITIAL_STATE__" in resp.text or "application/ld+json" in resp.text or "searchResults" in resp.text:
+                    try:
+                        # Buscar JSON embebido y parsear
+                        json_blocks = re.findall(r'(\{(?:[^{}]|(?1))*\})', resp.text[:200000])
+                        for jb in json_blocks:
+                            if '"results"' in jb and '"price"' in jb:
+                                try:
+                                    parsed = json.loads(jb)
+                                    results = parsed.get("results") or parsed.get("searchResults") or []
+                                    for item in results:
+                                        nombre = item.get("title", "").strip().upper()
+                                        p_o = float(item.get("price", 0.0)) if item.get("price") else 0.0
+                                        if not (0 < p_o <= limite): continue
+                                        link_final = item.get("permalink") or item.get("url") or url
+                                        path = urlparse(link_final).path.rstrip('/')
+                                        identificador = f"ML-{path.split('/')[-1]}"
+                                        if identificador in vistos: continue
+                                        vistos.add(identificador)
+                                        img = item.get("thumbnail") or item.get("picture") or ""
+                                        productos.append({
+                                            "nombre": f"MERCADO LIBRE - {nombre}",
+                                            "precio": p_o,
+                                            "precio_regular": p_o,
+                                            "link": link_final,
+                                            "img": img,
+                                            "identificador": identificador,
+                                            "fecha": datetime.now(timezone.utc).isoformat()
+                                        })
+                                    if productos:
+                                        return productos
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
+
+                # Si se pidió Playwright fallback y no hay tarjetas, intentar renderizado
+                if use_playwright_fallback:
+                    try:
+                        from playwright.sync_api import sync_playwright
+                        with sync_playwright() as p:
+                            browser = p.chromium.launch(headless=True)
+                            page = browser.new_page()
+                            page.goto(page_url, timeout=30000)
+                            try:
+                                page.wait_for_selector(".ui-search-result__wrapper", timeout=10000)
+                            except:
+                                pass
+                            rendered = page.content()
+                            browser.close()
+                            soup = BeautifulSoup(rendered, "html.parser")
+                            tarjetas = (
+                                soup.select("div.poly-card") or
+                                soup.select("a.poly-component__title") or
+                                soup.select("li.ui-search-layout__item") or
+                                soup.select(".ui-search-result__wrapper")
+                            )
+                    except Exception as e:
+                        safe_log(f"⚠️ Playwright fallback falló: {e}", "warning") if 'safe_log' in globals() else print(f"Playwright error: {e}")
 
             for t in tarjetas:
                 try:
-                    # Si 't' es directamente el enlace <a>
                     if t.name == "a" and "poly-component__title" in t.get("class", []):
                         a_el = t
                         container = t.find_parent(["div", "li"]) or t
@@ -1830,44 +1997,45 @@ def motor_mercadolibre(url, limite, max_pages=1):
 
                     link_raw = a_el.get("href").split("#")[0]
                     link_final = urljoin(page_url, link_raw)
-                    identificador = f"ML-{link_final.split('/')[-1].split('?')[0]}"
+                    # identificador seguro
+                    match_id = re.search(r'(MPE-?\d+)', link_final, re.IGNORECASE)
+                    if match_id:
+                        identificador = f"ML-{match_id.group(1).upper().replace('-', '')}"
+                    else:
+                        url_clean = link_final.split('?')[0].rstrip('/')
+                        identificador = f"ML-{url_clean.split('/')[-1]}"
 
                     if identificador in vistos:
                         continue
 
-                    # Título
                     nombre = a_el.text.strip().upper()
                     if not nombre or len(nombre) < 3:
                         continue
 
-                    # Extraer Precio
                     precios_el = container.select("span.andes-money-amount__fraction")
                     if precios_el:
-                        nums = [limpiar_precio_pnp(p.text) for p in precios_el if limpiar_precio_pnp(p.text) > 0]
+                        nums = [SafeLimpiarPrecio(p.text) for p in precios_el if SafeLimpiarPrecio(p.text) > 0]
                         if not nums:
                             continue
                         p_o = nums[0]
                         p_r = nums[1] if len(nums) > 1 else p_o
                     else:
                         textos = re.findall(r"(?:S/\.?\s*)(\d[\d\.,]*)", container.text)
-                        nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos if limpiar_precio_pnp(p) > 0])))
+                        nums = sorted(list(set([SafeLimpiarPrecio(p) for p in textos if SafeLimpiarPrecio(p) > 0])))
                         if not nums:
                             continue
                         p_o = nums[0]
                         p_r = nums[-1] if len(nums) > 1 else p_o
 
-                    # Precio tachado si existe
                     del_el = container.select_one("s.andes-money-amount, del.andes-money-amount")
                     if del_el:
-                        p_r_val = limpiar_precio_pnp(del_el.text)
+                        p_r_val = SafeLimpiarPrecio(del_el.text)
                         if p_r_val > 0:
                             p_r = p_r_val
 
-                    # Filtro de presupuesto
                     if not (0 < p_o <= limite):
                         continue
 
-                    # Imagen
                     img_url = ""
                     img_el = container.select_one("img")
                     if img_el:
@@ -1894,27 +2062,29 @@ def motor_mercadolibre(url, limite, max_pages=1):
                 except Exception:
                     continue
 
-            # Paginación
+            # paginación
             if page < max_pages:
                 next_btn = soup.select_one("a.andes-pagination__link--next")
                 if next_btn and next_btn.get("href"):
                     page_url = urljoin(page_url, next_btn.get("href"))
-                    time.sleep(random.uniform(1.0, 2.0))
+                    time.sleep(random.uniform(1.0, 2.5))
+                    continue
                 else:
                     break
             else:
                 break
 
         except Exception as e:
-            safe_log(f"🛑 [Mercado Libre] Error en página {page}: {e}", "error")
+            safe_log(f"🛑 [Mercado Libre] Error en página {page}: {e}", "error") if 'safe_log' in globals() else print(f"Error page {page}: {e}")
             break
 
     if productos:
-        safe_log(f"✅ [Mercado Libre] Se indexaron {len(productos)} ofertas válidas.", "success")
+        safe_log(f"✅ [Mercado Libre] Se indexaron {len(productos)} ofertas válidas.", "success") if 'safe_log' in globals() else print(f"Found {len(productos)}")
     else:
-        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas bajo S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas bajo S/. {limite:.2f}", "warning") if 'safe_log' in globals() else print("No offers found")
 
     return productos
+
 
 
 
