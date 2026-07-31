@@ -1761,21 +1761,30 @@ def motor_tradicional_general(url, limite, headers):
 
 
 def motor_mercadolibre(url, limite, max_pages=1):
-    import os, time, re, random, requests
+    import os, time, re, random, json, requests
     from urllib.parse import urlparse, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
     productos = []
+    
+    # Cabeceras completas que imitan exactamente a Microsoft Edge / Chrome
     headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.mercadolibre.com.pe/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-PE,es-ES;q=0.9,es;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Microsoft Edge";v="124"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
     }
 
     def pick_src_from_srcset(srcset):
-        # Extrae la URL de imagen con mayor ancho/resolución
         try:
             parts = [p.strip() for p in srcset.split(',') if p.strip()]
             best = sorted(parts, key=lambda x: int(re.findall(r'(\d+)w', x)[0]) if re.findall(r'(\d+)w', x) else 0)[-1]
@@ -1783,59 +1792,39 @@ def motor_mercadolibre(url, limite, max_pages=1):
         except Exception:
             return srcset.split(',')[0].split()[0] if srcset else ""
 
-    # Soporte para proxies opcionales mediante variables de entorno
-    proxies = None
-    proxy_env = os.environ.get("ML_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
-    if proxy_env:
-        proxies = {"http": proxy_env, "https": proxy_env}
-        safe_log("🔁 Usando proxy desde variables de entorno", "info")
-
     page_url = url
     vistos = set()
 
     for page in range(1, max_pages + 1):
         try:
-            # Reintentos con Backoff Exponencial (1s, 2s, 4s)
-            attempts, backoff = 0, 1
-            resp = None
-            while attempts < 3:
-                try:
-                    resp = requests.get(page_url, headers=headers, timeout=15, proxies=proxies)
-                    break
-                except requests.RequestException as e:
-                    attempts += 1
-                    safe_log(f"⚠️ Intento {attempts} falló: {e}", "warning")
-                    time.sleep(backoff)
-                    backoff *= 2
-
-            if not resp:
-                safe_log("🛑 No se obtuvo respuesta HTTP de Mercado Libre", "error")
-                break
+            resp = requests.get(page_url, headers=headers, timeout=15)
 
             if resp.status_code != 200:
                 safe_log(f"🛑 [Mercado Libre] HTTP {resp.status_code} en {page_url}", "warning")
-                # Intento seguro de escritura de debug para evitar fallos de permisos en la nube
-                try:
-                    os.makedirs("ml_debug", exist_ok=True)
-                    with open("ml_debug/raw_html_last.html", "w", encoding="utf-8") as fh:
-                        fh.write(resp.text[:200000])
-                except Exception as err_file:
-                    safe_log(f"⚠️ No se pudo guardar log de debug local: {err_file}", "warning")
                 break
 
             soup = BeautifulSoup(resp.text, "html.parser")
+            
+            # Selectores exactos según la inspección del DOM
             tarjetas = (
-                soup.select(".poly-card") or
-                soup.select(".ui-search-layout__item") or
-                soup.select(".ui-search-result__wrapper") or
-                soup.select(".ui-search-result__content-wrapper")
+                soup.select("div.poly-card") or 
+                soup.select("a.poly-component__title") or 
+                soup.select("li.ui-search-layout__item") or
+                soup.select(".ui-search-result__wrapper")
             )
-            safe_log(f"🔍 [Mercado Libre] Página {page} - tarjetas detectadas: {len(tarjetas)}", "info")
+
+            safe_log(f"🔍 [Mercado Libre] Página {page} - Tarjetas detectadas: {len(tarjetas)}", "info")
 
             for t in tarjetas:
                 try:
-                    # 🔗 Enlace del producto
-                    a_el = t.find("a", href=re.compile(r"mercadolibre\.com\.pe", re.I)) or t.find("a", href=True)
+                    # Si 't' es directamente el enlace <a>
+                    if t.name == "a" and "poly-component__title" in t.get("class", []):
+                        a_el = t
+                        container = t.find_parent(["div", "li"]) or t
+                    else:
+                        a_el = t.select_one("a.poly-component__title") or t.find("a", href=re.compile(r"mercadolibre\.com\.pe", re.I)) or t.find("a", href=True)
+                        container = t
+
                     if not a_el or not a_el.get("href"):
                         continue
 
@@ -1846,17 +1835,13 @@ def motor_mercadolibre(url, limite, max_pages=1):
                     if identificador in vistos:
                         continue
 
-                    # 🏷️ Nombre / Título
-                    tit_el = (
-                        t.find(["h2", "h3", "a"], class_=re.compile(r"(title|item__title|poly-component__title)", re.I)) or
-                        t.find(["h2", "h3"])
-                    )
-                    nombre = tit_el.text.strip().upper() if tit_el else ""
+                    # Título
+                    nombre = a_el.text.strip().upper()
                     if not nombre or len(nombre) < 3:
                         continue
 
-                    # 💰 Extracción unificada de precios
-                    precios_el = t.find_all("span", class_=re.compile(r"andes-money-amount__fraction", re.I))
+                    # Extraer Precio
+                    precios_el = container.select("span.andes-money-amount__fraction")
                     if precios_el:
                         nums = [limpiar_precio_pnp(p.text) for p in precios_el if limpiar_precio_pnp(p.text) > 0]
                         if not nums:
@@ -1864,35 +1849,32 @@ def motor_mercadolibre(url, limite, max_pages=1):
                         p_o = nums[0]
                         p_r = nums[1] if len(nums) > 1 else p_o
                     else:
-                        textos = re.findall(r"(?:S/\.?\s*)(\d[\d\.,]*)", t.text)
+                        textos = re.findall(r"(?:S/\.?\s*)(\d[\d\.,]*)", container.text)
                         nums = sorted(list(set([limpiar_precio_pnp(p) for p in textos if limpiar_precio_pnp(p) > 0])))
                         if not nums:
                             continue
                         p_o = nums[0]
                         p_r = nums[-1] if len(nums) > 1 else p_o
 
-                    # Precio original tachado si existe
-                    del_el = t.find(["s", "del"], class_=re.compile(r"andes-money-amount", re.I))
+                    # Precio tachado si existe
+                    del_el = container.select_one("s.andes-money-amount, del.andes-money-amount")
                     if del_el:
                         p_r_val = limpiar_precio_pnp(del_el.text)
                         if p_r_val > 0:
                             p_r = p_r_val
 
-                    # 💵 Filtro por límite de presupuesto
+                    # Filtro de presupuesto
                     if not (0 < p_o <= limite):
                         continue
 
-                    # 🖼️ Extracción de imagen HD (priorizando srcset)
+                    # Imagen
                     img_url = ""
-                    img_el = t.find("img")
+                    img_el = container.select_one("img")
                     if img_el:
                         for attr in ("data-srcset", "srcset", "data-src", "src", "data-lazy"):
                             val = img_el.get(attr)
                             if val:
-                                if attr in ("data-srcset", "srcset"):
-                                    img_url = pick_src_from_srcset(val)
-                                else:
-                                    img_url = val
+                                img_url = pick_src_from_srcset(val) if "srcset" in attr else val
                                 break
                         if img_url:
                             img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
@@ -1912,23 +1894,19 @@ def motor_mercadolibre(url, limite, max_pages=1):
                 except Exception:
                     continue
 
-            # 📄 Paginación a la siguiente página del catálogo
+            # Paginación
             if page < max_pages:
-                next_link = None
-                next_btn = soup.select_one("a.andes-pagination__link--next") or soup.find("a", string=re.compile(r"siguiente", re.I))
+                next_btn = soup.select_one("a.andes-pagination__link--next")
                 if next_btn and next_btn.get("href"):
-                    next_link = urljoin(page_url, next_btn.get("href"))
-                if next_link:
-                    page_url = next_link
-                    time.sleep(random.uniform(1.0, 2.5))
-                    continue
+                    page_url = urljoin(page_url, next_btn.get("href"))
+                    time.sleep(random.uniform(1.0, 2.0))
                 else:
                     break
             else:
                 break
 
         except Exception as e:
-            safe_log(f"🛑 [Mercado Libre] Error crítico en página {page}: {e}", "error")
+            safe_log(f"🛑 [Mercado Libre] Error en página {page}: {e}", "error")
             break
 
     if productos:
