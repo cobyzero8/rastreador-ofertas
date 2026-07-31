@@ -1,4 +1,4 @@
-name: Debug InRetail API
+name: Debug MercadoLibre API
 on:
   workflow_dispatch:
 
@@ -7,8 +7,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}    # opcional si lo usas
-      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}# opcional si lo usas
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,17 +21,26 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      - name: Run motor_inretail and save debug
+      - name: Run motor_mercadolibre and save debug
         run: |
           python - <<'PY'
           import os
-          from scraper import motor_inretail
+          from scraper import motor_mercadolibre
           print("SUPABASE_KEY present:", bool(os.environ.get("SUPABASE_KEY")))
-          motor_inretail("https://inkafarma.pe/buscador?keyword=desodorante", limite=9999, max_pages=1)
+          url = "https://listado.mercadolibre.com.pe/ropa-accesorios/ropa-deportiva/nuevo/hombre/ropa-adidas_NoIndex_True?sb=all_mercadolibre"
+          productos = motor_mercadolibre(url, limite=300)
+          print("Productos encontrados:", len(productos))
+          for p in productos[:5]:  # mostrar solo los primeros 5
+              print(p)
+          # Guardar debug en archivo
+          import json, os
+          os.makedirs("ml_debug", exist_ok=True)
+          with open("ml_debug/resp_debug.json", "w", encoding="utf-8") as f:
+              json.dump(productos, f, ensure_ascii=False, indent=2)
           PY
 
       - name: Upload debug artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inretail-debug
-          path: inretail_debug/resp_debug.json
+          name: mercadolibre-debug
+          path: ml_debug/resp_debug.json
