@@ -1761,73 +1761,74 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-# =============================================================================
-# MOTOR INRETAIL (Inkafarma y Mifarma vía Algolia Engine)
-# =============================================================================
-import re
+# motor_inretail.py  -- pega este bloque en tu scraper.py o en motores/motor_inretail.py
+from urllib.parse import urlparse, parse_qs, urljoin
+import requests
 import json
 import random
-import requests
-from urllib.parse import urlparse, parse_qs
+import re
+from typing import List, Dict, Any
 
-# Fallbacks de utilidades
+# FALLBACKS (si ya existen en tu scraper se usan)
 try:
     LISTA_USER_AGENTS  # type: ignore
+    safe_log  # type: ignore
+    safe_float  # type: ignore
+    encontrar_foto_fala  # type: ignore
 except NameError:
     LISTA_USER_AGENTS = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
     ]
-
-try:
-    safe_log  # type: ignore
-except NameError:
-    def safe_log(msg, tipo="info"): print(f"[{tipo.upper()}] {msg}")
-
-try:
-    safe_float  # type: ignore
-except NameError:
+    def safe_log(msg, tipo="info"):
+        print(f"[{tipo.upper()}] {msg}")
     def safe_float(v):
         try:
             if v is None: return 0.0
             if isinstance(v, (int, float)): return float(v)
-            s = re.sub(r'[^\d.,]', '', str(v)).replace(',', '.')
+            s = re.sub(r'[^\d.,]', '', str(v))
+            s = s.replace(',', '.')
             res = re.findall(r'\d+\.\d+|\d+', s)
             return float(res[0]) if res else 0.0
-        except Exception: return 0.0
+        except Exception:
+            return 0.0
+    def encontrar_foto_fala(n):
+        if isinstance(n, dict):
+            for k in ('image','imageUrl','thumbnail','img','picture','src'):
+                v = n.get(k)
+                if isinstance(v, str) and any(ext in v.lower() for ext in ('.jpg','.jpeg','.png','.webp')):
+                    return v
+        return ''
 
-try:
-    encontrar_foto_fala  # type: ignore
-except NameError:
-    def encontrar_foto_fala(n): return ''
-
-
-def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
+def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
+                   keyword: str = None, max_paginas: int = 3) -> List[Dict[str, Any]]:
     """
-    Motor definitivo para Inkafarma/Mifarma vía Algolia Engine.
-    - Extracción directa y jerárquica de precios (evita confundir unidades/packs con dinero).
-    - Paginación robusta con nbHits.
-    - Generación de enlaces nativos /producto/{urlKey}/{sku}.
+    Motor Algolia corregido:
+    - Prioriza campos explícitos de precio.
+    - Normaliza centavos si aplica.
+    - Evita tomar números genéricos (ratings, stock).
+    - Usa objectID/sku/link como clave única.
     """
-    productos_map = {}
+    productos_map: Dict[str, Dict[str, Any]] = {}
 
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
     netloc = parsed.netloc.replace("www.", "")
     base_url = f"{scheme}://{netloc}"
 
-    # 1. Extracción inteligente de keyword
+    # Extraer keyword
     query_params = parse_qs(parsed.query)
     if not keyword:
         kw_list = query_params.get('keyword') or query_params.get('q') or query_params.get('ft') or []
         if kw_list and kw_list[0].strip():
             keyword = kw_list[0].strip()
         else:
-            path_parts = [p for p in parsed.path.strip('/').split('/') if p and p.lower() not in ('buscador', 'producto', 'categorias', 'categoria')]
+            path_parts = [p for p in parsed.path.strip('/').split('/') if p and p.lower() not in ('buscador','producto','categorias','categoria')]
             if path_parts:
                 keyword = path_parts[-1].replace('-', ' ').strip()
-
     keyword = keyword or "desodorante"
+
     tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
     safe_log(f"⚡ [{tag}] Buscando '{keyword}' en Algolia Engine...", "info")
 
@@ -1842,87 +1843,122 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
         "X-Algolia-Application-Id": ALGOLIA_APP_ID,
         "X-Algolia-API-Key": ALGOLIA_API_KEY,
         "Origin": base_url,
-        "Referer": f"{base_url}/"
+        "Referer": f"{base_url}/",
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty"
     }
 
-    # Parser estricto de precios de alta precisión
-    def parse_precio_algolia_estricto(item):
-        # 1. Búsqueda por llaves directas explícitas de Algolia
-        keys_oferta = [
-            'monederoPrice', 'cardPrice', 'price_monedero', 'price_card',
-            'salePrice', 'sale_price', 'price_sale', 'finalPrice', 'offerPrice', 'price'
+    # Función robusta para extraer precio real desde hit Algolia
+    def parse_precio_algolia_robusto(item: Dict[str, Any]) -> (float, float):
+        """
+        Estrategia:
+        1) Buscar en campos explícitos y comunes (salePrice, finalPrice, price.value, amount, value).
+        2) Si el valor parece estar en centavos (>=100 y entero), dividir por 100.
+        3) Si no hay, hacer escaneo recursivo pero aceptar solo números cuyo path/key contenga keywords de precio.
+        4) Devolver (sale, regular).
+        """
+        MIN_PRECIO, MAX_PRECIO = 0.50, 3000.00
+
+        # helpers
+        def normalize_possible_price(v):
+            if v is None: return 0.0
+            try:
+                # si es dict con 'value' o 'amount'
+                if isinstance(v, dict):
+                    for k in ('value','amount','price','final','sale'):
+                        if k in v and isinstance(v[k], (int,float,str)):
+                            return float(safe_float(v[k]))
+                    return 0.0
+                # número o string
+                val = float(safe_float(v))
+                # si parece centavos (entero grande sin decimales), normalizar
+                if val >= 100 and float(val).is_integer():
+                    # heurística: si > 1000 probablemente no es centavos; si entre 100 y 10000 puede ser centavos
+                    if val > 100 and val < 100000:
+                        # dividir por 100 para convertir centavos a moneda
+                        val2 = val / 100.0
+                        if MIN_PRECIO <= val2 <= MAX_PRECIO:
+                            return val2
+                return val
+            except Exception:
+                return 0.0
+
+        # 1) Campos explícitos preferentes (ordenados)
+        explicit_sale_keys = [
+            'salePrice','sale_price','finalPrice','final_price','price_sale','offerPrice','price','finalPrice.value','price.value','amount','value','unitPrice'
         ]
-        keys_regular = [
-            'listPrice', 'list_price', 'price_list', 'regularPrice', 'regular_price',
-            'price_regular', 'originalPrice'
+        explicit_list_keys = [
+            'listPrice','list_price','regularPrice','regular_price','price_list','price_regular','originalPrice'
         ]
 
-        cand_oferta = []
-        cand_regular = []
+        candidatos = []
+        regular_price = 0.0
 
-        for k in keys_oferta:
-            v = item.get(k)
-            if v is not None:
-                val = safe_float(v)
-                if 1.0 <= val <= 2500.0:
-                    cand_oferta.append(val)
+        # check direct keys
+        for k in explicit_sale_keys:
+            # soportar nested keys con punto
+            if '.' in k:
+                top, sub = k.split('.',1)
+                v = item.get(top)
+                if isinstance(v, dict):
+                    cand = normalize_possible_price(v.get(sub))
+                else:
+                    cand = 0.0
+            else:
+                cand = normalize_possible_price(item.get(k))
+            if MIN_PRECIO <= cand <= MAX_PRECIO:
+                candidatos.append(cand)
 
-        for k in keys_regular:
-            v = item.get(k)
-            if v is not None:
-                val = safe_float(v)
-                if 1.0 <= val <= 2500.0:
-                    cand_regular.append(val)
+        for k in explicit_list_keys:
+            if '.' in k:
+                top, sub = k.split('.',1)
+                v = item.get(top)
+                if isinstance(v, dict):
+                    cand = normalize_possible_price(v.get(sub))
+                else:
+                    cand = 0.0
+            else:
+                cand = normalize_possible_price(item.get(k))
+            if MIN_PRECIO <= cand <= MAX_PRECIO and cand > regular_price:
+                regular_price = cand
 
-        # Si hallamos precios en las llaves oficiales directas, los usamos de inmediato
-        if cand_oferta:
-            p_o = min(cand_oferta)
-            p_r = max(cand_regular) if cand_regular else p_o
-            return float(p_o), float(max(p_r, p_o))
+        # 2) price object
+        p_obj = item.get('price')
+        if p_obj is not None:
+            cand = normalize_possible_price(p_obj)
+            if MIN_PRECIO <= cand <= MAX_PRECIO:
+                candidatos.append(cand)
 
-        # 2. Escaneo recursivo estricto (solo si no existen llaves directas)
-        precios_oferta_rec = []
-        precios_regular_rec = []
+        # 3) Si no hay candidatos, escaneo recursivo pero filtrando por claves que indiquen precio
+        if not candidatos:
+            precios = []
+            def extraer_rec(obj, path=""):
+                if isinstance(obj, (int, float, str)):
+                    v = normalize_possible_price(obj)
+                    if MIN_PRECIO <= v <= MAX_PRECIO:
+                        # aceptar solo si path contiene keywords de precio
+                        path_low = path.lower()
+                        if any(k in path_low for k in ('price','precio','sale','final','amount','value','unit')):
+                            # evitar keys sospechosas
+                            if not any(b in path_low for b in ('id','score','rank','percent','discount','qty','stock','count')):
+                                precios.append(v)
+                elif isinstance(obj, dict):
+                    for kk, vv in obj.items():
+                        extraer_rec(vv, f"{path}.{kk}" if path else kk)
+                elif isinstance(obj, list):
+                    for idx, el in enumerate(obj):
+                        extraer_rec(el, f"{path}[{idx}]")
+            extraer_rec(item)
+            if precios:
+                candidatos.extend(precios)
 
-        bad_words = [
-            'id', 'score', 'rank', 'qty', 'stock', 'count', 'percent', 'discount',
-            'sequence', 'position', 'content', 'size', 'unit', 'pack', 'weight',
-            'volume', 'gram', 'ml', 'unidades', 'presentation'
-        ]
-        price_words = ['price', 'precio', 'sale', 'final', 'offer', 'regular', 'list', 'monedero', 'card', 'tacho']
-
-        def buscar_recursivo(obj, clave=""):
-            if obj is None: return
-            k_low = clave.lower()
-
-            if any(b in k_low for b in bad_words):
-                return
-
-            if not any(p in k_low for p in price_words):
-                return
-
-            if isinstance(obj, (int, float, str)):
-                val = safe_float(obj)
-                if 1.0 <= val <= 2500.0:
-                    if any(r in k_low for r in ['regular', 'list', 'tacho', 'original']):
-                        precios_regular_rec.append(val)
-                    else:
-                        precios_oferta_rec.append(val)
-            elif isinstance(obj, dict):
-                for k, v in obj.items():
-                    buscar_recursivo(v, f"{clave}.{k}" if clave else k)
-            elif isinstance(obj, list):
-                for i, elem in enumerate(obj):
-                    buscar_recursivo(elem, f"{clave}.{i}" if clave else str(i))
-
-        buscar_recursivo(item)
-
-        if not precios_oferta_rec:
+        if not candidatos:
             return 0.0, 0.0
 
-        p_o = min(precios_oferta_rec)
-        p_r = max(precios_regular_rec) if precios_regular_rec else p_o
-        return float(p_o), float(max(p_r, p_o))
+        sale_p = min(candidatos)
+        reg_p = max(regular_price, sale_p)
+        return float(sale_p), float(reg_p)
 
     hits_per_page = 100
     page = 0
@@ -1940,35 +1976,56 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
 
         try:
             resp = session.post(algolia_url, headers=headers_algolia, json=payload, timeout=12)
-            if resp.status_code != 200: break
+        except Exception as e:
+            safe_log(f"🛑 [{tag}] Error de red conectando a Algolia: {e}", "error")
+            break
+
+        if resp.status_code != 200:
+            safe_log(f"⚠️ [{tag}] Algolia status HTTP {resp.status_code} - respuesta: {resp.text[:300]}", "warning")
+            break
+
+        try:
             data = resp.json()
         except Exception as e:
-            safe_log(f"🛑 [{tag}] Error en consulta HTTP: {e}", "error")
+            safe_log(f"⚠️ [{tag}] Error deserializando JSON de Algolia: {e}", "warning")
             break
 
         results = data.get("results") or []
-        if not results: break
+        if not results:
+            safe_log(f"⚠️ [{tag}] Estructura 'results' vacía en la respuesta de Algolia.", "warning")
+            break
 
         page_result = results[0]
         hits = page_result.get("hits", []) or []
         nb_hits = page_result.get("nbHits", None)
 
-        safe_log(f"🔍 [{tag}] Pág {page + 1}: {len(hits)} hits obtenidos (Total catálogo: {nb_hits})", "info")
+        safe_log(f"🔍 [{tag}] Pág {page + 1}: {len(hits)} hits obtenidos (Total catalogado: {nb_hits if nb_hits is not None else 'N/A'})", "info")
 
-        if not hits: break
+        if not hits:
+            break
+
+        # Muestra de hits para depuración (descomenta si necesitas)
+        # if page == 0:
+        #     for i, h in enumerate(hits[:8]):
+        #         safe_log(f"[SAMPLE HIT {i}] objectID={h.get('objectID')} price_fields={h.get('price')} sale={h.get('salePrice')} keys={list(h.keys())[:40]}", "info")
 
         for item in hits:
             try:
                 nombre = str(item.get("name") or item.get("productName") or item.get("displayName") or "").strip().upper()
-                if not nombre or len(nombre) < 3: continue
-
-                p_o, p_r = parse_precio_algolia_estricto(item)
-                if p_o == 0.0 or not (0 < p_o <= limite):
+                if not nombre or len(nombre) < 3:
                     continue
 
-                # Construcción precisa del enlace nativo
-                url_key = str(item.get("urlKey") or item.get("slug") or item.get("url") or item.get("link") or "").strip().strip("/")
-                sku_code = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or "").strip()
+                p_o, p_r = parse_precio_algolia_robusto(item)
+                if p_o == 0.0:
+                    # safe_log(f"[DEBUG] descartado por precio=0 objectID={item.get('objectID')}", "info")
+                    continue
+
+                if not (0 < p_o <= limite):
+                    # safe_log(f"[DEBUG] fuera de rango precio={p_o} limite={limite} objectID={item.get('objectID')}", "info")
+                    continue
+
+                url_key = str(item.get("urlKey") or item.get("slug") or item.get("url") or item.get("link") or item.get("permalink") or "").strip().strip("/")
+                sku_code = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or item.get("productId") or "").strip()
 
                 if url_key and sku_code:
                     link_final = f"{base_url}/producto/{url_key}/{sku_code}"
@@ -1991,7 +2048,8 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
                     "img": str(img_url)
                 }
 
-            except Exception:
+            except Exception as e_item:
+                safe_log(f"[{tag}] Error procesando ítem ID={item.get('objectID')}: {e_item}", "warning")
                 continue
 
         safe_log(f"[STATS] página {page + 1} -> hits totales {len(hits)} ; aceptados acumulados {len(productos_map)}", "info")
@@ -2003,11 +2061,15 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Proceso completado! Se indexaron {len(productos_finales)} ofertas reales.", "success")
+        safe_log(f"✅ [{tag}] ¡Proceso completado! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
     else:
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo el límite S/. {limite:.2f}", "warning")
 
     return productos_finales
+
+
+
+
 
 
 # =======================================================
