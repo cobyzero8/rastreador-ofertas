@@ -1762,10 +1762,12 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-def motor_inretail(url, limite, headers=None, keyword=None):
+def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
     """
     Motor definitivo para Inkafarma y Mifarma vía Algolia Engine.
-    Incluye inspector profundo de JSON para garantizar la captura de precios anidados.
+    - Soporta paginación automática (Scroll Infinito).
+    - Extracción estricta de precios (evita IDs y Scores).
+    - Enlaces exactos formato: /producto/{slug}/{sku}
     """
     import json
     import requests
@@ -1774,7 +1776,7 @@ def motor_inretail(url, limite, headers=None, keyword=None):
     productos_map = {}
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.replace("www.", "")  # inkafarma.pe o mifarma.pe
+    netloc = parsed.netloc.replace("www.", "")
     base_url = f"{scheme}://{netloc}"
 
     # 1. Extraer palabra clave de la URL
@@ -1786,7 +1788,6 @@ def motor_inretail(url, limite, headers=None, keyword=None):
     tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
     safe_log(f"⚡ [{tag}] Consultando Algolia Search Engine para: '{keyword}'...", "info")
 
-    # Credenciales oficiales del clúster de Algolia InRetail
     ALGOLIA_APP_ID = "15W622LAQ4"
     ALGOLIA_API_KEY = "ccd8cbda203928003f7fe6f44ddbfc3a"
     algolia_url = f"https://{ALGOLIA_APP_ID.lower()}-dsn.algolia.net/1/indexes/*/queries"
@@ -1801,96 +1802,115 @@ def motor_inretail(url, limite, headers=None, keyword=None):
         "Referer": f"{base_url}/"
     }
 
-    payload = {
-        "requests": [
-            {
-                "indexName": "products",
-                "params": f"query={keyword}&hitsPerPage=100&facetFilters=[[\"channels:WEB\"]]"
-            }
-        ]
-    }
-
-    # Helper interno para extraer todos los precios flotantes de una estructura compleja
-    def extraer_precios_profundo(nodo, clave=""):
+    # Helper para extraer un precio real sin confundir IDs o Rankings
+    def obtener_precio_algolia(item):
         precios = []
-        if isinstance(nodo, (int, float)):
-            val = float(nodo)
-            # Evitar capturar IDs, SKUs o códigos de barras que parezcan números
-            if 0.5 <= val <= 5000 and not any(bad in clave.lower() for bad in ['id', 'sku', 'stock', 'code', 'quantity', 'score', 'count', 'date']):
-                precios.append(val)
-        elif isinstance(nodo, str):
-            if any(p in clave.lower() for p in ['price', 'precio', 'sale', 'list', 'cost', 'val']):
-                val = limpiar_precio_pnp(nodo)
-                if 0.5 <= val <= 5000:
-                    precios.append(val)
-        elif isinstance(nodo, dict):
-            for k, v in nodo.items():
-                precios.extend(extraer_precios_profundo(v, f"{clave}.{k}"))
-        elif isinstance(nodo, list):
-            for elem in nodo:
-                precios.extend(extraer_precios_profundo(elem, clave))
-        return precios
 
-    try:
-        resp = requests.post(algolia_url, headers=headers_algolia, json=payload, timeout=10)
-        
-        if resp.status_code == 200:
+        def extraer_recursivo(obj, clave=""):
+            if isinstance(obj, (int, float)):
+                val = float(obj)
+                # Un precio válido de farmacia suele estar entre S/. 1.50 y S/. 2000.00
+                # Descartamos claves que digan score, id, stock, rank, count, etc.
+                k_low = clave.lower()
+                if 1.5 <= val <= 2000.0:
+                    if any(p in k_low for p in ['price', 'precio', 'sale', 'list', 'offer']) and not any(b in k_low for b in ['id', 'score', 'rank', 'percent', 'discount', 'qty', 'stock']):
+                        precios.append(val)
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    extraer_recursivo(v, f"{clave}.{k}")
+            elif isinstance(obj, list):
+                for elem in obj:
+                    extraer_recursivo(elem, clave)
+
+        # 1. Búsqueda explícita en llaves directas de precios
+        p_directo = safe_float(item.get("price") or item.get("salePrice") or item.get("finalPrice"))
+        p_lista = safe_float(item.get("listPrice") or item.get("regularPrice") or p_directo)
+
+        if p_directo >= 1.5:
+            return p_directo, max(p_lista, p_directo)
+
+        # 2. Búsqueda por escaneo controlado si las llaves principales vienen anidadas
+        extraer_recursivo(item)
+        if precios:
+            p_sorted = sorted(list(set(precios)))
+            return p_sorted[0], p_sorted[-1]
+
+        return 0.0, 0.0
+
+    # 2. Paginación automática (Simulación del Scroll Infinito)
+    for pag in range(max_paginas):
+        payload = {
+            "requests": [
+                {
+                    "indexName": "products",
+                    "params": f"query={keyword}&hitsPerPage=100&page={pag}&facetFilters=[[\"channels:WEB\"]]"
+                }
+            ]
+        }
+
+        try:
+            resp = requests.post(algolia_url, headers=headers_algolia, json=payload, timeout=10)
+            if resp.status_code != 200:
+                break
+
             data = resp.json()
             results = data.get("results", [])
-            if results:
-                hits = results[0].get("hits", [])
-                safe_log(f"🔍 [{tag}] ¡Algolia devolvió {len(hits)} productos! Analizando estructuras de precio...", "info")
+            if not results:
+                break
 
-                for item in hits:
-                    try:
-                        nombre = str(item.get("name") or item.get("productName") or item.get("description") or item.get("displayName") or "").strip().upper()
-                        if not nombre or len(nombre) < 3:
-                            continue
+            hits = results[0].get("hits", [])
+            if not hits:
+                break  # Se acabaron los productos en Algolia
 
-                        # Extracción profunda de precios del producto
-                        precios_hallados = extraer_precios_profundo(item)
-                        if not precios_hallados:
-                            continue
+            safe_log(f"🔍 [{tag}] Pág. {pag + 1}: Analizando {len(hits)} productos...", "info")
 
-                        precios_ordenados = sorted(list(set(precios_hallados)))
-                        p_o = precios_ordenados[0]   # Menor precio (Monedero / Oferta)
-                        p_r = precios_ordenados[-1]  # Mayor precio (Regular / Tacho)
-
-                        if 0 < p_o <= limite:
-                            slug = item.get("slug") or item.get("url") or item.get("link") or item.get("productUrl") or ""
-                            
-                            if str(slug).startswith("http"):
-                                link_final = slug
-                            elif slug:
-                                slug_clean = str(slug) if str(slug).startswith("/") else f"/{slug}"
-                                link_final = f"{base_url}{slug_clean}" if "/producto/" in slug_clean else f"{base_url}/producto{slug_clean}"
-                            else:
-                                link_final = f"{base_url}/buscador?keyword={keyword}"
-
-                            img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
-                            if str(img_url).startswith("//"):
-                                img_url = "https:" + str(img_url)
-
-                            productos_map[link_final] = {
-                                "nombre": f"{tag} - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": str(img_url)
-                            }
-                    except Exception:
+            for item in hits:
+                try:
+                    nombre = str(item.get("name") or item.get("productName") or item.get("displayName") or "").strip().upper()
+                    if not nombre or len(nombre) < 3:
                         continue
-    except Exception as e:
-        safe_log(f"🛑 [{tag}] Error al procesar respuesta de Algolia: {e}", "error")
+
+                    # Extracción estricta del precio
+                    p_o, p_r = obtener_precio_algolia(item)
+
+                    if 0 < p_o <= limite:
+                        # Construcción limpia de la URL de Inkafarma
+                        url_key = str(item.get("urlKey") or item.get("slug") or item.get("url") or "").strip("/")
+                        sku_code = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or "").strip()
+
+                        if url_key and sku_code:
+                            link_final = f"{base_url}/producto/{url_key}/{sku_code}"
+                        elif url_key:
+                            link_final = f"{base_url}/producto/{url_key}"
+                        else:
+                            link_final = f"{base_url}/buscador?keyword={keyword}"
+
+                        # Captura de la imagen del producto
+                        img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
+                        if str(img_url).startswith("//"):
+                            img_url = "https:" + str(img_url)
+
+                        productos_map[link_final] = {
+                            "nombre": f"{tag} - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": str(img_url)
+                        }
+                except Exception:
+                    continue
+
+        except Exception as e:
+            safe_log(f"🛑 [{tag}] Error en paginación Algolia (Pág {pag}): {e}", "error")
+            break
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Éxito absoluto! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
+        safe_log(f"✅ [{tag}] ¡Éxito total! Se indexaron {len(productos_finales)} ofertas reales.", "success")
     else:
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
