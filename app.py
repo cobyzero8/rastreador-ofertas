@@ -337,55 +337,13 @@ elif menu == "🛠️ Configurar Radares y URLs":
 # ---------------------------
 # Forzar Escaneo Intensivo (Thread Blindado)
 # ---------------------------
-elif menu == "💥 Forzar Escaneo Intensivo":
-    st.title("💥 Módulo de Patrullaje Activo")
-    botonera_independiente()
-    st.write("---")
-
-    col_run, col_status = st.columns([3, 2])
-    with col_run:
-        start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
-    with col_status:
-        if st.session_state.scraper_running:
-            st.warning("🟡 El patrullaje está en curso. Espera a que termine.")
-        else:
-            st.info("🔵 Listo para iniciar patrullaje manual.")
-
-    def _worker(target):
-        try:
-            result_msg = revisar_ofertas(target)
-            st.session_state.scraper_result = {"resumen": result_msg, "target": target}
-
-            os.makedirs("ml_debug", exist_ok=True)
-            combined = {
-                "metadata": {"target": target, "timestamp": datetime.now(timezone.utc).isoformat()},
-                "result": result_msg
-            }
-            with open("ml_debug/combined_debug.json", "w", encoding="utf-8") as fh:
-                json.dump(combined, fh, ensure_ascii=False, indent=2)
-        except Exception as e:
-            st.session_state.scraper_result = {"error": str(e), "target": target}
-        finally:
-            st.session_state.scraper_running = False
-
-    if start_btn and not st.session_state.scraper_running:
-        st.session_state.scraper_running = True
-        target = st.session_state.filtro_activo
-        st.toast(f"🕵️‍♂️ Buscando {target}...")
-
-        thread = threading.Thread(target=_worker, args=(target,), daemon=True)
-        add_script_run_ctx(thread)
-        thread.start()
-        st.success("Patrullaje iniciado en segundo plano.")
-
-    # 📊 REPORTE EN VIVO (Evaluación de Tipo Blindada)
+# 📊 REPORTE EN VIVO (Con Vista de Tarjetas e Imágenes Grandes)
     if st.session_state.scraper_result:
         st.write("---")
         st.subheader("📊 Reporte de Ofertas del Escaneo")
 
         raw_res = st.session_state.scraper_result
         
-        # Extracción segura según el tipo de dato
         if isinstance(raw_res, dict):
             resumen_txt = raw_res.get("resumen", raw_res.get("error", str(raw_res)))
             target_escaneado = raw_res.get("target", st.session_state.filtro_activo)
@@ -399,7 +357,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         if resumen_txt:
             st.success(f"**Resumen:** {resumen_txt}")
 
-        # Consulta a Supabase para desplegar las ofertas en la UI
+        # Consulta a Supabase
         try:
             q = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
             if target_escaneado and target_escaneado != "TODOS":
@@ -434,21 +392,52 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                     })
 
                 if reporte_items:
-                    df_reporte = pd.DataFrame(reporte_items).sort_values(by="Ahorro", ascending=False)
-                    st.dataframe(
-                        df_reporte,
-                        column_config={
-                            "Tienda": "🏪 Tienda",
-                            "Producto": "📦 Producto",
-                            "Vista": st.column_config.ImageColumn("🖼️ Foto"),
-                            "Precio Regular": st.column_config.NumberColumn("💰 P. Regular", format="S/. %.2f"),
-                            "Precio Oferta": st.column_config.NumberColumn("🏷️ P. Oferta", format="S/. %.2f"),
-                            "Ahorro": st.column_config.NumberColumn("📉 Ahorro", format="S/. %.2f"),
-                            "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver Oferta")
-                        },
-                        hide_index=True,
-                        use_container_width=True
+                    # 🖼️ SELECTOR DE VISTA: TARJETAS O TABLA
+                    modo_vista = st.radio(
+                        "👁️ Selecciona cómo quieres ver las ofertas:",
+                        ["🖼️ Tarjetas Grandes (Ampliable al hacer clic)", "📊 Tabla Compacta"],
+                        horizontal=True
                     )
+                    st.write("")
+
+                    if "Tarjetas" in modo_vista:
+                        # Renderizado en Grid de 3 Columnas con Imágenes Grandes
+                        cols = st.columns(3)
+                        for idx, item in enumerate(reporte_items):
+                            col = cols[idx % 3]
+                            with col:
+                                with st.container(border=True):
+                                    if item["Vista"]:
+                                        # 💡 Al hacer clic en esta imagen, Streamlit la abrirá en pantalla completa
+                                        st.image(item["Vista"], use_container_width=True)
+                                    else:
+                                        st.caption("📷 Sin vista previa")
+                                    
+                                    st.markdown(f"**🏪 {item['Tienda']}**")
+                                    st.markdown(f"**{item['Producto']}**")
+                                    st.markdown(f"🏷️ **Precio Oferta:** `S/. {item['Precio Oferta']:.2f}`")
+                                    
+                                    if item["Ahorro"] > 0:
+                                        st.caption(f"~~Antes: S/. {item['Precio Regular']:.2f}~~ | 📉 Ahorro: S/. {item['Ahorro']:.2f}")
+                                    
+                                    st.markdown(f"🛒 [**IR A LA OFERTA**]({item['Link']})")
+                    else:
+                        # Renderizado en Tabla Clásica
+                        df_reporte = pd.DataFrame(reporte_items).sort_values(by="Ahorro", ascending=False)
+                        st.dataframe(
+                            df_reporte,
+                            column_config={
+                                "Tienda": "🏪 Tienda",
+                                "Producto": "📦 Producto",
+                                "Vista": st.column_config.ImageColumn("🖼️ Foto"),
+                                "Precio Regular": st.column_config.NumberColumn("💰 P. Regular", format="S/. %.2f"),
+                                "Precio Oferta": st.column_config.NumberColumn("🏷️ P. Oferta", format="S/. %.2f"),
+                                "Ahorro": st.column_config.NumberColumn("📉 Ahorro", format="S/. %.2f"),
+                                "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver Oferta")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
             else:
                 st.info("No hay registros recientes para este filtro.")
         except Exception as err_rep:
