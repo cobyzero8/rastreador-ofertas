@@ -24,23 +24,35 @@ jobs:
       - name: Run motor_mercadolibre and save debug
         run: |
           python - <<'PY'
-          import os
+          import os, json
           from scraper import motor_mercadolibre
+          import requests
+
           print("SUPABASE_KEY present:", bool(os.environ.get("SUPABASE_KEY")))
           url = "https://listado.mercadolibre.com.pe/ropa-accesorios/ropa-deportiva/nuevo/hombre/ropa-adidas_NoIndex_True?sb=all_mercadolibre"
+
+          # Ejecutar motor
           productos = motor_mercadolibre(url, limite=300)
           print("Productos encontrados:", len(productos))
-          for p in productos[:5]:  # mostrar solo los primeros 5
+          for p in productos[:5]:
               print(p)
-          # Guardar debug en archivo
-          import json, os
+
+          # Guardar resultados procesados
           os.makedirs("ml_debug", exist_ok=True)
           with open("ml_debug/resp_debug.json", "w", encoding="utf-8") as f:
               json.dump(productos, f, ensure_ascii=False, indent=2)
+
+          # Guardar respuesta cruda de la API
+          api_url = "https://api.mercadolibre.com/sites/MPE/search"
+          params = {"q": "ropa adidas", "sort": "price_asc", "limit": 50}
+          headers = {"User-Agent": "Mozilla/5.0"}
+          resp = requests.get(api_url, params=params, headers=headers, timeout=12)
+          with open("ml_debug/raw_api.json", "w", encoding="utf-8") as f:
+              json.dump(resp.json(), f, ensure_ascii=False, indent=2)
           PY
 
-      - name: Upload debug artifact
+      - name: Upload debug artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mercadolibre-debug
-          path: ml_debug/resp_debug.json
+          path: ml_debug/
