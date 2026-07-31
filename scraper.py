@@ -1760,335 +1760,95 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
+def motor_mercadolibre(url, limite):
+    import requests
+    from urllib.parse import urlparse, parse_qs, unquote
+    import re
 
-# motor_inretail.py (reemplaza la función existente por este bloque)
-from urllib.parse import urlparse, parse_qs, urljoin
-import requests
-import json
-import random
-import re
-from typing import List, Dict, Any
-
-# FALLBACKS si las utilidades globales no existen
-try:
-    LISTA_USER_AGENTS  # type: ignore
-    safe_log  # type: ignore
-    safe_float  # type: ignore
-    encontrar_foto_fala  # type: ignore
-except NameError:
-    LISTA_USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
-    ]
-    def safe_log(msg, tipo="info"):
-        print(f"[{tipo.upper()}] {msg}")
-    def safe_float(v):
-        try:
-            if v is None: return 0.0
-            if isinstance(v, (int, float)): return float(v)
-            s = str(v).strip()
-            # normalizar separadores: "1.234,56" -> "1234.56", "1,234.56" -> "1234.56"
-            if s.count(',') == 1 and s.count('.') == 0:
-                s = s.replace(',', '.')
-            s = re.sub(r'[^\d\.]', '', s)
-            return float(s) if s else 0.0
-        except Exception:
-            return 0.0
-    def encontrar_foto_fala(n):
-        if isinstance(n, dict):
-            for k in ('image','imageUrl','thumbnail','img','picture','src'):
-                v = n.get(k)
-                if isinstance(v, str) and any(ext in v.lower() for ext in ('.jpg','.jpeg','.png','.webp')):
-                    return v
-        return ''
-
-def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
-                   keyword: str = None, max_paginas: int = 3, debug: bool = False) -> List[Dict[str, Any]]:
-    """
-    Motor Algolia con normalización segura de precios y debug.
-    debug=True imprime trazas de campo crudo y precio normalizado.
-    """
-    productos_map: Dict[str, Dict[str, Any]] = {}
-
-    parsed = urlparse(url)
-    scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.replace("www.", "")
-    base_url = f"{scheme}://{netloc}"
-
-    # Extraer keyword
-    query_params = parse_qs(parsed.query)
-    if not keyword:
-        kw_list = query_params.get('keyword') or query_params.get('q') or query_params.get('ft') or []
-        if kw_list and kw_list[0].strip():
-            keyword = kw_list[0].strip()
+    productos = []
+    
+    try:
+        # 1. Extraer el término de búsqueda o categoría desde la URL
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        
+        keyword = ""
+        if 'q' in query_params:
+            keyword = query_params['q'][0]
         else:
-            path_parts = [p for p in parsed.path.strip('/').split('/') if p and p.lower() not in ('buscador','producto','categorias','categoria')]
-            if path_parts:
-                keyword = path_parts[-1].replace('-', ' ').strip()
-    keyword = keyword or "desodorante"
+            # Si es una URL limpia tipo: https://listado.mercadolibre.com.pe/zapatillas-nike
+            path = parsed_url.path.strip('/')
+            path_clean = re.sub(r'_Desde_\d+.*', '', path)
+            path_clean = re.sub(r'#.*', '', path_clean)
+            keyword = path_clean.replace('-', ' ')
 
-    tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
-    safe_log(f"⚡ [{tag}] Buscando '{keyword}' en Algolia Engine...", "info")
+        if not keyword:
+            keyword = "ofertas"
 
-    ALGOLIA_APP_ID = "15W622LAQ4"
-    ALGOLIA_API_KEY = "ccd8cbda203928003f7fe6f44ddbfc3a"
-    algolia_url = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/*/queries"
+        safe_log(f"⚡ [Mercado Libre] Consultando API oficial para '{keyword}'...", "info")
 
-    headers_algolia = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "X-Algolia-Application-Id": ALGOLIA_APP_ID,
-        "X-Algolia-API-Key": ALGOLIA_API_KEY,
-        "Origin": base_url,
-        "Referer": f"{base_url}/",
-        "Sec-Fetch-Site": "cross-site",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Dest": "empty"
-    }
-
-    # Normalizador seguro de posibles precios
-    def normalize_possible_price(v, raw_obj=None) -> float:
-        MIN, MAX = 0.50, 3000.00
-        if v is None:
-            return 0.0
-
-        # extraer de dicts
-        if isinstance(v, dict):
-            for k in ('value','amount','price','final','sale','amountInCents','valueInCents','priceInCents'):
-                if k in v and v[k] is not None:
-                    return normalize_possible_price(v[k], raw_obj=v)
-            return 0.0
-
-        raw_str = str(v).strip()
-        val = safe_float(v)
-
-        # detectar separador decimal explícito
-        has_decimal_sep = False
-        if '.' in raw_str:
-            has_decimal_sep = True
-        elif ',' in raw_str and raw_str.count(',') == 1 and len(raw_str.split(',')[-1]) == 2:
-            has_decimal_sep = True
-
-        if val <= 0:
-            return 0.0
-
-        # si ya está en rango y no parece centavos, devolver tal cual
-        if MIN <= val <= MAX and not (val >= 100 and not has_decimal_sep):
-            return float(val)
-
-        # posible centavos: entero sin separador decimal y múltiplo de 100
-        if (raw_str.isdigit() or isinstance(v, (int, float))) and not has_decimal_sep:
-            try:
-                ival = int(round(val))
-                if ival % 100 == 0:
-                    cand = ival / 100.0
-                    if MIN <= cand <= MAX:
-                        return float(cand)
-                if ival > 3000:
-                    cand = ival / 100.0
-                    if MIN <= cand <= MAX:
-                        return float(cand)
-            except Exception:
-                pass
-
-        # claves que explícitamente indican centavos
-        if isinstance(raw_obj, dict):
-            low_keys = " ".join(k.lower() for k in raw_obj.keys())
-            if any(x in low_keys for x in ('cents','in_cents','amountincents','valueincents','priceincents')):
-                try:
-                    ival = int(round(val))
-                    cand = ival / 100.0
-                    if MIN <= cand <= MAX:
-                        return float(cand)
-                except Exception:
-                    pass
-
-        # último recurso: si val cae en rango amplio, devolverlo
-        if MIN <= val <= MAX:
-            return float(val)
-
-        return 0.0
-
-    # Extracción robusta de precio desde hit
-    def parse_precio_algolia_robusto(item: Dict[str, Any]) -> (float, float):
-        MIN_PRECIO, MAX_PRECIO = 0.50, 3000.00
-        candidatos = []
-        regular_price = 0.0
-
-        explicit_sale_keys = [
-            'salePrice','sale_price','finalPrice','final_price','price_sale','offerPrice','price','amount','value','unitPrice'
-        ]
-        explicit_list_keys = [
-            'listPrice','list_price','regularPrice','regular_price','price_list','price_regular','originalPrice'
-        ]
-
-        for k in explicit_sale_keys:
-            if '.' in k:
-                top, sub = k.split('.',1)
-                v = item.get(top)
-                cand = 0.0
-                if isinstance(v, dict):
-                    cand = normalize_possible_price(v.get(sub), raw_obj=v)
-            else:
-                cand = normalize_possible_price(item.get(k), raw_obj=item)
-            if MIN_PRECIO <= cand <= MAX_PRECIO:
-                candidatos.append(cand)
-
-        for k in explicit_list_keys:
-            if '.' in k:
-                top, sub = k.split('.',1)
-                v = item.get(top)
-                cand = 0.0
-                if isinstance(v, dict):
-                    cand = normalize_possible_price(v.get(sub), raw_obj=v)
-            else:
-                cand = normalize_possible_price(item.get(k), raw_obj=item)
-            if MIN_PRECIO <= cand <= MAX_PRECIO and cand > regular_price:
-                regular_price = cand
-
-        p_obj = item.get('price')
-        if p_obj is not None:
-            cand = normalize_possible_price(p_obj, raw_obj=item)
-            if MIN_PRECIO <= cand <= MAX_PRECIO:
-                candidatos.append(cand)
-
-        if not candidatos:
-            precios = []
-            def extraer_rec(obj, path=""):
-                if isinstance(obj, (int, float, str)):
-                    v = normalize_possible_price(obj)
-                    if MIN_PRECIO <= v <= MAX_PRECIO:
-                        path_low = path.lower()
-                        if any(k in path_low for k in ('price','precio','sale','final','amount','value','unit')):
-                            if not any(b in path_low for b in ('id','score','rank','percent','discount','qty','stock','count','rating')):
-                                precios.append(v)
-                elif isinstance(obj, dict):
-                    for kk, vv in obj.items():
-                        extraer_rec(vv, f"{path}.{kk}" if path else kk)
-                elif isinstance(obj, list):
-                    for idx, el in enumerate(obj):
-                        extraer_rec(el, f"{path}[{idx}]")
-            extraer_rec(item)
-            if precios:
-                candidatos.extend(precios)
-
-        if not candidatos:
-            return 0.0, 0.0
-
-        sale_p = min(candidatos)
-        reg_p = max(regular_price, sale_p)
-        return float(sale_p), float(reg_p)
-
-    hits_per_page = 100
-    page = 0
-    session = requests.Session()
-
-    while page < max_paginas:
-        payload = {
-            "requests": [
-                {
-                    "indexName": "products",
-                    "params": f"query={keyword}&hitsPerPage={hits_per_page}&page={page}&facetFilters=[[\"channels:WEB\"]]"
-                }
-            ]
+        # 2. Petición a la API pública de Mercado Libre Perú (MPE)
+        api_url = "https://api.mercadolibre.com/sites/MPE/search"
+        params = {
+            "q": keyword,
+            "sort": "price_asc",  # Ordenar de menor a mayor precio
+            "limit": 50
         }
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        resp = requests.get(api_url, params=params, headers=headers, timeout=12)
 
-        try:
-            resp = session.post(algolia_url, headers=headers_algolia, json=payload, timeout=12)
-        except Exception as e:
-            safe_log(f"🛑 [{tag}] Error de red conectando a Algolia: {e}", "error")
-            break
-
-        if resp.status_code != 200:
-            safe_log(f"⚠️ [{tag}] Algolia status HTTP {resp.status_code} - respuesta: {resp.text[:300]}", "warning")
-            break
-
-        try:
+        if resp.status_code == 200:
             data = resp.json()
-        except Exception as e:
-            safe_log(f"⚠️ [{tag}] Error deserializando JSON de Algolia: {e}", "warning")
-            break
+            results = data.get("results", [])
+            safe_log(f"🔍 [Mercado Libre] API respondió con {len(results)} productos.", "info")
 
-        results = data.get("results") or []
-        if not results:
-            safe_log(f"⚠️ [{tag}] Estructura 'results' vacía en la respuesta de Algolia.", "warning")
-            break
+            for item in results:
+                try:
+                    nombre = item.get("title", "").strip().upper()
+                    if not nombre or len(nombre) < 3:
+                        continue
 
-        page_result = results[0]
-        hits = page_result.get("hits", []) or []
-        nb_hits = page_result.get("nbHits", None)
+                    p_o = float(item.get("price", 0.0))
+                    p_r = float(item.get("original_price") or p_o)
 
-        safe_log(f"🔍 [{tag}] Pág {page + 1}: {len(hits)} hits obtenidos (Total catalogado: {nb_hits if nb_hits is not None else 'N/A'})", "info")
+                    # Filtro de presupuesto
+                    if 0 < p_o <= limite:
+                        link_final = item.get("permalink", url)
+                        
+                        # Calidad de imagen HD
+                        img_url = item.get("thumbnail", "")
+                        if img_url:
+                            # Convertir thumbnail de baja resolución en imagen de alta calidad
+                            img_url = img_url.replace("-I.jpg", "-O.jpg").replace("-V.jpg", "-O.jpg")
+                            if img_url.startswith("http:"):
+                                img_url = img_url.replace("http:", "https:")
 
-        if not hits:
-            break
-
-        if debug and page == 0:
-            for i, h in enumerate(hits[:8]):
-                safe_log(f"[SAMPLE HIT {i}] objectID={h.get('objectID')} price_fields={h.get('price')} sale={h.get('salePrice')} keys={list(h.keys())[:40]}", "info")
-
-        for item in hits:
-            try:
-                nombre = str(item.get("name") or item.get("productName") or item.get("displayName") or "").strip().upper()
-                if not nombre or len(nombre) < 3:
+                        productos.append({
+                            "nombre": f"MERCADO LIBRE - {nombre}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_url
+                        })
+                except Exception:
                     continue
+        else:
+            safe_log(f"🛑 [Mercado Libre] Código HTTP de error: {resp.status_code}", "error")
 
-                p_o, p_r = parse_precio_algolia_robusto(item)
+    except Exception as e:
+        safe_log(f"🛑 [Mercado Libre] Error crítico: {e}", "error")
 
-                if debug:
-                    raw_price_field = item.get('price') or item.get('salePrice') or item.get('finalPrice') or item.get('amount') or item.get('value')
-                    safe_log(f"[DEBUG PRICE] objectID={item.get('objectID')} raw={repr(raw_price_field)} normalized={p_o} (reg={p_r})", "info")
-
-                if p_o == 0.0:
-                    continue
-
-                if not (0 < p_o <= limite):
-                    continue
-
-                url_key = str(item.get("urlKey") or item.get("slug") or item.get("url") or item.get("link") or item.get("permalink") or "").strip().strip("/")
-                sku_code = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or item.get("productId") or "").strip()
-
-                if url_key and sku_code:
-                    link_final = f"{base_url}/producto/{url_key}/{sku_code}"
-                elif url_key:
-                    link_final = f"{base_url}/producto/{url_key}"
-                else:
-                    link_final = f"{base_url}/buscador?keyword={keyword}"
-
-                img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
-                if isinstance(img_url, str) and img_url.startswith("//"):
-                    img_url = "https:" + img_url
-
-                clave_unica = str(item.get("objectID") or item.get("sku") or sku_code or link_final)
-
-                productos_map[clave_unica] = {
-                    "nombre": f"{tag} - {nombre}",
-                    "precio": float(p_o),
-                    "precio_regular": float(p_r),
-                    "link": link_final,
-                    "img": str(img_url)
-                }
-
-            except Exception as e_item:
-                safe_log(f"[{tag}] Error procesando ítem ID={item.get('objectID')}: {e_item}", "warning")
-                continue
-
-        safe_log(f"[STATS] página {page + 1} -> hits totales {len(hits)} ; aceptados acumulados {len(productos_map)}", "info")
-
-        if nb_hits is not None and (page + 1) * hits_per_page >= int(nb_hits):
-            break
-
-        page += 1
-
-    productos_finales = list(productos_map.values())
-    if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Proceso completado! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
+    if productos:
+        safe_log(f"✅ [Mercado Libre] Se indexaron {len(productos)} ofertas válidas.", "success")
     else:
-        safe_log(f"⚠️ [{tag}] No se encontraron productos bajo el límite S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Mercado Libre] No se encontraron ofertas bajo S/. {limite:.2f}", "warning")
 
-    return productos_finales
+    return productos
+
 
 
 
@@ -2119,7 +1879,7 @@ def escanear_tienda(url, limite):
     elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
     elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
-    elif "inkafarma.pe" in dominio or "mifarma.pe" in dominio: return motor_inretail(url, limite, headers=headers)
+    elif "mercadolibre.com.pe" in dominio: return motor_mercadolibre(url, limite)
     else: return motor_tradicional_general(url, limite, headers)
 
 # =======================================================
