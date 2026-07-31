@@ -1760,15 +1760,62 @@ def motor_tradicional_general(url, limite, headers):
     return productos
 
 
-def motor_nike(url, limite, max_pages=1):
-    import os, time, re, random, requests
+def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, session=None, step=12, sz=None, max_items=500):
+    import os, time, re, random, json, requests
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
+    logs_ejecucion = []
+
+    def _safe_log(msg, level="info"):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] [{level.upper()}] {msg}"
+        logs_ejecucion.append(log_entry)
+        try:
+            if 'safe_log' in globals():
+                safe_log(msg, level)
+            else:
+                print(log_entry)
+        except Exception:
+            print(log_entry)
+
+    def _save_debug(name, content, mode="w"):
+        try:
+            os.makedirs("ml_debug", exist_ok=True)
+            path = os.path.join("ml_debug", name)
+            with open(path, mode, encoding="utf-8") as fh:
+                fh.write(content)
+            return path
+        except Exception as e:
+            _safe_log(f"No se pudo guardar debug {name}: {e}", "warning")
+            return None
+
+    def _safe_parse_price(val):
+        if 'limpiar_precio_pnp' in globals():
+            try: return float(limpiar_precio_pnp(val))
+            except Exception: pass
+        try:
+            s = re.sub(r'[^\d\.,]', '', str(val))
+            if s.count('.') > 1: s = s.replace('.', '')
+            s = s.replace(',', '.')
+            return float(s) if s else 0.0
+        except Exception: return 0.0
+
+    def _normalize_identifier(link):
+        try:
+            m = re.search(r'([A-Z0-9\-]{4,})', link.split('?')[0].rstrip('/').split('/')[-1])
+            if m: return f"NIKE-{m.group(1).upper()}"
+            return f"NIKE-{abs(hash(link))}"
+        except Exception:
+            return f"NIKE-{abs(hash(link))}"
+
+    start_ts = datetime.now(timezone.utc).isoformat()
     productos = []
-    session = requests.Session()
-    
+    session = session or requests.Session()
+    sz = sz or step
+    STEP_SIZE = int(step)
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -1777,141 +1824,178 @@ def motor_nike(url, limite, max_pages=1):
     }
     session.headers.update(headers)
 
-    def SafeLimpiarPrecio(val):
-        if 'limpiar_precio_pnp' in globals():
-            try: return limpiar_precio_pnp(val)
-            except Exception: pass
-        try:
-            limpio = re.sub(r'[^\d\.,]', '', str(val)).replace(',', '')
-            return float(limpio) if limpio else 0.0
-        except Exception: return 0.0
-
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
-    
-    STEP_SIZE = 12
     vistos = set()
+    total_checked = 0
 
-    for page in range(1, max_pages + 1):
-        start_offset = (page - 1) * STEP_SIZE
-        query_params["start"] = [str(start_offset)]
-        if "sz" not in query_params:
-            query_params["sz"] = [str(STEP_SIZE)]
+    _safe_log(f"🚀 Iniciando motor_nike para URL: {url}")
 
-        new_query = urlencode(query_params, doseq=True)
-        page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
+    try:
+        for page in range(1, max_pages + 1):
+            offset = (page - 1) * STEP_SIZE
+            query_params["start"] = [str(offset)]
+            query_params["sz"] = [str(sz)]
+            new_query = urlencode(query_params, doseq=True)
+            page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-        try:
-            resp = session.get(page_url, timeout=15)
-            if resp.status_code != 200:
-                break
+            _safe_log(f"⚡ Escaneando Página {page} (start={offset})...")
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            
-            # Buscar tarjetas de producto estrictamente dentro del grid principal
-            tarjetas = soup.select(".product-tile") or soup.select("div.product-grid .product")
-            
-            if not tarjetas:
-                break
-
-            for t in tarjetas:
+            resp = None
+            attempts, backoff = 0, 1
+            while attempts < 3:
                 try:
-                    # 1. ENLACE DIRECTO DEL PRODUCTO (Ficha individual PDP)
-                    a_el = (
-                        t.select_one("a.pdp-link") or 
-                        t.select_one("a.link") or 
-                        t.select_one(".image-container a") or 
-                        t.find("a", href=True)
-                    )
-                    
-                    if not a_el or not a_el.get("href"):
-                        continue
+                    session.headers.update({"User-Agent": headers["User-Agent"]})
+                    resp = session.get(page_url, timeout=15)
+                    break
+                except requests.RequestException as e:
+                    attempts += 1
+                    _safe_log(f"⚠️ Intento {attempts} falló: {e}", "warning")
+                    time.sleep(backoff)
+                    backoff *= 2
 
-                    link_raw = a_el.get("href").split("#")[0]
-                    if "javascript:" in link_raw.lower() or not link_raw.strip():
-                        continue
+            if not resp:
+                _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP de Nike.", "error")
+                break
 
-                    link_final = urljoin("https://www.nike.com.pe", link_raw)
-                    
-                    # 2. TÍTULO REAL DEL PRODUCTO (Ej: AIR JORDAN 4 RETRO)
-                    tit_el = (
-                        t.select_one(".pdp-link") or 
-                        t.select_one(".product-name") or 
-                        t.select_one(".tile-body .pdp-link") or
-                        t.select_one(".product-tile-title")
-                    )
-                    
-                    nombre = tit_el.text.strip().upper() if tit_el else ""
-                    nombre = re.sub(r'\s+', ' ', nombre) # Limpiar espacios extras
+            _save_debug("raw_html_nike.html", resp.text)
+            _save_debug("raw_html_last.html", resp.text)
 
-                    if not nombre or len(nombre) < 3 or "TODAS" in nombre:
-                        continue
+            if resp.status_code != 200:
+                _safe_log(f"🛑 HTTP {resp.status_code} devuelto por Nike en {page_url}", "error")
+                break
 
-                    # 3. EXTRACCIÓN PRECIOSA DEL PRECIO REAL
-                    p_o, p_r = 0.0, 0.0
-                    price_container = t.select_one(".price") or t.select_one(".product-price") or t
-                    
-                    sales_el = price_container.select_one(".sales .value") or price_container.select_one(".sales")
-                    strike_el = price_container.select_one(".strike-through .value") or price_container.select_one(".strike-through") or price_container.select_one("del")
+            text = resp.text
+            soup = BeautifulSoup(text, "html.parser")
+            page_products = []
 
-                    if sales_el:
-                        p_o = SafeLimpiarPrecio(sales_el.get("content") or sales_el.text)
-                    
-                    if strike_el:
-                        p_r = SafeLimpiarPrecio(strike_el.text)
+            # 1️⃣ Capa 1: JSON
+            if '"results"' in text or '"products"' in text or '"searchResults"' in text:
+                try:
+                    json_blocks = re.findall(r'(\{(?:[^{}]|(?1))*\})', text[:300000])
+                    for jb in json_blocks:
+                        if '"results"' in jb and '"price"' in jb:
+                            try:
+                                parsed = json.loads(jb)
+                                results = parsed.get("results") or parsed.get("products") or parsed.get("searchResults") or []
+                                for it in results:
+                                    if len(productos) + len(page_products) >= max_items: break
+                                    nombre = (it.get("title") or it.get("name") or "").strip()
+                                    precio = float(it.get("price") or 0) if it.get("price") else 0.0
+                                    link = it.get("permalink") or it.get("url") or ""
+                                    img = it.get("thumbnail") or it.get("image") or ""
+                                    if nombre and 0 < precio <= limite:
+                                        ident = _normalize_identifier(link or page_url)
+                                        if ident in vistos: continue
+                                        vistos.add(ident)
+                                        page_products.append({
+                                            "identificador": ident, "nombre": f"NIKE - {nombre.upper()}",
+                                            "precio": precio, "precio_regular": float(it.get("original_price") or precio),
+                                            "link": link, "img": img, "fecha": datetime.now(timezone.utc).isoformat()
+                                        })
+                                if page_products:
+                                    _safe_log(f"✅ Se hallaron {len(page_products)} productos vía JSON embebido.")
+                                    break
+                            except Exception: continue
+                except Exception as e_json:
+                    _safe_log(f"Error procesando JSON: {e_json}", "warning")
 
-                    if p_o == 0.0 and price_container:
-                        val_el = price_container.select_one(".value")
-                        if val_el:
-                            p_o = SafeLimpiarPrecio(val_el.text)
+            # 2️⃣ Capa 2: DOM HTML
+            if not page_products:
+                cards = soup.select(".product-tile, .product-card, .product-grid li, .product-grid div.product, a[href*='/product/'], a[href*='/productos/']")
+                _safe_log(f"🔍 Tarjetas detectadas en HTML: {len(cards)}")
 
-                    if p_r == 0.0 or p_r < p_o:
+                for t in cards:
+                    if len(productos) + len(page_products) >= max_items: break
+                    try:
+                        total_checked += 1
+                        a_el = t if t.name == "a" else t.select_one("a[href]") or t
+                        href = a_el.get("href") if a_el else None
+                        if not href: continue
+                        link_final = urljoin(f"{parsed_url.scheme}://{parsed_url.netloc}", href) if href.startswith("/") else href
+
+                        tit_el = t.select_one(".product-name, .product-tile-title, .product-title, .pdp-link, h2, h3")
+                        nombre = (tit_el.text.strip() if tit_el else (a_el.get("aria-label") or a_el.text or "")).strip()
+                        if not nombre or len(nombre) < 3 or "TODAS" in nombre.upper(): continue
+
+                        price_container = t.select_one(".price, .product-price, .product-tile-price") or t
+                        price_texts = []
+                        for sel in ["span.price", "span.amount", ".sales .value", ".value", "span"]:
+                            el = price_container.select_one(sel)
+                            if el and el.text: price_texts.append(el.text)
+
+                        p_o = 0.0
+                        if price_texts:
+                            for txt in price_texts:
+                                p = _safe_parse_price(txt)
+                                if p > 0:
+                                    p_o = p
+                                    break
+                        if p_o == 0.0:
+                            m = re.search(r"(?:S/\.?\s*)(\d[\d\.,]*)", t.text)
+                            if m: p_o = _safe_parse_price(m.group(1))
+
+                        if p_o == 0.0: continue
+
                         p_r = p_o
+                        del_el = t.select_one("del, .strike-through, .original-price")
+                        if del_el and del_el.text:
+                            p_r_val = _safe_parse_price(del_el.text)
+                            if p_r_val > 0: p_r = p_r_val
 
-                    # 🛡️ FILTRO ANTI-BANNER: Si el precio da menos de S/. 30.00, fue un banner publicitario
-                    if p_o < 30.0:
+                        if p_o < 30.0:
+                            _safe_log(f"🛡️ Descartado por ser banner publicitario (S/. {p_o:.2f}): {nombre}")
+                            continue
+
+                        if not (0 < p_o <= limite):
+                            _safe_log(f"💸 Fuera de presupuesto (S/. {p_o:.2f} > S/. {limite:.2f}): {nombre}")
+                            continue
+
+                        identificador = _normalize_identifier(link_final)
+                        if identificador in vistos: continue
+
+                        img_el = t.select_one("img")
+                        img_url = ""
+                        if img_el:
+                            img_url = img_el.get("data-src") or img_el.get("src") or ""
+                            if img_url.startswith("//"): img_url = "https:" + img_url
+
+                        vistos.add(identificador)
+                        page_products.append({
+                            "identificador": identificador, "nombre": f"NIKE - {nombre.upper()}",
+                            "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final,
+                            "img": img_url, "fecha": datetime.now(timezone.utc).isoformat()
+                        })
+                    except Exception as e_card:
                         continue
 
-                    # Filtro de presupuesto máximo del radar
-                    if not (0 < p_o <= limite):
-                        continue
+            if not page_products:
+                _safe_log(f"🛑 No se encontraron productos válidos en la página start={offset}. Finalizando ciclo.")
+                break
 
-                    # 4. IDENTIFICADOR ÚNICO (SKU OFICIAL NIKE)
-                    sku_match = re.search(r'([A-Z0-9]{6,10}-\d{3})', link_final, re.IGNORECASE)
-                    if sku_match:
-                        identificador = f"NIKE-{sku_match.group(1).upper()}"
-                    else:
-                        clean_path = link_final.split('?')[0].rstrip('/')
-                        identificador = f"NIKE-{clean_path.split('/')[-1]}"
+            existing_links = {p["link"] for p in productos}
+            for p in page_products:
+                if p.get("link") not in existing_links:
+                    productos.append(p)
+                    existing_links.add(p.get("link"))
 
-                    if identificador in vistos:
-                        continue
+            _safe_log(f"📈 Total acumulado de productos válidos: {len(productos)}")
+            time.sleep(random.uniform(0.6, 1.4))
 
-                    # 5. IMAGEN DEL PRODUCTO (HD)
-                    img_url = ""
-                    img_el = t.select_one("img.tile-image") or t.select_one("img")
-                    if img_el:
-                        img_url = img_el.get("data-src") or img_el.get("src") or ""
-                        if img_url.startswith("//"):
-                            img_url = "https:" + img_url
+            if len(productos) >= max_items: break
 
-                    vistos.add(identificador)
-                    productos.append({
-                        "nombre": f"NIKE - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "identificador": identificador,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception:
-                    continue
+    except Exception as e:
+        _safe_log(f"💥 Error crítico general en motor_nike: {e}", "error")
 
-            time.sleep(random.uniform(0.6, 1.2))
-
-        except Exception as e:
-            break
+    # Guardar Debug JSON con logs de ejecución
+    combined = {
+        "metadata": {"url_tested": url, "limit": limite, "max_pages": max_pages, "step": STEP_SIZE, "sz": sz, "timestamp": start_ts, "checked": total_checked},
+        "logs": logs_ejecucion,
+        "productos": productos
+    }
+    try:
+        _save_debug("combined_debug.json", json.dumps(combined, ensure_ascii=False, indent=2))
+    except Exception: pass
 
     return productos
 
