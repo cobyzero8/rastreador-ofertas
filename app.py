@@ -28,7 +28,7 @@ supabase = init_supabase()
 # ⚡ Optimización de caché (TTL = 5 min)
 @st.cache_data(ttl=300)
 def obtener_tiendas_dinamicas():
-    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "MERCADO_LIBRE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"]
+    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"]
     try:
         res = supabase.table("radares").select("identificador").execute()
         if res.data:
@@ -483,16 +483,32 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     except Exception as err_rep:
         st.error(f"Error cargando catálogo: {err_rep}")
 
-    # Descarga de logs de depuración
-    c_dl1, c_dl2 = st.columns(2)
+    # 📄 DIAGNÓSTICO Y LOGS EN PANTALLA (Cero desorden de botones)
     debug_path = "ml_debug/combined_debug.json"
     if os.path.exists(debug_path):
-        with open(debug_path, "rb") as fh:
-            with c_dl1:
-                st.download_button("📥 Descargar Debug JSON", fh, file_name="combined_debug.json", use_container_width=True)
-
-    raw_html = "ml_debug/raw_html_last.html"
-    if os.path.exists(raw_html):
-        with open(raw_html, "rb") as fh:
-            with c_dl2:
-                st.download_button("📥 Descargar HTML Crudo", fh, file_name="raw_html_last.html", use_container_width=True)
+        try:
+            with open(debug_path, "r", encoding="utf-8") as fh:
+                data_debug = json.load(fh)
+                logs_list = data_debug.get("logs", [])
+                
+                st.write("---")
+                st.subheader("🛠️ Diagnóstico del Patrullaje")
+                col_view, col_btn = st.columns([4, 1])
+                
+                with col_view:
+                    if logs_list:
+                        with st.expander("📄 Ver Logs de Diagnóstico del Motor (Paso a Paso)", expanded=False):
+                            st.code("\n".join(logs_list), language="text")
+                    else:
+                        st.caption("ℹ️ Sin logs detallados para esta ejecución.")
+                
+                with col_btn:
+                    with open(debug_path, "rb") as fh_download:
+                        st.download_button(
+                            "📥 Reporte JSON", 
+                            fh_download, 
+                            file_name="combined_debug.json", 
+                            use_container_width=True
+                        )
+        except Exception:
+            pass
