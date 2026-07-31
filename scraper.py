@@ -1761,81 +1761,84 @@ def motor_tradicional_general(url, limite, headers):
 
 
 
-# motor_inretail.py  -- pega este bloque en tu scraper.py o en motores/motor_inretail.py
-from urllib.parse import urlparse, parse_qs, urljoin
-import requests
+# =============================================================================
+# MOTOR INRETAIL HÍBRIDO (Algolia Engine + AWS Price Hydration)
+# =============================================================================
+import re
 import json
 import random
-import re
-from typing import List, Dict, Any
+import requests
+from urllib.parse import urlparse, parse_qs
 
-# FALLBACKS (si ya existen en tu scraper se usan)
+# Fallbacks de utilidades con blindaje contra booleanos
 try:
     LISTA_USER_AGENTS  # type: ignore
-    safe_log  # type: ignore
-    safe_float  # type: ignore
-    encontrar_foto_fala  # type: ignore
 except NameError:
     LISTA_USER_AGENTS = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
     ]
-    def safe_log(msg, tipo="info"):
-        print(f"[{tipo.upper()}] {msg}")
-    def safe_float(v):
-        try:
-            if v is None: return 0.0
-            if isinstance(v, (int, float)): return float(v)
-            s = re.sub(r'[^\d.,]', '', str(v))
-            # normalize comma decimal
-            if s.count(',') == 1 and s.count('.') == 0:
-                s = s.replace(',', '.')
-            s = s.replace(',', '')
-            res = re.findall(r'\d+\.\d+|\d+', s)
-            return float(res[0]) if res else 0.0
-        except Exception:
-            return 0.0
-    def encontrar_foto_fala(n):
-        if isinstance(n, dict):
-            for k in ('image','imageUrl','thumbnail','img','picture','src'):
-                v = n.get(k)
-                if isinstance(v, str) and any(ext in v.lower() for ext in ('.jpg','.jpeg','.png','.webp')):
-                    return v
-        return ''
 
-def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
-                   keyword: str = None, max_paginas: int = 3, debug: bool = False) -> List[Dict[str, Any]]:
+try:
+    safe_log  # type: ignore
+except NameError:
+    def safe_log(msg, tipo="info"): print(f"[{tipo.upper()}] {msg}")
+
+def safe_float(v):
     """
-    Motor Algolia definitivo con normalización segura de precios.
-    - Prioriza campos explícitos de precio.
-    - Detecta y normaliza centavos solo con evidencia.
-    - Evita tomar números genéricos (ratings, stock).
-    - Usa objectID/sku/link como clave única para evitar sobrescrituras.
-    - Parámetro debug=True activa trazas adicionales.
+    Convierte valores a float de forma segura.
+    Bloquea explícitamente booleanos (True/False) para evitar que True sea 1.0.
     """
-    productos_map: Dict[str, Dict[str, Any]] = {}
+    try:
+        if v is None or isinstance(v, bool): 
+            return 0.0
+        if isinstance(v, (int, float)): 
+            return float(v)
+        s = re.sub(r'[^\d.,]', '', str(v)).replace(',', '.')
+        res = re.findall(r'\d+\.\d+|\d+', s)
+        return float(res[0]) if res else 0.0
+    except Exception: 
+        return 0.0
+
+try:
+    encontrar_foto_fala  # type: ignore
+except NameError:
+    def encontrar_foto_fala(n): return ''
+
+
+def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
+    """
+    Motor híbrido definitivo para Inkafarma y Mifarma.
+    1. Paso 1: Recupera catálogo y SKUs desde Algolia Engine.
+    2. Paso 2: Hidrata precios reales en vivo usando AWS API Gateway (filtered-products).
+    """
+    productos_map = {}
 
     parsed = urlparse(url)
     scheme = parsed.scheme or "https"
     netloc = parsed.netloc.replace("www.", "")
     base_url = f"{scheme}://{netloc}"
 
-    # Extraer keyword
+    # Extracción de Keyword
     query_params = parse_qs(parsed.query)
     if not keyword:
         kw_list = query_params.get('keyword') or query_params.get('q') or query_params.get('ft') or []
         if kw_list and kw_list[0].strip():
             keyword = kw_list[0].strip()
         else:
-            path_parts = [p for p in parsed.path.strip('/').split('/') if p and p.lower() not in ('buscador','producto','categorias','categoria')]
+            path_parts = [p for p in parsed.path.strip('/').split('/') if p and p.lower() not in ('buscador', 'producto', 'categorias', 'categoria')]
             if path_parts:
                 keyword = path_parts[-1].replace('-', ' ').strip()
+
     keyword = keyword or "desodorante"
-
     tag = "INKAFARMA" if "inkafarma" in netloc else "MIFARMA"
-    safe_log(f"⚡ [{tag}] Buscando '{keyword}' en Algolia Engine...", "info")
+    company_code = "IKF" if tag == "INKAFARMA" else "MFM"
 
+    safe_log(f"⚡ [{tag}] Paso 1: Consultando catálogo de '{keyword}' en Algolia...", "info")
+
+    # -------------------------------------------------------------------------
+    # PASO 1: Consulta a Algolia para obtener los SKUs del catálogo
+    # -------------------------------------------------------------------------
     ALGOLIA_APP_ID = "15W622LAQ4"
     ALGOLIA_API_KEY = "ccd8cbda203928003f7fe6f44ddbfc3a"
     algolia_url = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/*/queries"
@@ -1847,169 +1850,14 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
         "X-Algolia-Application-Id": ALGOLIA_APP_ID,
         "X-Algolia-API-Key": ALGOLIA_API_KEY,
         "Origin": base_url,
-        "Referer": f"{base_url}/",
-        "Sec-Fetch-Site": "cross-site",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Dest": "empty"
+        "Referer": f"{base_url}/"
     }
 
-    # Normalizador seguro de posibles precios (centrado en evidencia)
-    def normalize_possible_price(v, raw_obj=None) -> float:
-        """
-        Normaliza un posible precio:
-        - Extrae value/amount/price de dicts.
-        - Convierte strings a float con safe_float.
-        - Detecta centavos solo si hay evidencia: entero múltiplo de 100 y la representación original no contiene separador decimal,
-          o claves explícitas que indiquen centavos (amountInCents, valueInCents).
-        - Devuelve 0.0 si no hay evidencia razonable.
-        """
-        MIN, MAX = 0.50, 3000.00
-        if v is None:
-            return 0.0
-
-        # Si es dict, intentar extraer claves comunes
-        if isinstance(v, dict):
-            for k in ('value','amount','price','final','sale','amountInCents','valueInCents','priceInCents'):
-                if k in v and v[k] is not None:
-                    return normalize_possible_price(v[k], raw_obj=v)
-            return 0.0
-
-        # raw string
-        try:
-            raw_str = str(v).strip()
-        except Exception:
-            raw_str = ""
-
-        val = safe_float(v)
-
-        # detectar si la representación original contiene separador decimal explícito
-        has_decimal_sep = False
-        if '.' in raw_str:
-            has_decimal_sep = True
-        elif ',' in raw_str and raw_str.count(',') == 1 and len(raw_str.split(',')[-1]) == 2:
-            has_decimal_sep = True
-
-        # descartar valores no positivos
-        if val <= 0:
-            return 0.0
-
-        # si ya está en rango razonable y no parece centavos, devolver tal cual
-        if MIN <= val <= MAX and not (val >= 100 and not has_decimal_sep):
-            return float(val)
-
-        # posible centavos: entero sin separador decimal y múltiplo de 100
-        if (raw_str.isdigit() or isinstance(v, (int, float))) and not has_decimal_sep:
-            try:
-                ival = int(round(val))
-                if ival % 100 == 0:
-                    cand = ival / 100.0
-                    if MIN <= cand <= MAX:
-                        return float(cand)
-                # si es muy grande, dividir por 100 si cae en rango
-                if ival > 3000:
-                    cand = ival / 100.0
-                    if MIN <= cand <= MAX:
-                        return float(cand)
-            except Exception:
-                pass
-
-        # si raw_obj tiene claves que indican centavos explícitos
-        if isinstance(raw_obj, dict):
-            low_keys = " ".join(k.lower() for k in raw_obj.keys())
-            if any(x in low_keys for x in ('cents','in_cents','amountincents','valueincents','priceincents')):
-                try:
-                    ival = int(round(val))
-                    cand = ival / 100.0
-                    if MIN <= cand <= MAX:
-                        return float(cand)
-                except Exception:
-                    pass
-
-        # último recurso: si val cae en rango amplio, devolverlo
-        if MIN <= val <= MAX:
-            return float(val)
-
-        return 0.0
-
-    # Función robusta para extraer precio real desde hit Algolia
-    def parse_precio_algolia_robusto(item: Dict[str, Any]) -> (float, float):
-        MIN_PRECIO, MAX_PRECIO = 0.50, 3000.00
-        candidatos = []
-        regular_price = 0.0
-
-        # claves explícitas (incluye nested keys con punto)
-        explicit_sale_keys = [
-            'salePrice','sale_price','finalPrice','final_price','price_sale','offerPrice','price','finalPrice.value','price.value','amount','value','unitPrice'
-        ]
-        explicit_list_keys = [
-            'listPrice','list_price','regularPrice','regular_price','price_list','price_regular','originalPrice'
-        ]
-
-        # revisar claves explícitas
-        for k in explicit_sale_keys:
-            if '.' in k:
-                top, sub = k.split('.',1)
-                v = item.get(top)
-                cand = 0.0
-                if isinstance(v, dict):
-                    cand = normalize_possible_price(v.get(sub), raw_obj=v)
-            else:
-                cand = normalize_possible_price(item.get(k), raw_obj=item)
-            if MIN_PRECIO <= cand <= MAX_PRECIO:
-                candidatos.append(cand)
-
-        for k in explicit_list_keys:
-            if '.' in k:
-                top, sub = k.split('.',1)
-                v = item.get(top)
-                cand = 0.0
-                if isinstance(v, dict):
-                    cand = normalize_possible_price(v.get(sub), raw_obj=v)
-            else:
-                cand = normalize_possible_price(item.get(k), raw_obj=item)
-            if MIN_PRECIO <= cand <= MAX_PRECIO and cand > regular_price:
-                regular_price = cand
-
-        # price object
-        p_obj = item.get('price')
-        if p_obj is not None:
-            cand = normalize_possible_price(p_obj, raw_obj=item)
-            if MIN_PRECIO <= cand <= MAX_PRECIO:
-                candidatos.append(cand)
-
-        # si no hay candidatos, escaneo recursivo filtrando por claves que indiquen precio
-        if not candidatos:
-            precios = []
-            def extraer_rec(obj, path=""):
-                if isinstance(obj, (int, float, str)):
-                    v = normalize_possible_price(obj)
-                    if MIN_PRECIO <= v <= MAX_PRECIO:
-                        path_low = path.lower()
-                        if any(k in path_low for k in ('price','precio','sale','final','amount','value','unit')):
-                            if not any(b in path_low for b in ('id','score','rank','percent','discount','qty','stock','count','rating')):
-                                precios.append(v)
-                elif isinstance(obj, dict):
-                    for kk, vv in obj.items():
-                        extraer_rec(vv, f"{path}.{kk}" if path else kk)
-                elif isinstance(obj, list):
-                    for idx, el in enumerate(obj):
-                        extraer_rec(el, f"{path}[{idx}]")
-            extraer_rec(item)
-            if precios:
-                candidatos.extend(precios)
-
-        if not candidatos:
-            return 0.0, 0.0
-
-        sale_p = min(candidatos)
-        reg_p = max(regular_price, sale_p)
-        return float(sale_p), float(reg_p)
-
+    raw_hits = []
     hits_per_page = 100
-    page = 0
     session = requests.Session()
 
-    while page < max_paginas:
+    for page in range(max_paginas):
         payload = {
             "requests": [
                 {
@@ -2018,106 +1866,165 @@ def motor_inretail(url: str, limite: float, headers: Dict[str, str] = None,
                 }
             ]
         }
-
         try:
-            resp = session.post(algolia_url, headers=headers_algolia, json=payload, timeout=12)
+            resp = session.post(algolia_url, headers=headers_algolia, json=payload, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("results") or []
+                if results:
+                    hits = results[0].get("hits", []) or []
+                    nb_hits = results[0].get("nbHits", 0)
+                    raw_hits.extend(hits)
+                    safe_log(f"🔍 [{tag}] Algolia Pág {page + 1}: {len(hits)} ítems recuperados (Total: {nb_hits})", "info")
+                    if not hits or (page + 1) * hits_per_page >= nb_hits:
+                        break
         except Exception as e:
-            safe_log(f"🛑 [{tag}] Error de red conectando a Algolia: {e}", "error")
+            safe_log(f"⚠️ [{tag}] Error en paso Algolia: {e}", "warning")
             break
 
-        if resp.status_code != 200:
-            safe_log(f"⚠️ [{tag}] Algolia status HTTP {resp.status_code} - respuesta: {resp.text[:300]}", "warning")
-            break
+    if not raw_hits:
+        safe_log(f"⚠️ [{tag}] Sin resultados en Algolia para '{keyword}'", "warning")
+        return []
 
-        try:
-            data = resp.json()
-        except Exception as e:
-            safe_log(f"⚠️ [{tag}] Error deserializando JSON de Algolia: {e}", "warning")
-            break
+    # Construir mapa de metadatos desde Algolia (Nombres, URLs, Imágenes, SKUs)
+    sku_metadata = {}
+    for item in raw_hits:
+        sku = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or "").strip()
+        if sku:
+            sku_metadata[sku] = {
+                "name": str(item.get("name") or item.get("productName") or item.get("displayName") or "").strip().upper(),
+                "urlKey": str(item.get("urlKey") or item.get("slug") or item.get("url") or "").strip("/"),
+                "image": item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
+            }
 
-        results = data.get("results") or []
-        if not results:
-            safe_log(f"⚠️ [{tag}] Estructura 'results' vacía en la respuesta de Algolia.", "warning")
-            break
+    skus_lista = list(sku_metadata.keys())
+    safe_log(f"📡 [{tag}] Paso 2: Hidratando precios reales para {len(skus_lista)} SKUs vía AWS API Gateway...", "info")
 
-        page_result = results[0]
-        hits = page_result.get("hits", []) or []
-        nb_hits = page_result.get("nbHits", None)
+    # -------------------------------------------------------------------------
+    # PASO 2: Hydratación de Precios Reales vía AWS API Gateway (filtered-products)
+    # -------------------------------------------------------------------------
+    aws_url = f"https://5doa19p9r7.execute-api.us-east-1.amazonaws.com/MMPROD/filtered-products?companyCode={company_code}&saleChannel=WEB&saleChannelType=DIGITAL"
 
-        safe_log(f"🔍 [{tag}] Pág {page + 1}: {len(hits)} hits obtenidos (Total catalogado: {nb_hits if nb_hits is not None else 'N/A'})", "info")
+    headers_aws = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": base_url,
+        "Referer": f"{base_url}/",
+        "drugstore-stock": "1253",
+        "drugstoreret-stock": "1253",
+        "deliverytype": "PROG"
+    }
 
-        if not hits:
-            break
+    def extraer_precios_prod(prod):
+        cand_oferta = []
+        cand_regular = []
 
-        # Muestra de hits para depuración si debug=True
-        if debug and page == 0:
-            for i, h in enumerate(hits[:8]):
-                safe_log(f"[SAMPLE HIT {i}] objectID={h.get('objectID')} price_fields={h.get('price')} sale={h.get('salePrice')} keys={list(h.keys())[:40]}", "info")
-
-        for item in hits:
-            try:
-                nombre = str(item.get("name") or item.get("productName") or item.get("displayName") or "").strip().upper()
-                if not nombre or len(nombre) < 3:
-                    continue
-
-                p_o, p_r = parse_precio_algolia_robusto(item)
-
-                # debug trace of raw price fields and normalized result
-                if debug:
-                    raw_price_field = item.get('price') or item.get('salePrice') or item.get('finalPrice') or item.get('amount') or item.get('value')
-                    safe_log(f"[DEBUG PRICE] objectID={item.get('objectID')} raw={repr(raw_price_field)} normalized={p_o} (reg={p_r})", "info")
-
-                if p_o == 0.0:
-                    # safe_log(f"[DEBUG] descartado por precio=0 objectID={item.get('objectID')}", "info")
-                    continue
-
-                if not (0 < p_o <= limite):
-                    # safe_log(f"[DEBUG] fuera de rango precio={p_o} limite={limite} objectID={item.get('objectID')}", "info")
-                    continue
-
-                url_key = str(item.get("urlKey") or item.get("slug") or item.get("url") or item.get("link") or item.get("permalink") or "").strip().strip("/")
-                sku_code = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or item.get("productId") or "").strip()
-
-                if url_key and sku_code:
-                    link_final = f"{base_url}/producto/{url_key}/{sku_code}"
-                elif url_key:
-                    link_final = f"{base_url}/producto/{url_key}"
+        def agregar(val, es_regular=False):
+            if val is None or isinstance(val, bool):
+                return
+            f_val = safe_float(val)
+            if f_val >= 1.50:  # Precios reales mayores o iguales a S/. 1.50
+                if es_regular:
+                    cand_regular.append(f_val)
                 else:
-                    link_final = f"{base_url}/buscador?keyword={keyword}"
+                    cand_oferta.append(f_val)
 
-                img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
-                if isinstance(img_url, str) and img_url.startswith("//"):
-                    img_url = "https:" + img_url
+        # 1. Si prod contiene un objeto u origen de precio
+        p_obj = prod.get("price")
+        if isinstance(p_obj, dict):
+            for k, v in p_obj.items():
+                if isinstance(v, bool): continue
+                k_low = k.lower()
+                es_reg = any(r in k_low for r in ['regular', 'list', 'original', 'tacho'])
+                agregar(v, es_reg)
+        elif isinstance(p_obj, (int, float, str)) and not isinstance(p_obj, bool):
+            agregar(p_obj, False)
 
-                clave_unica = str(item.get("objectID") or item.get("sku") or sku_code or link_final)
+        # 2. Atributos directos del diccionario del producto
+        keys_oferta = ['saleprice', 'cardprice', 'monederoprice', 'onlineprice', 'finalprice', 'offerprice', 'price_sale', 'price_card']
+        keys_regular = ['regularprice', 'listprice', 'originalprice', 'price_regular', 'price_list']
 
-                productos_map[clave_unica] = {
-                    "nombre": f"{tag} - {nombre}",
-                    "precio": float(p_o),
-                    "precio_regular": float(p_r),
-                    "link": link_final,
-                    "img": str(img_url)
-                }
+        for k, v in prod.items():
+            if isinstance(v, bool): continue
+            k_low = k.lower()
+            if any(p == k_low or p in k_low for p in keys_oferta):
+                agregar(v, False)
+            elif any(p == k_low or p in k_low for p in keys_regular):
+                agregar(v, True)
 
-            except Exception as e_item:
-                safe_log(f"[{tag}] Error procesando ítem ID={item.get('objectID')}: {e_item}", "warning")
-                continue
+        if not cand_oferta:
+            return 0.0, 0.0
 
-        safe_log(f"[STATS] página {page + 1} -> hits totales {len(hits)} ; aceptados acumulados {len(productos_map)}", "info")
+        p_o = min(cand_oferta)
+        p_r = max(cand_regular) if cand_regular else p_o
+        return p_o, max(p_r, p_o)
 
-        if nb_hits is not None and (page + 1) * hits_per_page >= int(nb_hits):
-            break
+    # Procesar SKUs en lotes de 100
+    batch_size = 100
+    for i in range(0, len(skus_lista), batch_size):
+        batch_skus = skus_lista[i:i + batch_size]
+        payload_aws = {
+            "departmentsFilter": [], "categoriesFilter": [], "subcategoriesFilter": [], "brandsFilter": [],
+            "ranking": None, "page": 0, "rows": len(batch_skus), "order": None, "sort": "",
+            "productsFilter": batch_skus
+        }
 
-        page += 1
+        try:
+            resp_aws = session.post(aws_url, headers=headers_aws, json=payload_aws, timeout=12)
+            if resp_aws.status_code == 200:
+                data_aws = resp_aws.json()
+
+                items_aws = []
+                if isinstance(data_aws, dict):
+                    items_aws = data_aws.get("products") or data_aws.get("items") or data_aws.get("content") or []
+                elif isinstance(data_aws, list):
+                    items_aws = data_aws
+
+                for prod in items_aws:
+                    try:
+                        sku = str(prod.get("code") or prod.get("sku") or prod.get("id") or "").strip()
+                        meta = sku_metadata.get(sku, {})
+
+                        nombre = str(prod.get("name") or prod.get("productName") or meta.get("name") or "").strip().upper()
+                        if not nombre or len(nombre) < 3:
+                            continue
+
+                        # Extracción limpia de precios reales
+                        p_o, p_r = extraer_precios_prod(prod)
+
+                        if 1.50 <= p_o <= limite:
+                            url_key = str(prod.get("urlKey") or prod.get("slug") or meta.get("urlKey") or "").strip("/")
+                            if url_key and sku:
+                                link_final = f"{base_url}/producto/{url_key}/{sku}"
+                            elif url_key:
+                                link_final = f"{base_url}/producto/{url_key}"
+                            else:
+                                link_final = f"{base_url}/buscador?keyword={keyword}"
+
+                            img_url = prod.get("image") or prod.get("imageUrl") or meta.get("image") or ""
+                            if isinstance(img_url, str) and img_url.startswith("//"):
+                                img_url = "https:" + img_url
+
+                            productos_map[link_final] = {
+                                "nombre": f"{tag} - {nombre}",
+                                "precio": float(p_o),
+                                "precio_regular": float(p_r),
+                                "link": link_final,
+                                "img": str(img_url)
+                            }
+                    except Exception:
+                        continue
+        except Exception as e:
+            safe_log(f"⚠️ [{tag}] Error hidratando lote en AWS API Gateway: {e}", "warning")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [{tag}] ¡Proceso completado! Se indexaron {len(productos_finales)} ofertas válidas.", "success")
+        safe_log(f"✅ [{tag}] ¡Proceso completado! Se indexaron {len(productos_finales)} ofertas reales.", "success")
     else:
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo el límite S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
