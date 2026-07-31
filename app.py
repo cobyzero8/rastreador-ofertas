@@ -364,7 +364,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
             with open("ml_debug/combined_debug.json", "w", encoding="utf-8") as fh:
                 json.dump(combined, fh, ensure_ascii=False, indent=2)
         except Exception as e:
-            st.session_state.scraper_result = {"error": str(e)}
+            st.session_state.scraper_result = {"error": str(e), "target": target}
         finally:
             st.session_state.scraper_running = False
 
@@ -378,21 +378,31 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         thread.start()
         st.success("Patrullaje iniciado en segundo plano.")
 
-    # 📊 REPORTE DE PRODUCTOS EN LA MISMA UI
+    # 📊 REPORTE EN VIVO (Evaluación de Tipo Blindada)
     if st.session_state.scraper_result:
         st.write("---")
         st.subheader("📊 Reporte de Ofertas del Escaneo")
+
+        raw_res = st.session_state.scraper_result
         
-        resumen_txt = st.session_state.scraper_result.get("resumen", "")
+        # Extracción segura según el tipo de dato
+        if isinstance(raw_res, dict):
+            resumen_txt = raw_res.get("resumen", raw_res.get("error", str(raw_res)))
+            target_escaneado = raw_res.get("target", st.session_state.filtro_activo)
+        elif isinstance(raw_res, str):
+            resumen_txt = raw_res
+            target_escaneado = st.session_state.filtro_activo
+        else:
+            resumen_txt = str(raw_res)
+            target_escaneado = st.session_state.filtro_activo
+
         if resumen_txt:
             st.success(f"**Resumen:** {resumen_txt}")
 
-        target_escaneado = st.session_state.scraper_result.get("target", st.session_state.filtro_activo)
-        
-        # Consulta de productos indexados recientemente
+        # Consulta a Supabase para desplegar las ofertas en la UI
         try:
             q = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
-            if target_escaneado != "TODOS":
+            if target_escaneado and target_escaneado != "TODOS":
                 q = q.ilike("identificador", f"%{target_escaneado}%")
             
             res_recientes = q.limit(100).execute()
@@ -405,7 +415,8 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                     p_r = float(reg.get("precio_regular") or p_o)
                     id_p = str(reg.get("identificador", "")).upper()
                     
-                    if not id_p or id_p in vistos_ui or p_o <= 0: continue
+                    if not id_p or id_p in vistos_ui or p_o <= 0:
+                        continue
                     vistos_ui.add(id_p)
                     
                     parts = id_p.split("-")
@@ -439,11 +450,11 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                         use_container_width=True
                     )
             else:
-                st.info("No se encontraron productos registrados para esta categoría.")
+                st.info("No hay registros recientes para este filtro.")
         except Exception as err_rep:
-            st.error(f"Error consultando reporte: {err_rep}")
+            st.error(f"Error cargando reporte en UI: {err_rep}")
 
-        # Botones de descarga de Debug
+        # Botones para descargar logs
         c_dl1, c_dl2 = st.columns(2)
         debug_path = "ml_debug/combined_debug.json"
         if os.path.exists(debug_path):
