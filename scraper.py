@@ -1765,13 +1765,13 @@ def motor_tradicional_general(url, limite, headers):
 def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
     """
     Motor definitivo para Inkafarma y Mifarma vía Algolia Engine.
-    - Soporta paginación automática (Scroll Infinito).
-    - Extracción estricta de precios (evita IDs y Scores).
-    - Enlaces exactos formato: /producto/{slug}/{sku}
+    - Paginación automática (Scroll Infinito).
+    - Extracción estricta de precios (evita IDs, SKUs y unidades).
+    - Generación exacta de URLs de producto.
     """
     import json
     import requests
-    from urllib.parse import urlparse, parse_qs, urljoin
+    from urllib.parse import urlparse, parse_qs
 
     productos_map = {}
     parsed = urlparse(url)
@@ -1802,40 +1802,50 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
         "Referer": f"{base_url}/"
     }
 
-    # Helper para extraer un precio real sin confundir IDs o Rankings
-    def obtener_precio_algolia(item):
-        precios = []
+    # Helper para parsear precios de forma estricta desde Algolia
+    def parse_precio_algolia_estricto(item):
+        candidatos_oferta = []
+        regular_price = 0.0
 
-        def extraer_recursivo(obj, clave=""):
-            if isinstance(obj, (int, float)):
-                val = float(obj)
-                # Un precio válido de farmacia suele estar entre S/. 1.50 y S/. 2000.00
-                # Descartamos claves que digan score, id, stock, rank, count, etc.
-                k_low = clave.lower()
-                if 1.5 <= val <= 2000.0:
-                    if any(p in k_low for p in ['price', 'precio', 'sale', 'list', 'offer']) and not any(b in k_low for b in ['id', 'score', 'rank', 'percent', 'discount', 'qty', 'stock']):
-                        precios.append(val)
-            elif isinstance(obj, dict):
-                for k, v in obj.items():
-                    extraer_recursivo(v, f"{clave}.{k}")
-            elif isinstance(obj, list):
-                for elem in obj:
-                    extraer_recursivo(elem, clave)
+        # Llaves explícitas de precio en el esquema de Algolia
+        llaves_oferta = ['salePrice', 'sale_price', 'price_sale', 'monederoPrice', 'cardPrice', 'price_card', 'price_monedero', 'finalPrice', 'offerPrice']
+        llaves_regular = ['listPrice', 'list_price', 'price_list', 'regularPrice', 'regular_price', 'price_regular', 'originalPrice']
 
-        # 1. Búsqueda explícita en llaves directas de precios
-        p_directo = safe_float(item.get("price") or item.get("salePrice") or item.get("finalPrice"))
-        p_lista = safe_float(item.get("listPrice") or item.get("regularPrice") or p_directo)
+        # 1. Inspección de llaves de oferta
+        for k in llaves_oferta:
+            val = safe_float(item.get(k))
+            if 1.0 <= val <= 3000.0:
+                candidatos_oferta.append(val)
 
-        if p_directo >= 1.5:
-            return p_directo, max(p_lista, p_directo)
+        # 2. Inspección de llaves de precio regular
+        for k in llaves_regular:
+            val = safe_float(item.get(k))
+            if 1.0 <= val <= 3000.0:
+                if val > regular_price:
+                    regular_price = val
 
-        # 2. Búsqueda por escaneo controlado si las llaves principales vienen anidadas
-        extraer_recursivo(item)
-        if precios:
-            p_sorted = sorted(list(set(precios)))
-            return p_sorted[0], p_sorted[-1]
+        # 3. Inspección del atributo 'price' (si es float o dict)
+        p_obj = item.get('price')
+        if isinstance(p_obj, (int, float, str)):
+            val = safe_float(p_obj)
+            if 1.0 <= val <= 3000.0:
+                candidatos_oferta.append(val)
+        elif isinstance(p_obj, dict):
+            for sub_k, sub_v in p_obj.items():
+                val = safe_float(sub_v)
+                if 1.0 <= val <= 3000.0:
+                    if any(r in sub_k.lower() for r in ['list', 'regular', 'original']):
+                        if val > regular_price:
+                            regular_price = val
+                    else:
+                        candidatos_oferta.append(val)
 
-        return 0.0, 0.0
+        if not candidatos_oferta:
+            return 0.0, 0.0
+
+        sale_p = min(candidatos_oferta)
+        reg_p = max(regular_price, sale_p)
+        return sale_p, reg_p
 
     # 2. Paginación automática (Simulación del Scroll Infinito)
     for pag in range(max_paginas):
@@ -1860,7 +1870,7 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
 
             hits = results[0].get("hits", [])
             if not hits:
-                break  # Se acabaron los productos en Algolia
+                break
 
             safe_log(f"🔍 [{tag}] Pág. {pag + 1}: Analizando {len(hits)} productos...", "info")
 
@@ -1870,11 +1880,10 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
                     if not nombre or len(nombre) < 3:
                         continue
 
-                    # Extracción estricta del precio
-                    p_o, p_r = obtener_precio_algolia(item)
+                    # Extracción estricta de precio
+                    p_o, p_r = parse_precio_algolia_estricto(item)
 
                     if 0 < p_o <= limite:
-                        # Construcción limpia de la URL de Inkafarma
                         url_key = str(item.get("urlKey") or item.get("slug") or item.get("url") or "").strip("/")
                         sku_code = str(item.get("sku") or item.get("code") or item.get("objectID") or item.get("id") or "").strip()
 
@@ -1885,7 +1894,6 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
                         else:
                             link_final = f"{base_url}/buscador?keyword={keyword}"
 
-                        # Captura de la imagen del producto
                         img_url = item.get("image") or item.get("imageUrl") or item.get("thumbnail") or encontrar_foto_fala(item) or ""
                         if str(img_url).startswith("//"):
                             img_url = "https:" + str(img_url)
@@ -1893,7 +1901,7 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
                         productos_map[link_final] = {
                             "nombre": f"{tag} - {nombre}",
                             "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
+                            "precio_regular": p_r,
                             "link": link_final,
                             "img": str(img_url)
                         }
@@ -1901,7 +1909,7 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
                     continue
 
         except Exception as e:
-            safe_log(f"🛑 [{tag}] Error en paginación Algolia (Pág {pag}): {e}", "error")
+            safe_log(f"🛑 [{tag}] Error en paginación Algolia (Pág {pag + 1}): {e}", "error")
             break
 
     productos_finales = list(productos_map.values())
@@ -1911,7 +1919,6 @@ def motor_inretail(url, limite, headers=None, keyword=None, max_paginas=3):
         safe_log(f"⚠️ [{tag}] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
     return productos_finales
-
 
 
 
