@@ -2010,15 +2010,15 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     return productos
 
 
-def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fallback=False, session=None, max_items=1000, headers_override=None):
+def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fallback=False, session=None, max_items=500, headers_override=None):
     """
-    Motor híbrido para Natura Perú (BFF API + Playwright fallback).
-    - Mantiene soporte para st.secrets, os.environ y headers_override.
-    - Guarda trazabilidad en ml_debug/.
-    - Devuelve una lista de productos compatible con revisar_ofertas y Supabase.
+    Motor Natura ultra fluido y protegido contra congelamientos.
+    - Timeout estricto de 5s en API BFF.
+    - Caída automática e inmediata a Scraping Directo de Catálogo (HTML/JSON-LD).
+    - Retorna lista de productos 100% compatible con revisar_ofertas.
     """
     import os, time, random, json, requests, re
-    from urllib.parse import urlparse, parse_qs, urlencode, urljoin
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
@@ -2046,17 +2046,18 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
         return entry
 
     def _ensure_debug_dir():
-        d = os.path.join(os.getcwd(), "ml_debug")
-        os.makedirs(d, exist_ok=True)
-        return d
+        try:
+            d = os.path.join(os.getcwd(), "ml_debug")
+            os.makedirs(d, exist_ok=True)
+            return d
+        except Exception: return None
 
     def _save_text(path, txt):
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(txt); fh.flush()
             return True
-        except Exception:
-            return False
+        except Exception: return False
 
     def _safe_parse_price(txt):
         try:
@@ -2064,8 +2065,15 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
             if s.count('.') > 1: s = s.replace('.', '')
             s = s.replace(',', '.')
             return float(s) if s else 0.0
+        except Exception: return 0.0
+
+    def _normalize_identifier(link):
+        try:
+            token = link.split('?')[0].rstrip('/').split('/')[-1]
+            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or str(abs(hash(link)))
+            return f"NATURA-{token.upper()}"
         except Exception:
-            return 0.0
+            return f"NATURA-{abs(hash(link))}"
 
     debug_dir = _ensure_debug_dir()
     start_ts = datetime.now(timezone.utc).isoformat()
@@ -2074,38 +2082,19 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
     session = session or requests.Session()
 
     headers = {
-        "accept": "*/*",
-        "accept-language": "es,es-ES;q=0.9,en;q=0.8",
-        "content-type": "application/json",
-        "referer": url,
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "tenant_id": "peru-natura-web",
-        "x_use_slas": "true",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "accept-language": "es-PE,es;q=0.9,en;q=0.8",
+        "referer": "https://www.natura.com.pe/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
 
-    # 1. Preferencia por secrets de Streamlit
     try:
-        if st:
-            if "NATURA_X_API_KEY" in st.secrets:
-                headers["x-api-key"] = st.secrets["NATURA_X_API_KEY"]
-            if "NATURA_AUTH_BEARER" in st.secrets:
-                headers["authorization"] = f"Bearer {st.secrets['NATURA_AUTH_BEARER']}"
-    except Exception:
-        pass
+        if st and "NATURA_X_API_KEY" in st.secrets:
+            headers["x-api-key"] = st.secrets["NATURA_X_API_KEY"]
+        if st and "NATURA_AUTH_BEARER" in st.secrets:
+            headers["authorization"] = f"Bearer {st.secrets['NATURA_AUTH_BEARER']}"
+    except Exception: pass
 
-    # 2. Fallback a Variables de Entorno OS
-    try:
-        if "NATURA_X_API_KEY" in os.environ and "x-api-key" not in headers:
-            headers["x-api-key"] = os.environ["NATURA_X_API_KEY"]
-        if "NATURA_AUTH_BEARER" in os.environ and "authorization" not in headers:
-            headers["authorization"] = f"Bearer {os.environ['NATURA_AUTH_BEARER']}"
-    except Exception:
-        pass
-
-    # 3. Anulación explícita vía parámetro
     if headers_override and isinstance(headers_override, dict):
         headers.update(headers_override)
 
@@ -2125,151 +2114,159 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
         "sort": "top-sellers",
         "apiMode": "product"
     }
-    if refine_1:
-        base_params["refine_1"] = refine_1
-    elif cgid:
-        base_params["cgid"] = cgid
+    if refine_1: base_params["refine_1"] = refine_1
+    elif cgid: base_params["cgid"] = cgid
 
-    _log(f"🌿 Iniciando motor_natura | URL: {url} | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando motor_natura para URL: {url} | Límite: S/. {limite}")
 
-    page_count = 0
+    use_bff_api = True
 
     for page in range(0, max_pages):
-        page_count += 1
         start = page * page_size
-        params = dict(base_params)
-        params["start"] = start
-
-        _log(f"⚡ Consultando BFF Natura (start={start})...")
-        resp = None
-        try:
-            resp = session.get(endpoint, params=params, headers=headers, timeout=15)
-            _log(f"📡 Status HTTP {resp.status_code} (start={start})")
-        except Exception as e:
-            _log(f"⚠️ Petición BFF falló: {e}", "warning")
-            resp = None
-
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        if resp is not None and debug_dir:
-            try:
-                raw_api_path = os.path.join(debug_dir, f"raw_api_natura_{ts}_start_{start}.txt")
-                _save_text(raw_api_path, f"status: {resp.status_code}\n\n{(resp.text or '')[:300000]}")
-            except Exception:
-                pass
-
         page_items = []
 
-        # 1️⃣ Procesar respuesta JSON del BFF
-        if resp and resp.status_code == 200:
+        # 1️⃣ INTENTO VÍA API BFF (Si sigue activo)
+        if use_bff_api:
+            params = dict(base_params)
+            params["start"] = start
+            _log(f"⚡ Intentando API BFF Natura (Timeout estricto: 5s)...")
+            
+            resp = None
             try:
-                data = resp.json()
-                items = data.get("results") or data.get("items") or data.get("products") or []
-                if not items and isinstance(data, dict):
-                    for k, v in data.items():
-                        if isinstance(v, list) and v and isinstance(v[0], dict):
-                            if any(x in v[0] for x in ("name", "title", "price", "permalink", "productName")):
-                                items = v
-                                break
-                for it in items:
-                    if len(productos) + len(page_items) >= max_items: break
-                    try:
-                        nombre = (it.get("name") or it.get("productName") or it.get("title") or "").strip()
-                        if not nombre or len(nombre) < 3: continue
-                        prices_info = it.get("prices") or it
-                        p_o = _safe_parse_price(prices_info.get("salePrice") or prices_info.get("price") or prices_info.get("amount") or 0)
-                        p_r = _safe_parse_price(prices_info.get("originalPrice") or prices_info.get("listPrice") or p_o)
-                        p_r = max(p_r, p_o)
-                        
-                        if p_o == 0.0 or p_o > limite: continue
-                        
-                        link_rel = it.get("permalink") or it.get("url") or it.get("link") or ""
-                        link_final = urljoin(base, link_rel) if link_rel else url
-                        
-                        images_info = it.get("images") or it.get("image") or ""
-                        img_url = ""
-                        if isinstance(images_info, list) and images_info:
-                            img_url = images_info[0].get("url") if isinstance(images_info[0], dict) else str(images_info[0])
-                        elif isinstance(images_info, str):
-                            img_url = images_info
-                            
-                        ident = ("NATURA-" + re.sub(r'[^A-Za-z0-9\-]', '', link_final.split('?')[0].rstrip('/').split('/')[-1]).upper()) if link_final else f"NATURA-{abs(hash(nombre))}"
-                        if ident in vistos: continue
-                        vistos.add(ident)
-                        
-                        page_items.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre.upper()}",
-                            "precio": p_o,
-                            "precio_regular": p_r,
-                            "link": link_final,
-                            "img": img_url,
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                    except Exception:
-                        continue
-            except Exception as e_json:
-                _log(f"⚠️ Error parseando JSON: {e_json}", "warning")
+                # Timeout ultracorto (3s conectar, 5s leer) para jamás congelar la pantalla
+                resp = session.get(endpoint, params=params, headers=headers, timeout=(3, 5))
+                _log(f"📡 Respuesta API BFF: HTTP {resp.status_code}")
+            except Exception as e:
+                _log("⏰ Timeout o bloqueo en API BFF. Desactivando BFF para usar catálogo directo.", "warning")
+                use_bff_api = False # Desactiva la API para no perder tiempo en las siguientes páginas
 
-        # 2️⃣ Fallback con Playwright si la API falla o no devuelve datos
-        if not page_items and use_playwright_fallback:
-            try:
-                from playwright.sync_api import sync_playwright
-                _log("🎭 Fallback Playwright: Renderizando y haciendo clic en 'Explorar más'...", "info")
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-                    pg = browser.new_page()
-                    pg.goto(url, timeout=30000)
-                    try:
-                        pg.wait_for_selector(".product-card, .product-tile, article", timeout=10000)
-                    except Exception:
-                        pass
-                    clicks = min(page + 1, 8)
-                    for _ in range(clicks):
-                        btn = pg.query_selector("button:has-text('Explorar más resultados'), button:has-text('Ver más'), .load-more, .show-more")
-                        if not btn: break
+            if resp and resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    items = data.get("results") or data.get("items") or data.get("products") or []
+                    if not items and isinstance(data, dict):
+                        for k, v in data.items():
+                            if isinstance(v, list) and v and isinstance(v[0], dict):
+                                if any(x in v[0] for x in ("name", "title", "price", "permalink", "productName")):
+                                    items = v
+                                    break
+                    for it in items:
+                        if len(productos) + len(page_items) >= max_items: break
                         try:
-                            btn.click()
-                        except Exception:
-                            break
-                        pg.wait_for_timeout(900 + random.randint(0, 800))
-                    rendered = pg.content()
-                    browser.close()
-                if debug_dir:
-                    pw_path = os.path.join(debug_dir, f"raw_html_playwright_{ts}_start_{start}.html")
-                    _save_text(pw_path, rendered)
-                soup = BeautifulSoup(rendered, "html.parser")
-                cards = soup.select(".product-card, .product-tile, article, div[data-product-id], .grid-tile")
-                for c in cards:
-                    try:
-                        a = c.select_one("a[href]")
-                        if not a: continue
-                        link_final = urljoin(base, a["href"])
-                        title_el = c.select_one(".product-name, [class*='productName'], h2, h3") or a
-                        title = title_el.get_text(strip=True)
-                        price_el = c.select_one(".price, [class*='sellingPrice'], .product-price")
-                        p_o = _safe_parse_price(price_el.get_text() if price_el else "")
-                        if p_o == 0.0 or p_o > limite: continue
-                        ident = ("NATURA-" + re.sub(r'[^A-Za-z0-9\-]', '', link_final.split('?')[0].rstrip('/').split('/')[-1]).upper()) if link_final else f"NATURA-{abs(hash(title))}"
-                        if ident in vistos: continue
-                        vistos.add(ident)
-                        img_el = c.select_one("img")
-                        img_url = (img_el.get("src") or img_el.get("data-src") if img_el else "") or ""
-                        page_items.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {title.upper()}",
-                            "precio": p_o,
-                            "precio_regular": p_o,
-                            "link": link_final,
-                            "img": img_url,
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                    except Exception:
-                        continue
-            except Exception as e_pw:
-                _log(f"⚠️ Playwright fallback falló: {e_pw}", "warning")
+                            nombre = (it.get("name") or it.get("productName") or it.get("title") or "").strip()
+                            if not nombre or len(nombre) < 3: continue
+                            prices_info = it.get("prices") or it
+                            p_o = _safe_parse_price(prices_info.get("salePrice") or prices_info.get("price") or prices_info.get("amount") or 0)
+                            p_r = _safe_parse_price(prices_info.get("originalPrice") or prices_info.get("listPrice") or p_o)
+                            p_r = max(p_r, p_o)
+                            
+                            if p_o == 0.0 or p_o > limite: continue
+                            
+                            link_rel = it.get("permalink") or it.get("url") or it.get("link") or ""
+                            link_final = urljoin(base, link_rel) if link_rel else url
+                            
+                            images_info = it.get("images") or it.get("image") or ""
+                            img_url = ""
+                            if isinstance(images_info, list) and images_info:
+                                img_url = images_info[0].get("url") if isinstance(images_info[0], dict) else str(images_info[0])
+                            elif isinstance(images_info, str): img_url = images_info
+                                
+                            ident = _normalize_identifier(link_final)
+                            if ident in vistos: continue
+                            vistos.add(ident)
+                            
+                            page_items.append({
+                                "identificador": ident,
+                                "nombre": f"NATURA - {nombre.upper()}",
+                                "precio": p_o,
+                                "precio_regular": p_r,
+                                "link": link_final,
+                                "img": img_url,
+                                "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                        except Exception: continue
+                except Exception:
+                    use_bff_api = False
+
+        # 2️⃣ FALLBACK INSTANTÁNEO: SCRAPING DIRECTO DE LA PÁGINA WEB
+        if not page_items:
+            # Construir URL con paginación limpia
+            query_p = dict(q)
+            query_p["page"] = [str(page + 1)]
+            page_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(query_p, doseq=True), parsed.fragment))
+
+            _log(f"🌐 Escaneando catálogo web directamente (Página {page + 1})...")
+            try:
+                resp_html = session.get(page_url, headers=headers, timeout=5)
+                if resp_html.status_code == 200:
+                    text = resp_html.text
+                    soup = BeautifulSoup(text, "html.parser")
+
+                    # Extraer vía JSON-LD Schema.org de VTEX
+                    json_scripts = soup.find_all('script', type='application/ld+json')
+                    for script in json_scripts:
+                        if not script.string: continue
+                        try:
+                            data_ld = json.loads(script.string)
+                            items_ld = data_ld.get('itemListElement', []) if isinstance(data_ld, dict) else (data_ld if isinstance(data_ld, list) else [])
+                            for it in items_ld:
+                                prod_data = it.get('item', it) if isinstance(it, dict) else {}
+                                if not isinstance(prod_data, dict): continue
+                                nombre = (prod_data.get('name') or '').strip()
+                                if not nombre or len(nombre) < 3: continue
+                                offers = prod_data.get('offers', {})
+                                p_o = _safe_parse_price(offers.get('price') or offers.get('lowPrice') or 0)
+                                p_r = _safe_parse_price(offers.get('highPrice') or p_o)
+                                link_final = urljoin(base, prod_data.get('url') or '')
+                                img = prod_data.get('image') or ''
+                                if 0 < p_o <= limite:
+                                    ident = _normalize_identifier(link_final)
+                                    if ident not in vistos:
+                                        vistos.add(ident)
+                                        page_items.append({
+                                            "identificador": ident,
+                                            "nombre": f"NATURA - {nombre.upper()}",
+                                            "precio": p_o,
+                                            "precio_regular": max(p_r, p_o),
+                                            "link": link_final,
+                                            "img": img,
+                                            "fecha": datetime.now(timezone.utc).isoformat()
+                                        })
+                        except Exception: continue
+
+                    # Extraer vía DOM si JSON-LD no devolvió elementos
+                    if not page_items:
+                        cards = soup.select("[class*='productSummary'], .vtex-product-summary-2-x-container, div[data-product-id], article")
+                        for t in cards:
+                            try:
+                                a_el = t.select_one("a[href]")
+                                if not a_el: continue
+                                link_final = urljoin(base, a_el["href"])
+                                title_el = t.select_one("[class*='productName'], h2, h3") or a_el
+                                title = title_el.get_text(strip=True)
+                                price_el = t.select_one("[class*='sellingPrice'], .product-price")
+                                p_o = _safe_parse_price(price_el.get_text() if price_el else "")
+                                if p_o == 0.0 or p_o > limite: continue
+                                ident = _normalize_identifier(link_final)
+                                if ident in vistos: continue
+                                vistos.add(ident)
+                                img_el = t.select_one("img")
+                                img_url = (img_el.get("src") or img_el.get("data-src") if img_el else "") or ""
+                                page_items.append({
+                                    "identificador": ident,
+                                    "nombre": f"NATURA - {title.upper()}",
+                                    "precio": p_o,
+                                    "precio_regular": p_o,
+                                    "link": link_final,
+                                    "img": img_url,
+                                    "fecha": datetime.now(timezone.utc).isoformat()
+                                })
+                            except Exception: continue
+            except Exception as e_html:
+                _log(f"⚠️ Error al obtener catálogo web: {e_html}", "warning")
 
         if not page_items:
-            _log(f"ℹ️ Sin más productos en start={start}. Finalizando escaneo.", "info")
+            _log(f"ℹ️ Sin más ofertas en la página {page + 1}. Finalizando patrullaje de Natura.")
             break
 
         existing_links = {p["link"] for p in productos}
@@ -2279,27 +2276,11 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
                 productos.append(it)
                 existing_links.add(it["link"])
 
-        _log(f"📦 Acumulado Natura: {len(productos)} ofertas.")
-        if len(page_items) < page_size or len(productos) >= max_items:
-            break
-        time.sleep(random.uniform(0.4, 0.9))
+        _log(f"📦 Total acumulado de Natura: {len(productos)} ofertas.")
+        if len(productos) >= max_items: break
+        time.sleep(random.uniform(0.3, 0.7))
 
-    # Guardado de trazabilidad debug
-    try:
-        combined = {
-            "metadata": {"url_tested": url, "limit": limite, "max_pages": max_pages, "page_size": page_size, "timestamp": start_ts, "collected": len(productos)},
-            "productos": productos
-        }
-        if debug_dir:
-            combined_path = os.path.join(debug_dir, f"combined_debug_natura_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json")
-            _save_text(combined_path, json.dumps(combined, ensure_ascii=False, indent=2))
-            _log(f"📁 combined_debug guardado: {combined_path}", "info")
-    except Exception:
-        pass
-
-    _log(f"✅ Finalizado. Perfumes/Productos encontrados: {len(productos)}.", "success")
-    
-    # 🎯 Retorno directo en formato Lista para encajar con escanear_tienda y revisar_ofertas
+    _log(f"✅ Patrullaje de Natura completado. Total de productos indexados: {len(productos)}", "success")
     return productos
 
 
