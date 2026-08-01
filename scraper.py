@@ -1799,7 +1799,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
     productos = []
     
-    # 🔑 Clave de ScraperAPI
     api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
     try:
         if "SCRAPERAPI_KEY" in st.secrets:
@@ -1810,52 +1809,46 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     query_params = parse_qs(parsed_url.query)
     vistos = set()
 
-    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI (Modo Rápido) para: {url}")
+    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI para: {url}")
 
     try:
-        for page in range(1, 2):  # Prueba en Página 1
+        for page in range(1, 2):
             offset = (page - 1) * int(step)
             query_params["start"] = [str(offset)]
             query_params["sz"] = [str(step)]
             new_query = urlencode(query_params, doseq=True)
             page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            _safe_log("🌐 Consultando a ScraperAPI (Timeout máximo: 25s)...")
+            _safe_log("🌐 Consultando ScraperAPI (Timeout estricto: 12s)...")
 
-            # Payload directo sin render='true' para respuesta instantánea
+            # Quitamos country_code que causaba el bucle infinito
             payload = {
                 'api_key': api_key,
-                'url': page_url,
-                'country_code': 'pe'
+                'url': page_url
             }
 
             resp = None
             try:
-                _safe_log("⏳ Esperando respuesta del servidor...")
-                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=25)
-                _safe_log(f"📡 ¡Respuesta recibida! Código HTTP: {resp.status_code}")
+                # Timeout explícito: (3s conectar, 12s leer)
+                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=(3, 12))
+                _safe_log(f"📡 Respuesta de ScraperAPI: Código HTTP {resp.status_code}")
             except requests.exceptions.Timeout:
-                _safe_log("⏰ Timeout: ScraperAPI no respondió en 25 segundos.", "error")
+                _safe_log("⏰ ScraperAPI agotó el tiempo de espera (12s). Omitiendo petición.", "error")
                 break
             except Exception as e:
-                _safe_log(f"💥 Error en la conexión HTTP: {e}", "error")
+                _safe_log(f"💥 Error al conectar con ScraperAPI: {e}", "error")
                 break
 
             if not resp or resp.status_code != 200:
-                _safe_log(f"🛑 ScraperAPI devolvió HTTP {resp.status_code if resp else 'Nulo'}.", "error")
+                _safe_log(f"🛑 ScraperAPI respondió con error HTTP {resp.status_code if resp else 'Nulo'}.", "error")
                 break
 
             text = resp.text
-            _safe_log(f"📄 HTML recibido: {len(text)} caracteres descargados.")
-
-            if len(text) < 3000:
-                _safe_log("⚠️ El HTML es demasiado corto. Posible bloqueo de IP.", "warning")
+            _safe_log(f"📄 HTML descargado: {len(text)} caracteres.")
 
             soup = BeautifulSoup(text, "html.parser")
-            
-            # Buscamos las tarjetas de producto
             cards = soup.select(".product-tile, .product-card, .product-grid li, div[data-pid], article, .grid-tile, a[href*='/product/']")
-            _safe_log(f"🔍 Tarjetas de producto encontradas: {len(cards)}")
+            _safe_log(f"🔍 Tarjetas detectadas: {len(cards)}")
 
             for t in cards:
                 try:
@@ -1898,12 +1891,12 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 except Exception: continue
 
             if productos:
-                _safe_log(f"✅ ¡Éxito! Se indexaron {len(productos)} ofertas de Nike.", "success")
+                _safe_log(f"✅ ¡Éxito! Se procesaron {len(productos)} ofertas de Nike.", "success")
             else:
-                _safe_log("⚠️ No se pudieron extraer ofertas del HTML descargado.", "warning")
+                _safe_log("⚠️ No se encontraron productos en la respuesta descargada.", "warning")
 
     except Exception as e:
-        _safe_log(f"💥 Error general en motor_nike: {e}", "error")
+        _safe_log(f"💥 Error en motor_nike: {e}", "error")
 
     return productos
 
