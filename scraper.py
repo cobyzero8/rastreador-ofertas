@@ -1810,44 +1810,52 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     query_params = parse_qs(parsed_url.query)
     vistos = set()
 
-    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI para URL: {url}")
+    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI (Modo Rápido) para: {url}")
 
     try:
-        for page in range(1, 2):  # Prueba en la Página 1
+        for page in range(1, 2):  # Prueba en Página 1
             offset = (page - 1) * int(step)
             query_params["start"] = [str(offset)]
             query_params["sz"] = [str(step)]
             new_query = urlencode(query_params, doseq=True)
             page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            _safe_log("🌐 Solicitando túnel residencial a ScraperAPI para bypass de Nike...")
+            _safe_log("🌐 Consultando a ScraperAPI (Timeout máximo: 25s)...")
 
+            # Payload directo sin render='true' para respuesta instantánea
             payload = {
                 'api_key': api_key,
                 'url': page_url,
-                'render': 'true'  # Renderiza el JavaScript de Nike
+                'country_code': 'pe'
             }
 
             resp = None
             try:
-                # La petición se envía a la API de ScraperAPI
-                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=45)
-                _safe_log(f"📡 ¡ScraperAPI respondió! Código HTTP: {resp.status_code}")
+                _safe_log("⏳ Esperando respuesta del servidor...")
+                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=25)
+                _safe_log(f"📡 ¡Respuesta recibida! Código HTTP: {resp.status_code}")
+            except requests.exceptions.Timeout:
+                _safe_log("⏰ Timeout: ScraperAPI no respondió en 25 segundos.", "error")
+                break
             except Exception as e:
-                _safe_log(f"⚠️ Error al conectar con ScraperAPI: {e}", "warning")
+                _safe_log(f"💥 Error en la conexión HTTP: {e}", "error")
+                break
 
             if not resp or resp.status_code != 200:
-                _safe_log("🛑 ScraperAPI no pudo obtener la respuesta (Verificar API Key / Créditos).", "error")
+                _safe_log(f"🛑 ScraperAPI devolvió HTTP {resp.status_code if resp else 'Nulo'}.", "error")
                 break
 
             text = resp.text
-            _safe_log(f"📄 HTML recibido con éxito: {len(text)} caracteres descargados.")
+            _safe_log(f"📄 HTML recibido: {len(text)} caracteres descargados.")
+
+            if len(text) < 3000:
+                _safe_log("⚠️ El HTML es demasiado corto. Posible bloqueo de IP.", "warning")
 
             soup = BeautifulSoup(text, "html.parser")
             
-            # 1️⃣ Extracción vía selectores HTML
+            # Buscamos las tarjetas de producto
             cards = soup.select(".product-tile, .product-card, .product-grid li, div[data-pid], article, .grid-tile, a[href*='/product/']")
-            _safe_log(f"🔍 Tarjetas detectadas en el HTML: {len(cards)}")
+            _safe_log(f"🔍 Tarjetas de producto encontradas: {len(cards)}")
 
             for t in cards:
                 try:
@@ -1889,10 +1897,13 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                     })
                 except Exception: continue
 
-            _safe_log(f"✅ Se indexaron {len(productos)} productos válidos de Nike.", "success" if productos else "warning")
+            if productos:
+                _safe_log(f"✅ ¡Éxito! Se indexaron {len(productos)} ofertas de Nike.", "success")
+            else:
+                _safe_log("⚠️ No se pudieron extraer ofertas del HTML descargado.", "warning")
 
     except Exception as e:
-        _safe_log(f"💥 Error en motor_nike: {e}", "error")
+        _safe_log(f"💥 Error general en motor_nike: {e}", "error")
 
     return productos
 
