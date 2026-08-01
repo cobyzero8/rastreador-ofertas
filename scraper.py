@@ -1782,6 +1782,9 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             print(log_entry)
 
     def _safe_parse_price(val):
+        if 'limpiar_precio_pnp' in globals():
+            try: return float(limpiar_precio_pnp(val))
+            except Exception: pass
         try:
             s = re.sub(r'[^\d\.,]', '', str(val))
             if s.count('.') > 1: s = s.replace('.', '')
@@ -1807,21 +1810,25 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
+    
+    # ⚡ ÚNICO CAMBIO NECESARIO: Petición ligera por fragmentos AJAX
+    query_params["format"] = ["ajax"]
+    
     vistos = set()
+    STEP_SIZE = int(step)
 
-    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI para: {url}")
+    _safe_log(f"🚀 Iniciando motor_nike para URL: {url}")
 
     try:
         for page in range(1, 2):
-            offset = (page - 1) * int(step)
+            offset = (page - 1) * STEP_SIZE
             query_params["start"] = [str(offset)]
             query_params["sz"] = [str(step)]
             new_query = urlencode(query_params, doseq=True)
             page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            _safe_log("🌐 Consultando ScraperAPI (Timeout estricto: 12s)...")
+            _safe_log("🌐 Solicitando datos a ScraperAPI...")
 
-            # Quitamos country_code que causaba el bucle infinito
             payload = {
                 'api_key': api_key,
                 'url': page_url
@@ -1829,22 +1836,22 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
             resp = None
             try:
-                # Timeout explícito: (3s conectar, 12s leer)
-                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=(3, 12))
-                _safe_log(f"📡 Respuesta de ScraperAPI: Código HTTP {resp.status_code}")
+                # Timeout explícito de red para evitar bloqueos continuos
+                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=(5, 15))
+                _safe_log(f"📡 Respuesta HTTP: {resp.status_code}")
             except requests.exceptions.Timeout:
-                _safe_log("⏰ ScraperAPI agotó el tiempo de espera (12s). Omitiendo petición.", "error")
+                _safe_log("⏰ ScraperAPI agotó el tiempo de respuesta (15s).", "error")
                 break
             except Exception as e:
-                _safe_log(f"💥 Error al conectar con ScraperAPI: {e}", "error")
+                _safe_log(f"💥 Error en la petición: {e}", "error")
                 break
 
             if not resp or resp.status_code != 200:
-                _safe_log(f"🛑 ScraperAPI respondió con error HTTP {resp.status_code if resp else 'Nulo'}.", "error")
+                _safe_log(f"🛑 Error de respuesta HTTP {resp.status_code if resp else 'Sin respuesta'}.", "error")
                 break
 
             text = resp.text
-            _safe_log(f"📄 HTML descargado: {len(text)} caracteres.")
+            _safe_log(f"📄 HTML recibido: {len(text)} caracteres.")
 
             soup = BeautifulSoup(text, "html.parser")
             cards = soup.select(".product-tile, .product-card, .product-grid li, div[data-pid], article, .grid-tile, a[href*='/product/']")
@@ -1893,7 +1900,7 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             if productos:
                 _safe_log(f"✅ ¡Éxito! Se procesaron {len(productos)} ofertas de Nike.", "success")
             else:
-                _safe_log("⚠️ No se encontraron productos en la respuesta descargada.", "warning")
+                _safe_log("⚠️ No se encontraron productos válidos en el HTML recibido.", "warning")
 
     except Exception as e:
         _safe_log(f"💥 Error en motor_nike: {e}", "error")
