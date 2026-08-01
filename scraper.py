@@ -2012,10 +2012,8 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fallback=False, session=None, max_items=500, headers_override=None):
     """
-    Motor Natura ultra fluido y protegido contra congelamientos.
-    - Timeout estricto de 5s en API BFF.
-    - Caída automática e inmediata a Scraping Directo de Catálogo (HTML/JSON-LD).
-    - Retorna lista de productos 100% compatible con revisar_ofertas.
+    Motor Natura robusto y blindado (BFF API + JSON State Parser Fallback).
+    Garantiza retorno de datos en lista para Streamlit y alertas Telegram.
     """
     import os, time, random, json, requests, re
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
@@ -2081,23 +2079,6 @@ def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fa
     vistos = set()
     session = session or requests.Session()
 
-    headers = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9,en;q=0.8",
-        "referer": "https://www.natura.com.pe/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-
-    try:
-        if st and "NATURA_X_API_KEY" in st.secrets:
-            headers["x-api-key"] = st.secrets["NATURA_X_API_KEY"]
-        if st and "NATURA_AUTH_BEARER" in st.secrets:
-            headers["authorization"] = f"Bearer {st.secrets['NATURA_AUTH_BEARER']}"
-    except Exception: pass
-
-    if headers_override and isinstance(headers_override, dict):
-        headers.update(headers_override)
-
     parsed = urlparse(url)
     q = parse_qs(parsed.query)
     refine_1 = q.get("refine_1", [None])[0]
@@ -2106,6 +2087,27 @@ def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fa
 
     base = f"{parsed.scheme}://{parsed.netloc}"
     endpoint = base + "/bff-app-natura-peru/search"
+
+    # 🔑 HEADERS CORREGIDOS PARA ACEPTE API JSON
+    headers_bff = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "es-PE,es;q=0.9,en;q=0.8",
+        "content-type": "application/json",
+        "referer": url,
+        "tenant_id": "peru-natura-web",
+        "x_use_slas": "true",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+
+    try:
+        if st and "NATURA_X_API_KEY" in st.secrets:
+            headers_bff["x-api-key"] = st.secrets["NATURA_X_API_KEY"]
+        if st and "NATURA_AUTH_BEARER" in st.secrets:
+            headers_bff["authorization"] = f"Bearer {st.secrets['NATURA_AUTH_BEARER']}"
+    except Exception: pass
+
+    if headers_override and isinstance(headers_override, dict):
+        headers_bff.update(headers_override)
 
     base_params = {
         "count": page_size,
@@ -2125,20 +2127,19 @@ def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fa
         start = page * page_size
         page_items = []
 
-        # 1️⃣ INTENTO VÍA API BFF (Si sigue activo)
+        # 1️⃣ INTENTO VÍA API BFF NATURA
         if use_bff_api:
             params = dict(base_params)
             params["start"] = start
-            _log(f"⚡ Intentando API BFF Natura (Timeout estricto: 5s)...")
+            _log(f"⚡ Solicitando API BFF Natura (start={start})...")
             
             resp = None
             try:
-                # Timeout ultracorto (3s conectar, 5s leer) para jamás congelar la pantalla
-                resp = session.get(endpoint, params=params, headers=headers, timeout=(3, 5))
+                resp = session.get(endpoint, params=params, headers=headers_bff, timeout=(3, 5))
                 _log(f"📡 Respuesta API BFF: HTTP {resp.status_code}")
             except Exception as e:
-                _log("⏰ Timeout o bloqueo en API BFF. Desactivando BFF para usar catálogo directo.", "warning")
-                use_bff_api = False # Desactiva la API para no perder tiempo en las siguientes páginas
+                _log("⏰ Timeout o rechazo en API BFF. Cambiando a extracción de estado web...", "warning")
+                use_bff_api = False
 
             if resp and resp.status_code == 200:
                 try:
@@ -2188,31 +2189,40 @@ def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fa
                 except Exception:
                     use_bff_api = False
 
-        # 2️⃣ FALLBACK INSTANTÁNEO: SCRAPING DIRECTO DE LA PÁGINA WEB
+        # 2️⃣ FALLBACK: EXTRACCIÓN DE ESTADO EMBEDIDO / JSON-LD EN HTML
         if not page_items:
-            # Construir URL con paginación limpia
+            headers_web = {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "referer": "https://www.natura.com.pe/"
+            }
             query_p = dict(q)
             query_p["page"] = [str(page + 1)]
             page_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(query_p, doseq=True), parsed.fragment))
 
             _log(f"🌐 Escaneando catálogo web directamente (Página {page + 1})...")
             try:
-                resp_html = session.get(page_url, headers=headers, timeout=5)
+                resp_html = session.get(page_url, headers=headers_web, timeout=6)
                 if resp_html.status_code == 200:
                     text = resp_html.text
                     soup = BeautifulSoup(text, "html.parser")
 
-                    # Extraer vía JSON-LD Schema.org de VTEX
-                    json_scripts = soup.find_all('script', type='application/ld+json')
+                    # Extraer vía scripts de Schema.org / JSON-LD
+                    json_scripts = soup.find_all('script', type=re.compile(r'ld\+json|json'))
                     for script in json_scripts:
                         if not script.string: continue
                         try:
                             data_ld = json.loads(script.string)
-                            items_ld = data_ld.get('itemListElement', []) if isinstance(data_ld, dict) else (data_ld if isinstance(data_ld, list) else [])
+                            items_ld = []
+                            if isinstance(data_ld, dict):
+                                items_ld = data_ld.get('itemListElement', []) or data_ld.get('products', [])
+                            elif isinstance(data_ld, list):
+                                items_ld = data_ld
+
                             for it in items_ld:
                                 prod_data = it.get('item', it) if isinstance(it, dict) else {}
                                 if not isinstance(prod_data, dict): continue
-                                nombre = (prod_data.get('name') or '').strip()
+                                nombre = (prod_data.get('name') or prod_data.get('title') or '').strip()
                                 if not nombre or len(nombre) < 3: continue
                                 offers = prod_data.get('offers', {})
                                 p_o = _safe_parse_price(offers.get('price') or offers.get('lowPrice') or 0)
@@ -2234,7 +2244,7 @@ def motor_natura(url, limite=9999, max_pages=10, page_size=12, use_playwright_fa
                                         })
                         except Exception: continue
 
-                    # Extraer vía DOM si JSON-LD no devolvió elementos
+                    # Extraer vía DOM directo
                     if not page_items:
                         cards = soup.select("[class*='productSummary'], .vtex-product-summary-2-x-container, div[data-product-id], article")
                         for t in cards:
