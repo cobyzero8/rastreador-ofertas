@@ -2012,11 +2012,10 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_items=500):
     """
-    Motor Natura Perú - Extracción directa mediante SSR / HTML (Blindado contra 404 de APIs).
+    Motor Natura Perú - Consulta directa a la API GraphQL de VTEX IO.
     """
     import os, time, re, random, json, requests
-    from urllib.parse import urlparse, urljoin, unquote
-    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, urljoin
     from datetime import datetime, timezone
     import urllib3
 
@@ -2044,15 +2043,8 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
             print(f"[{level.upper()}] {msg}")
 
     def _safe_parse_price(val):
-        if not val: return 0.0
         try:
-            # Eliminar símbolos de moneda y limpiar texto
-            cleaned = re.sub(r'[^\d.,]', '', str(val)).replace(',', '.')
-            # Manejar formato con múltiples puntos/comas si aplica
-            parts = cleaned.split('.')
-            if len(parts) > 2:
-                cleaned = "".join(parts[:-1]) + "." + parts[-1]
-            return float(cleaned)
+            return float(val) if val is not None else 0.0
         except Exception:
             return 0.0
 
@@ -2073,148 +2065,138 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Cache-Control": "no-cache",
-        "Referer": "https://www.natura.com.pe/"
+        "Accept": "*/*",
+        "Content-Type": "application/json",
+        "Origin": "https://www.natura.com.pe",
+        "Referer": url
     }
 
-    _log(f"🌿 Iniciando patrullaje directo en sitio web Natura Perú | URL: {url} | Límite: S/. {limite}")
+    parsed = urlparse(url)
+    path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
+    category_slug = path_segments[-1] if path_segments else "perfumeria-masculina"
+    termino_busqueda = category_slug.replace('-', ' ')
+
+    _log(f"🌿 Patrullando Natura Perú (GraphQL) | Categoría: {category_slug} | Límite: S/. {limite}")
+
+    # Endpoint GraphQL público de VTEX IO Natura
+    graphql_url = "https://www.natura.com.pe/_v/public/graphql/v1"
 
     for page in range(1, max_pages + 1):
-        # Ajustar URL para paginación de Natura si es necesario
-        target_url = url if page == 1 else f"{url}?page={page}"
-        _log(f"⚡ Navegando a página {page}: {target_url}...")
+        _log(f"⚡ Consultando GraphQL Natura - Página {page}...")
+
+        # Query GraphQL que usa el frontend de Natura
+        payload = {
+            "query": """
+            query productSearch($query: String, $map: String, $from: Int, $to: Int, $selectedFacets: [SelectedFacetInput]) {
+              productSearch(query: $query, map: $map, from: $from, to: $to, selectedFacets: $selectedFacets) {
+                products {
+                  productId
+                  productName
+                  linkText
+                  items {
+                    images { imageUrl }
+                    sellers {
+                      commertialOffer {
+                        Price
+                        ListPrice
+                        AvailableQuantity
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """,
+            "variables": {
+                "query": termino_busqueda,
+                "map": "ft",
+                "from": (page - 1) * step,
+                "to": (page * step) - 1,
+                "selectedFacets": [{"key": "ft", "value": termino_busqueda}]
+            }
+        }
 
         try:
-            resp = session.get(target_url, headers=headers, timeout=10, verify=False)
-            _log(f"📡 Estado HTTP Natura Web: {resp.status_code}")
-            
+            resp = session.post(graphql_url, json=payload, headers=headers, timeout=10, verify=False)
+            _log(f"📡 Estado HTTP GraphQL: {resp.status_code}")
+
             if resp.status_code != 200:
-                _log(f"⚠️ Error al acceder a la página ({resp.status_code}). Deteniendo paginación.", "warning")
+                _log(f"⚠️ Error HTTP al consultar GraphQL ({resp.status_code}).", "warning")
                 break
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+            data = resp.json()
+            raw_products = data.get("data", {}).get("productSearch", {}).get("products", [])
+
+            if not raw_products:
+                _log(f"ℹ️ No se encontraron más productos en la página {page}. Finalizando patrullaje.")
+                break
+
             page_items = []
-
-            # -------------------------------------------------------------
-            # ESTRATEGIA 1: Extracción desde script __NEXT_DATA__ (JSON SSR)
-            # -------------------------------------------------------------
-            next_data_script = soup.find("script", id="__NEXT_DATA__")
-            if next_data_script and next_data_script.string:
+            for prod in raw_products:
+                if len(productos) + len(page_items) >= max_items: break
                 try:
-                    data = json.loads(next_data_script.string)
-                    # Búsqueda recursiva de listas de productos en el estado de Next.js
-                    props = data.get("props", {}).get("pageProps", {})
+                    nombre = (prod.get("productName") or "").strip()
+                    if not nombre: continue
+
+                    link_text = prod.get("linkText") or ""
+                    link_final = f"https://www.natura.com.pe/{link_text}/p" if link_text else url
+
+                    prod_id = prod.get("productId")
+                    ident = _normalize_identifier(link_final, prod_id)
+                    if ident in vistos: continue
+
+                    items_list = prod.get("items") or []
+                    if not items_list: continue
+
+                    first_item = items_list[0]
+                    sellers = first_item.get("sellers") or []
+                    if not sellers: continue
+
+                    commertial = sellers[0].get("commertialOffer") or {}
                     
-                    # Intentar ubicar el arreglo de productos en estructuras comunes de Next.js/VTEX
-                    raw_products = (
-                        props.get("products") or 
-                        props.get("initialState", {}).get("products") or
-                        props.get("dehydratedState", {}).get("queries", [{}])[0].get("state", {}).get("data", {}).get("products") or
-                        []
-                    )
+                    # Verificar stock disponible
+                    stock = commertial.get("AvailableQuantity", 0)
+                    if stock <= 0: continue
 
-                    if raw_products:
-                        _log(f"📦 Se detectaron {len(raw_products)} productos en el estado interno (SSR).")
-                        for prod in raw_products:
-                            nombre = prod.get("productName") or prod.get("name") or ""
-                            link_rel = prod.get("linkText") or prod.get("link") or ""
-                            link_final = f"https://www.natura.com.pe/{link_rel}/p" if link_rel and not link_rel.startswith("http") else link_rel
+                    p_o = _safe_parse_price(commertial.get("Price"))
+                    p_r = _safe_parse_price(commertial.get("ListPrice") or p_o)
 
-                            ident = _normalize_identifier(link_final, prod.get("productId"))
-                            if ident in vistos: continue
-
-                            # Precios
-                            p_o = _safe_parse_price(prod.get("price") or prod.get("spotPrice"))
-                            p_r = _safe_parse_price(prod.get("listPrice") or p_o)
-
-                            if p_o == 0.0 or p_o > limite:
-                                continue
-
-                            images = prod.get("images", [])
-                            img_url = images[0].get("imageUrl") if images and isinstance(images[0], dict) else ""
-
-                            vistos.add(ident)
-                            page_items.append({
-                                "identificador": ident,
-                                "nombre": f"NATURA - {nombre.upper()}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url,
-                                "fecha": datetime.now(timezone.utc).isoformat()
-                            })
-                except Exception as e_json:
-                    _log(f"ℹ️ No se pudo procesar __NEXT_DATA__: {e_json}", "warning")
-
-            # -------------------------------------------------------------
-            # ESTRATEGIA 2: Extracción DOM HTML (Fallback con BeautifulSoup)
-            # -------------------------------------------------------------
-            if not page_items:
-                _log("🌐 Extrayendo productos directamente del DOM HTML...", "info")
-                # Buscar contenedores típicos de tarjetas de productos Natura
-                cards = soup.select('div[class*="product-card"], article, div[data-testid="product-card"]')
-                
-                for card in cards:
-                    try:
-                        # Título
-                        title_tag = card.select_one('h2, h3, a[class*="title"], [class*="productName"]')
-                        if not title_tag: continue
-                        nombre = title_tag.get_text(strip=True)
-
-                        # Enlace
-                        link_tag = card.find('a', href=True)
-                        if not link_tag: continue
-                        link_final = urljoin("https://www.natura.com.pe", link_tag['href'])
-
-                        ident = _normalize_identifier(link_final)
-                        if ident in vistos: continue
-
-                        # Precio
-                        price_tag = card.select_one('[class*="price"], [class*="Price"], span[class*="value"]')
-                        if not price_tag: continue
-                        p_o = _safe_parse_price(price_tag.get_text())
-
-                        if p_o == 0.0 or p_o > limite:
-                            continue
-
-                        # Imagen
-                        img_tag = card.find('img')
-                        img_url = img_tag.get('src', '') if img_tag else ''
-
-                        vistos.add(ident)
-                        page_items.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre.upper()}",
-                            "precio": p_o,
-                            "precio_regular": p_o,
-                            "link": link_final,
-                            "img": img_url,
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                    except Exception:
+                    if p_o == 0.0 or p_o > limite:
                         continue
 
+                    images = first_item.get("images") or []
+                    img_url = images[0].get("imageUrl") if images else ""
+
+                    vistos.add(ident)
+                    page_items.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre.upper()}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    continue
+
             if not page_items:
-                _log(f"ℹ️ No se encontraron más productos en la página {page}. Finalizando.")
+                _log(f"ℹ️ Sin ofertas válidas dentro del límite en página {page}.")
                 break
 
             for it in page_items:
                 if not any(p["link"] == it["link"] for p in productos):
                     productos.append(it)
 
-            _log(f"📦 Ofertas recolectadas acumuladas: {len(productos)}")
-            if len(productos) >= max_items: break
-            time.sleep(1)
+            _log(f"📦 Ofertas indexadas hasta el momento: {len(productos)}")
+            time.sleep(0.4)
 
         except Exception as e:
-            _log(f"❌ Error al procesar la página {page}: {e}", "error")
+            _log(f"❌ Error durante la consulta GraphQL: {e}", "error")
             break
 
     _log(f"✅ Patrullaje de Natura completado. Total ofertas: {len(productos)}", "success")
     return productos
-
 
 
 
