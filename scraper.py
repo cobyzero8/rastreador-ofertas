@@ -2012,12 +2012,11 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_items=500):
     """
-    Motor Natura Perú Directo y Ultrarrápido.
-    Elimina endpoints fantasmas/bloqueados y lee directamente la estructura
-    de productos (JSON-LD / DOM) de Natura en menos de 2 segundos.
+    Motor Natura Perú basado en la API Pública Nativa de VTEX IO.
+    Obtiene el JSON directo del catálogo en <1s sin requerir renderizado JS.
     """
     import os, time, re, random, json, requests
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
+    from urllib.parse import urlparse, parse_qs, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
@@ -2042,25 +2041,19 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
         except Exception:
             print(f"[{level.upper()}] {msg}")
 
-    def _safe_parse_price(txt):
-        if not txt: return 0.0
+    def _safe_parse_price(val):
         try:
-            m = re.search(r'(?:S/\.?\s*)?(\d{1,4}(?:[\.,]\d{2})?)', str(txt))
-            if m:
-                s = m.group(1).replace(',', '.')
-                val = float(s)
-                if 10.0 <= val <= 3000.0:
-                    return val
-            return 0.0
+            return float(val) if val else 0.0
         except Exception:
             return 0.0
 
-    def _normalize_identifier(link):
+    def _normalize_identifier(link, prod_id=None):
+        if prod_id:
+            return f"NATURA-NATPER-{prod_id}"
         try:
-            m = re.search(r'(NATPER-\d+|[A-Z0-9\-]{6,})', link.upper())
+            m = re.search(r'(NATPER-\d+|\d+)', link.upper())
             if m: return f"NATURA-{m.group(1)}"
             token = link.split('?')[0].rstrip('/').split('/')[-1]
-            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or str(abs(hash(link)))
             return f"NATURA-{token.upper()}"
         except Exception:
             return f"NATURA-{abs(hash(link))}"
@@ -2071,140 +2064,90 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Accept": "application/json",
         "Referer": "https://www.natura.com.pe/"
     }
 
+    # Extraer el slug de la categoría (ej: perfumeria-masculina)
     parsed = urlparse(url)
-    q = parse_qs(parsed.query)
+    path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
+    category_slug = path_segments[-1] if path_segments else "perfumeria"
 
-    _log(f"🌿 Iniciando patrullaje directo Natura Perú | URL: {url} | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando patrullaje Natura Perú (VTEX Engine) | Categoría: {category_slug} | Límite: S/. {limite}")
+
+    STEP_SIZE = int(step)
 
     for page in range(1, max_pages + 1):
-        query_params = dict(q)
-        query_params["page"] = [str(page)]
-        
-        page_url = urlunparse((
-            parsed.scheme, parsed.netloc, parsed.path, 
-            parsed.params, urlencode(query_params, doseq=True), parsed.fragment
-        ))
+        start_idx = (page - 1) * STEP_SIZE
+        end_idx = start_idx + STEP_SIZE - 1
 
-        _log(f"⚡ Escaneando catálogo Natura (Página {page})...")
+        # API Pública de Búsqueda de VTEX
+        vtex_api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{category_slug}"
+        params = {
+            "_from": start_idx,
+            "_to": end_idx,
+            "O": "OrderByTopSaleDESC"
+        }
+
+        _log(f"⚡ Consultando API VTEX Natura (Items {start_idx} a {end_idx})...")
 
         resp = None
         try:
-            # Timeout de conexión corto (3s conectar, 6s leer)
-            resp = session.get(page_url, headers=headers, timeout=(3, 6))
-            _log(f"📡 Estado HTTP Natura: {resp.status_code}")
+            resp = session.get(vtex_api_url, params=params, headers=headers, timeout=8)
+            _log(f"📡 Estado HTTP API VTEX: {resp.status_code}")
         except Exception as e:
-            _log(f"⚠️ Tiempo de espera agotado o error de red: {e}", "warning")
+            _log(f"⚠️ Error al consultar API VTEX: {e}", "warning")
             break
 
-        if not resp or resp.status_code != 200:
-            _log(f"🛑 No se obtuvo respuesta válida de la tienda (HTTP {resp.status_code if resp else 'Error'})", "warning")
-            break
+        items = []
+        if resp and resp.status_code == 200:
+            try:
+                items = resp.json()
+            except Exception:
+                items = []
 
-        text = resp.text
-        soup = BeautifulSoup(text, "html.parser")
         page_items = []
 
-        # 1️⃣ CAPA A: Lectura de datos JSON-LD (Schema.org / Datos estructurados)
-        json_scripts = soup.find_all('script', type=re.compile(r'ld\+json|json'))
-        for script in json_scripts:
-            if not script.string: continue
-            try:
-                data_ld = json.loads(script.string)
-                items_ld = []
-                if isinstance(data_ld, dict):
-                    items_ld = data_ld.get('itemListElement', []) or data_ld.get('products', [])
-                elif isinstance(data_ld, list):
-                    items_ld = data_ld
-
-                for it in items_ld:
-                    prod_data = it.get('item', it) if isinstance(it, dict) else {}
-                    if not isinstance(prod_data, dict): continue
-                    
-                    nombre = (prod_data.get('name') or prod_data.get('title') or '').strip()
-                    if not nombre or len(nombre) < 3: continue
-                    
-                    offers = prod_data.get('offers', {})
-                    p_o = _safe_parse_price(offers.get('price') or offers.get('lowPrice') or 0)
-                    p_r = _safe_parse_price(offers.get('highPrice') or p_o)
-                    
-                    link_rel = prod_data.get('url') or ''
-                    link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else page_url
-                    img = prod_data.get('image') or ''
-
-                    if 0 < p_o <= limite:
-                        ident = _normalize_identifier(link_final)
-                        if ident not in vistos:
-                            vistos.add(ident)
-                            page_items.append({
-                                "identificador": ident,
-                                "nombre": f"NATURA - {nombre.upper()}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img,
-                                "fecha": datetime.now(timezone.utc).isoformat()
-                            })
-            except Exception:
-                continue
-
-        # 2️⃣ CAPA B: Extracción HTML directo (DOM) si JSON-LD no devuelve items
-        if not page_items:
-            cards = soup.select(".product-tile, .product-card, div[data-pid], article, [class*='productSummary'], .vtex-product-summary-2-x-container, a[href*='NATPER']")
-            
-            for t in cards:
+        # 1️⃣ PROCESAR RESPUESTA JSON DE LA API DE VTEX
+        if isinstance(items, list) and len(items) > 0:
+            for prod in items:
                 if len(productos) + len(page_items) >= max_items: break
                 try:
-                    a_el = t if t.name == "a" else (t.select_one("a[href*='/p/']") or t.select_one("a[href]"))
-                    if not a_el: continue
+                    nombre = (prod.get("productName") or "").strip()
+                    if not nombre or len(nombre) < 3: continue
 
-                    href = a_el.get("href", "")
-                    if not href or href == "#": continue
-                    link_final = urljoin("https://www.natura.com.pe", href)
+                    link_rel = prod.get("link") or ""
+                    link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else url
 
-                    tit_el = t.select_one(".product-name, [class*='productName'], .product-title, h2, h3")
-                    nombre = (tit_el.text.strip() if tit_el else (a_el.get("aria-label") or a_el.text or "")).strip()
-                    nombre = re.sub(r'\s+', ' ', nombre)
+                    prod_id = prod.get("productId")
+                    ident = _normalize_identifier(link_final, prod_id)
+                    if ident in vistos: continue
 
-                    if not nombre or len(nombre) < 3 or any(w in nombre.upper() for w in ["VER TODO", "CATEGORÍA", "FILTRAR"]):
-                        continue
+                    # Extraer precios e imagen desde la estructura de Items/Sellers de VTEX
+                    items_list = prod.get("items") or []
+                    if not items_list: continue
 
-                    price_container = t.select_one(".price, [class*='sellingPrice'], .product-price, .sales") or t
-                    p_o = _safe_parse_price(price_container.text)
+                    first_item = items_list[0]
+                    sellers = first_item.get("sellers") or []
+                    if not sellers: continue
 
-                    if p_o == 0.0:
-                        m = re.search(r"(?:S/\.?\s*)(\d[\d\.,]*)", t.text)
-                        if m: p_o = _safe_parse_price(m.group(1))
+                    commertial = sellers[0].get("commertialOffer") or {}
+                    p_o = _safe_parse_price(commertial.get("Price"))
+                    p_r = _safe_parse_price(commertial.get("ListPrice") or p_o)
 
                     if p_o == 0.0 or p_o > limite:
                         continue
 
-                    p_r = p_o
-                    del_el = t.select_one("del, .strike-through, [class*='listPrice'], .original-price")
-                    if del_el:
-                        p_r_val = _safe_parse_price(del_el.text)
-                        if p_r_val > p_o: p_r = p_r_val
+                    # Imagen
+                    images = first_item.get("images") or []
+                    img_url = images[0].get("imageUrl") if images else ""
 
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
                     vistos.add(ident)
-
-                    img_el = t.select_one("img")
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get("data-src") or img_el.get("src") or img_el.get("srcset") or ""
-                        if "," in img_url: img_url = img_url.split(",")[0].split(" ")[0]
-                        if img_url.startswith("//"): img_url = "https:" + img_url
-
                     page_items.append({
                         "identificador": ident,
                         "nombre": f"NATURA - {nombre.upper()}",
                         "precio": p_o,
-                        "precio_regular": p_r,
+                        "precio_regular": max(p_r, p_o),
                         "link": link_final,
                         "img": img_url,
                         "fecha": datetime.now(timezone.utc).isoformat()
@@ -2212,8 +2155,49 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 except Exception:
                     continue
 
+        # 2️⃣ FALLBACK: EXTRAER DESDE window.__STATE__ SI LA API RETORNA VACÍO
+        if not page_items and page == 1:
+            _log("🌐 API VTEX sin resultados. Intentando extracción de __STATE__ de la web...", "warning")
+            try:
+                web_resp = session.get(url, headers={"User-Agent": headers["User-Agent"]}, timeout=8)
+                if web_resp.status_code == 200:
+                    soup = BeautifulSoup(web_resp.text, "html.parser")
+                    script_state = soup.find(lambda tag: tag.name == 'script' and '__STATE__' in tag.text)
+                    if script_state:
+                        match = re.search(r'window\.__STATE__\s*=\s*(\{.+?\});', script_state.text)
+                        if match:
+                            state_data = json.loads(match.group(1))
+                            for key, val in state_data.items():
+                                if isinstance(val, dict) and val.get('productName'):
+                                    nombre = val.get('productName')
+                                    link_rel = val.get('linkText') or ""
+                                    link_final = f"https://www.natura.com.pe/{link_rel}/p" if link_rel else url
+                                    ident = _normalize_identifier(link_final)
+                                    if ident in vistos: continue
+                                    
+                                    # Intentar buscar precio en el objeto
+                                    p_o = 0.0
+                                    for k2, v2 in state_data.items():
+                                        if 'commertialOffer' in k2 and isinstance(v2, dict) and v2.get('Price'):
+                                            p_o = float(v2.get('Price'))
+                                            break
+                                    
+                                    if 0 < p_o <= limite:
+                                        vistos.add(ident)
+                                        page_items.append({
+                                            "identificador": ident,
+                                            "nombre": f"NATURA - {nombre.upper()}",
+                                            "precio": p_o,
+                                            "precio_regular": p_o,
+                                            "link": link_final,
+                                            "img": "",
+                                            "fecha": datetime.now(timezone.utc).isoformat()
+                                        })
+            except Exception as e_fallback:
+                _log(f"⚠️ Error en fallback web: {e_fallback}", "warning")
+
         if not page_items:
-            _log(f"ℹ️ Sin más ofertas detectadas en la página {page}. Finalizando escaneo.")
+            _log(f"ℹ️ Sin más perfumes encontrados en la página {page}. Finalizando patrullaje.")
             break
 
         existing_links = {p["link"] for p in productos}
@@ -2223,7 +2207,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 existing_links.add(it["link"])
 
         _log(f"📦 Perfumes indexados: {len(productos)} ofertas.")
-        time.sleep(random.uniform(0.3, 0.6))
+        time.sleep(random.uniform(0.3, 0.5))
 
     _log(f"✅ Patrullaje de Natura completado con éxito. Total ofertas: {len(productos)}", "success")
     return productos
