@@ -2008,14 +2008,16 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     except Exception: pass
 
     return productos
-    
-def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fallback=False, session=None, max_items=1000):
+
+
+def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fallback=False, session=None, max_items=1000, headers_override=None):
     """
-    Motor híbrido ultra rápido para Natura Perú (BFF API + DOM / Playwright Fallback).
-    Inyecta trazabilidad a ml_debug/ y retorna directamente una lista de productos
-    compatible con Supabase, Streamlit e Historial de Precios.
+    Motor híbrido para Natura Perú (BFF API + Playwright fallback).
+    - Mantiene soporte para st.secrets, os.environ y headers_override.
+    - Guarda trazabilidad en ml_debug/.
+    - Devuelve una lista de productos compatible con revisar_ofertas y Supabase.
     """
-    import os, time, re, random, json, requests
+    import os, time, random, json, requests, re
     from urllib.parse import urlparse, parse_qs, urlencode, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
@@ -2027,9 +2029,10 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
 
     logs_ejecucion = []
 
-    def _safe_log(msg, level="info"):
+    def _log(msg, level="info"):
         ts = datetime.now(timezone.utc).isoformat()
-        logs_ejecucion.append({"ts": ts, "level": level, "msg": msg})
+        entry = {"ts": ts, "level": level, "msg": msg}
+        logs_ejecucion.append(entry)
         try:
             if st:
                 if level == "error": st.error(msg)
@@ -2040,20 +2043,17 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
                 print(f"[{level.upper()}] {msg}")
         except Exception:
             print(f"[{level.upper()}] {msg}")
+        return entry
 
     def _ensure_debug_dir():
-        try:
-            d = os.path.join(os.getcwd(), "ml_debug")
-            os.makedirs(d, exist_ok=True)
-            return d
-        except Exception:
-            return None
+        d = os.path.join(os.getcwd(), "ml_debug")
+        os.makedirs(d, exist_ok=True)
+        return d
 
     def _save_text(path, txt):
         try:
             with open(path, "w", encoding="utf-8") as fh:
-                fh.write(txt)
-                fh.flush()
+                fh.write(txt); fh.flush()
             return True
         except Exception:
             return False
@@ -2066,14 +2066,6 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
             return float(s) if s else 0.0
         except Exception:
             return 0.0
-
-    def _normalize_identifier(link):
-        try:
-            token = link.split('?')[0].rstrip('/').split('/')[-1]
-            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or str(abs(hash(link)))
-            return f"NATURA-{token.upper()}"
-        except Exception:
-            return f"NATURA-{abs(hash(link))}"
 
     debug_dir = _ensure_debug_dir()
     start_ts = datetime.now(timezone.utc).isoformat()
@@ -2091,21 +2083,35 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
         "sec-fetch-site": "same-origin",
         "tenant_id": "peru-natura-web",
         "x_use_slas": "true",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
 
+    # 1. Preferencia por secrets de Streamlit
     try:
-        if st and "NATURA_X_API_KEY" in st.secrets:
-            headers["x-api-key"] = st.secrets["NATURA_X_API_KEY"]
-        if st and "NATURA_AUTH_BEARER" in st.secrets:
-            headers["authorization"] = f"Bearer {st.secrets['NATURA_AUTH_BEARER']}"
-    except Exception: pass
+        if st:
+            if "NATURA_X_API_KEY" in st.secrets:
+                headers["x-api-key"] = st.secrets["NATURA_X_API_KEY"]
+            if "NATURA_AUTH_BEARER" in st.secrets:
+                headers["authorization"] = f"Bearer {st.secrets['NATURA_AUTH_BEARER']}"
+    except Exception:
+        pass
+
+    # 2. Fallback a Variables de Entorno OS
+    try:
+        if "NATURA_X_API_KEY" in os.environ and "x-api-key" not in headers:
+            headers["x-api-key"] = os.environ["NATURA_X_API_KEY"]
+        if "NATURA_AUTH_BEARER" in os.environ and "authorization" not in headers:
+            headers["authorization"] = f"Bearer {os.environ['NATURA_AUTH_BEARER']}"
+    except Exception:
+        pass
+
+    # 3. Anulación explícita vía parámetro
+    if headers_override and isinstance(headers_override, dict):
+        headers.update(headers_override)
 
     parsed = urlparse(url)
     q = parse_qs(parsed.query)
     refine_1 = q.get("refine_1", [None])[0]
-    
-    # Extraer cgid si viene en el path (ej: /c/perfumeria-masculina)
     cgid_match = re.search(r'/c/([a-zA-Z0-9\-]+)', parsed.path)
     cgid = cgid_match.group(1) if cgid_match else None
 
@@ -2119,76 +2125,77 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
         "sort": "top-sellers",
         "apiMode": "product"
     }
+    if refine_1:
+        base_params["refine_1"] = refine_1
+    elif cgid:
+        base_params["cgid"] = cgid
 
-    if refine_1: base_params["refine_1"] = refine_1
-    elif cgid: base_params["cgid"] = cgid
+    _log(f"🌿 Iniciando motor_natura | URL: {url} | Límite: S/. {limite}")
 
-    _safe_log(f"🌿 Iniciando motor_natura vía BFF API | Límite: S/. {limite}")
+    page_count = 0
 
     for page in range(0, max_pages):
+        page_count += 1
         start = page * page_size
         params = dict(base_params)
         params["start"] = start
 
-        _safe_log(f"⚡ Consultando API BFF Natura (Bloque {page + 1} - start={start})...")
-
+        _log(f"⚡ Consultando BFF Natura (start={start})...")
         resp = None
         try:
-            resp = session.get(endpoint, params=params, headers=headers, timeout=12)
-            _safe_log(f"📡 Respuesta API BFF: HTTP {resp.status_code}")
+            resp = session.get(endpoint, params=params, headers=headers, timeout=15)
+            _log(f"📡 Status HTTP {resp.status_code} (start={start})")
         except Exception as e:
-            _safe_log(f"⚠️ Petición BFF falló: {e}", "warning")
+            _log(f"⚠️ Petición BFF falló: {e}", "warning")
+            resp = None
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         if resp is not None and debug_dir:
             try:
-                raw_html_path = os.path.join(debug_dir, f"raw_api_natura_{ts}_start_{start}.txt")
-                _save_text(raw_html_path, f"status: {resp.status_code}\n\n{resp.text[:300000]}")
-            except Exception: pass
+                raw_api_path = os.path.join(debug_dir, f"raw_api_natura_{ts}_start_{start}.txt")
+                _save_text(raw_api_path, f"status: {resp.status_code}\n\n{(resp.text or '')[:300000]}")
+            except Exception:
+                pass
 
         page_items = []
 
-        # 1️⃣ Procesar respuesta JSON de la API BFF
+        # 1️⃣ Procesar respuesta JSON del BFF
         if resp and resp.status_code == 200:
             try:
                 data = resp.json()
                 items = data.get("results") or data.get("items") or data.get("products") or []
-                
                 if not items and isinstance(data, dict):
                     for k, v in data.items():
                         if isinstance(v, list) and v and isinstance(v[0], dict):
                             if any(x in v[0] for x in ("name", "title", "price", "permalink", "productName")):
                                 items = v
                                 break
-
                 for it in items:
                     if len(productos) + len(page_items) >= max_items: break
                     try:
                         nombre = (it.get("name") or it.get("productName") or it.get("title") or "").strip()
                         if not nombre or len(nombre) < 3: continue
-
-                        # Parseo de precios
                         prices_info = it.get("prices") or it
                         p_o = _safe_parse_price(prices_info.get("salePrice") or prices_info.get("price") or prices_info.get("amount") or 0)
                         p_r = _safe_parse_price(prices_info.get("originalPrice") or prices_info.get("listPrice") or p_o)
                         p_r = max(p_r, p_o)
-
+                        
                         if p_o == 0.0 or p_o > limite: continue
-
+                        
                         link_rel = it.get("permalink") or it.get("url") or it.get("link") or ""
                         link_final = urljoin(base, link_rel) if link_rel else url
-
+                        
                         images_info = it.get("images") or it.get("image") or ""
                         img_url = ""
                         if isinstance(images_info, list) and images_info:
                             img_url = images_info[0].get("url") if isinstance(images_info[0], dict) else str(images_info[0])
                         elif isinstance(images_info, str):
                             img_url = images_info
-
-                        ident = _normalize_identifier(link_final)
+                            
+                        ident = ("NATURA-" + re.sub(r'[^A-Za-z0-9\-]', '', link_final.split('?')[0].rstrip('/').split('/')[-1]).upper()) if link_final else f"NATURA-{abs(hash(nombre))}"
                         if ident in vistos: continue
                         vistos.add(ident)
-
+                        
                         page_items.append({
                             "identificador": ident,
                             "nombre": f"NATURA - {nombre.upper()}",
@@ -2198,58 +2205,55 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
                             "img": img_url,
                             "fecha": datetime.now(timezone.utc).isoformat()
                         })
-                    except Exception: continue
+                    except Exception:
+                        continue
             except Exception as e_json:
-                _safe_log(f"⚠️ Error estructurando JSON: {e_json}", "warning")
+                _log(f"⚠️ Error parseando JSON: {e_json}", "warning")
 
-        # 2️⃣ Fallback a Playwright si la API BFF falla
+        # 2️⃣ Fallback con Playwright si la API falla o no devuelve datos
         if not page_items and use_playwright_fallback:
             try:
                 from playwright.sync_api import sync_playwright
-                _safe_log("🎭 Ejecutando Playwright Fallback (BFF no devolvió productos)...", "info")
+                _log("🎭 Fallback Playwright: Renderizando y haciendo clic en 'Explorar más'...", "info")
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
                     pg = browser.new_page()
-                    pg.goto(url, timeout=25000)
-                    
+                    pg.goto(url, timeout=30000)
                     try:
-                        pg.wait_for_selector(".product-card, .product-tile, article", timeout=8000)
-                    except Exception: pass
-
-                    clicks_needed = min(page + 1, 5)
-                    for _ in range(clicks_needed):
-                        btn = pg.query_selector("button:has-text('Explorar más resultados'), button:has-text('Ver más'), .load-more")
+                        pg.wait_for_selector(".product-card, .product-tile, article", timeout=10000)
+                    except Exception:
+                        pass
+                    clicks = min(page + 1, 8)
+                    for _ in range(clicks):
+                        btn = pg.query_selector("button:has-text('Explorar más resultados'), button:has-text('Ver más'), .load-more, .show-more")
                         if not btn: break
                         try:
                             btn.click()
-                            time.sleep(1.2)
-                        except Exception: break
-
+                        except Exception:
+                            break
+                        pg.wait_for_timeout(900 + random.randint(0, 800))
                     rendered = pg.content()
                     browser.close()
-
+                if debug_dir:
+                    pw_path = os.path.join(debug_dir, f"raw_html_playwright_{ts}_start_{start}.html")
+                    _save_text(pw_path, rendered)
                 soup = BeautifulSoup(rendered, "html.parser")
-                cards = soup.select(".product-card, .product-tile, article, div[data-product-id]")
+                cards = soup.select(".product-card, .product-tile, article, div[data-product-id], .grid-tile")
                 for c in cards:
                     try:
                         a = c.select_one("a[href]")
                         if not a: continue
                         link_final = urljoin(base, a["href"])
-                        
                         title_el = c.select_one(".product-name, [class*='productName'], h2, h3") or a
                         title = title_el.get_text(strip=True)
-                        
                         price_el = c.select_one(".price, [class*='sellingPrice'], .product-price")
                         p_o = _safe_parse_price(price_el.get_text() if price_el else "")
                         if p_o == 0.0 or p_o > limite: continue
-
-                        ident = _normalize_identifier(link_final)
+                        ident = ("NATURA-" + re.sub(r'[^A-Za-z0-9\-]', '', link_final.split('?')[0].rstrip('/').split('/')[-1]).upper()) if link_final else f"NATURA-{abs(hash(title))}"
                         if ident in vistos: continue
                         vistos.add(ident)
-
                         img_el = c.select_one("img")
                         img_url = (img_el.get("src") or img_el.get("data-src") if img_el else "") or ""
-
                         page_items.append({
                             "identificador": ident,
                             "nombre": f"NATURA - {title.upper()}",
@@ -2259,46 +2263,53 @@ def motor_natura(url, limite=9999, max_pages=50, page_size=12, use_playwright_fa
                             "img": img_url,
                             "fecha": datetime.now(timezone.utc).isoformat()
                         })
-                    except Exception: continue
+                    except Exception:
+                        continue
             except Exception as e_pw:
-                _safe_log(f"⚠️ Fallback Playwright falló: {e_pw}", "warning")
+                _log(f"⚠️ Playwright fallback falló: {e_pw}", "warning")
 
         if not page_items:
-            _safe_log(f"ℹ️ No se encontraron más productos en el bloque {page + 1}. Finalizando escaneo.")
+            _log(f"ℹ️ Sin más productos en start={start}. Finalizando escaneo.", "info")
             break
 
         existing_links = {p["link"] for p in productos}
         for it in page_items:
+            if len(productos) >= max_items: break
             if it["link"] not in existing_links:
                 productos.append(it)
                 existing_links.add(it["link"])
 
-        _safe_log(f"📦 Total acumulado de Natura: {len(productos)} ofertas.")
-
+        _log(f"📦 Acumulado Natura: {len(productos)} ofertas.")
         if len(page_items) < page_size or len(productos) >= max_items:
             break
-
         time.sleep(random.uniform(0.4, 0.9))
 
     # Guardado de trazabilidad debug
     try:
+        combined = {
+            "metadata": {"url_tested": url, "limit": limite, "max_pages": max_pages, "page_size": page_size, "timestamp": start_ts, "collected": len(productos)},
+            "productos": productos
+        }
         if debug_dir:
-            combined = {
-                "metadata": {
-                    "url_tested": url, "limit": limite, "max_pages": max_pages,
-                    "timestamp": start_ts, "collected": len(productos)
-                },
-                "productos": productos,
-                "logs": logs_ejecucion
-            }
             combined_path = os.path.join(debug_dir, f"combined_debug_natura_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json")
             _save_text(combined_path, json.dumps(combined, ensure_ascii=False, indent=2))
-    except Exception: pass
+            _log(f"📁 combined_debug guardado: {combined_path}", "info")
+    except Exception:
+        pass
 
-    _safe_log(f"✅ Escaneo de Natura completado. Total de ofertas listables: {len(productos)}", "success")
+    _log(f"✅ Finalizado. Perfumes/Productos encontrados: {len(productos)}.", "success")
     
-    # 🎯 Retorna directamente la lista de productos para total compatibilidad con revisar_ofertas
+    # 🎯 Retorno directo en formato Lista para encajar con escanear_tienda y revisar_ofertas
     return productos
+
+
+
+
+
+
+
+
+
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
