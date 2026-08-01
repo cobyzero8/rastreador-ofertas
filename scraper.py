@@ -1761,7 +1761,7 @@ def motor_tradicional_general(url, limite, headers):
 
 
 def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, session=None, step=12, sz=None, max_items=500):
-    import os, time, re, random, json, requests
+    import os, time, re, random, json, requests, socket
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
@@ -1810,8 +1810,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
-    
-    # ⚡ ÚNICO CAMBIO NECESARIO: Petición ligera por fragmentos AJAX
     query_params["format"] = ["ajax"]
     
     vistos = set()
@@ -1836,15 +1834,19 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
             resp = None
             try:
-                # Timeout explícito de red para evitar bloqueos continuos
-                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=(5, 15))
+                # 🛡️ Blindaje de socket: corta la conexión obligatoriamente tras 15 segundos sin excepción
+                socket.setdefaulttimeout(15)
+                
+                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=(3, 12))
                 _safe_log(f"📡 Respuesta HTTP: {resp.status_code}")
-            except requests.exceptions.Timeout:
-                _safe_log("⏰ ScraperAPI agotó el tiempo de respuesta (15s).", "error")
+            except (requests.exceptions.Timeout, socket.timeout):
+                _safe_log("⏰ Tiempo de espera agotado (Timeout de red de 15s).", "error")
                 break
             except Exception as e:
                 _safe_log(f"💥 Error en la petición: {e}", "error")
                 break
+            finally:
+                socket.setdefaulttimeout(None) # Restaura el socket por defecto
 
             if not resp or resp.status_code != 200:
                 _safe_log(f"🛑 Error de respuesta HTTP {resp.status_code if resp else 'Sin respuesta'}.", "error")
@@ -1906,7 +1908,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
         _safe_log(f"💥 Error en motor_nike: {e}", "error")
 
     return productos
-
 
 
 
