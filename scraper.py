@@ -1761,30 +1761,21 @@ def motor_tradicional_general(url, limite, headers):
 
 
 def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, session=None, step=12, sz=None, max_items=500):
-    import os, time, re, random, json, requests, socket
+    import re, requests
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
-    from datetime import datetime, timezone
     import streamlit as st
 
-    logs_ejecucion = []
-
     def _safe_log(msg, level="info"):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] [{level.upper()}] {msg}"
-        logs_ejecucion.append(log_entry)
         try:
             if level == "error": st.error(msg)
             elif level == "warning": st.warning(msg)
             elif level == "success": st.success(msg)
             else: st.write(f"👉 {msg}")
         except Exception:
-            print(log_entry)
+            print(msg)
 
     def _safe_parse_price(val):
-        if 'limpiar_precio_pnp' in globals():
-            try: return float(limpiar_precio_pnp(val))
-            except Exception: pass
         try:
             s = re.sub(r'[^\d\.,]', '', str(val))
             if s.count('.') > 1: s = s.replace('.', '')
@@ -1801,60 +1792,38 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             return f"NIKE-{abs(hash(link))}"
 
     productos = []
-    
-    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
-    try:
-        if "SCRAPERAPI_KEY" in st.secrets:
-            api_key = st.secrets["SCRAPERAPI_KEY"]
-    except Exception: pass
+    vistos = set()
 
+    _safe_log(f"🚀 Iniciando motor_nike DIRECTO (Sin ScraperAPI) para: {url}")
+
+    # Construimos la URL ligera con parámetro AJAX de Demandware
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
     query_params["format"] = ["ajax"]
+    query_params["start"] = ["0"]
+    query_params["sz"] = [str(step)]
     
-    vistos = set()
-    STEP_SIZE = int(step)
+    page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, urlencode(query_params, doseq=True), parsed_url.fragment))
 
-    _safe_log(f"🚀 Iniciando motor_nike para URL: {url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.nike.com.pe/",
+        "Connection": "keep-alive"
+    }
+
+    _safe_log("⚡ Enviando solicitud directa a Nike (Timeout estricto: 4s)...")
 
     try:
-        for page in range(1, 2):
-            offset = (page - 1) * STEP_SIZE
-            query_params["start"] = [str(offset)]
-            query_params["sz"] = [str(step)]
-            new_query = urlencode(query_params, doseq=True)
-            page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
+        # Petición directa con timeout ultra corto para no congelar la pantalla
+        resp = requests.get(page_url, headers=headers, timeout=4)
+        _safe_log(f"📡 Respuesta de Nike: Código HTTP {resp.status_code}")
 
-            _safe_log("🌐 Solicitando datos a ScraperAPI...")
-
-            payload = {
-                'api_key': api_key,
-                'url': page_url
-            }
-
-            resp = None
-            try:
-                # 🛡️ Blindaje de socket: corta la conexión obligatoriamente tras 15 segundos sin excepción
-                socket.setdefaulttimeout(15)
-                
-                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=(3, 12))
-                _safe_log(f"📡 Respuesta HTTP: {resp.status_code}")
-            except (requests.exceptions.Timeout, socket.timeout):
-                _safe_log("⏰ Tiempo de espera agotado (Timeout de red de 15s).", "error")
-                break
-            except Exception as e:
-                _safe_log(f"💥 Error en la petición: {e}", "error")
-                break
-            finally:
-                socket.setdefaulttimeout(None) # Restaura el socket por defecto
-
-            if not resp or resp.status_code != 200:
-                _safe_log(f"🛑 Error de respuesta HTTP {resp.status_code if resp else 'Sin respuesta'}.", "error")
-                break
-
+        if resp.status_code == 200:
             text = resp.text
             _safe_log(f"📄 HTML recibido: {len(text)} caracteres.")
-
+            
             soup = BeautifulSoup(text, "html.parser")
             cards = soup.select(".product-tile, .product-card, .product-grid li, div[data-pid], article, .grid-tile, a[href*='/product/']")
             _safe_log(f"🔍 Tarjetas detectadas: {len(cards)}")
@@ -1900,12 +1869,16 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 except Exception: continue
 
             if productos:
-                _safe_log(f"✅ ¡Éxito! Se procesaron {len(productos)} ofertas de Nike.", "success")
+                _safe_log(f"✅ ¡Éxito! Se indexaron {len(productos)} ofertas de Nike.", "success")
             else:
-                _safe_log("⚠️ No se encontraron productos válidos en el HTML recibido.", "warning")
+                _safe_log("⚠️ Nike respondió HTML pero no se detectaron tarjetas.", "warning")
+        else:
+            _safe_log(f"🛑 Nike rechazó la conexión (HTTP {resp.status_code}).", "error")
 
+    except requests.exceptions.Timeout:
+        _safe_log("⏱️ Nike cortó la conexión (Timeout de 4s alcanzado). El proceso finalizó sin congelar Streamlit.", "warning")
     except Exception as e:
-        _safe_log(f"💥 Error en motor_nike: {e}", "error")
+        _safe_log(f"💥 Error directo: {e}", "error")
 
     return productos
 
