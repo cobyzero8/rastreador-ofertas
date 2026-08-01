@@ -1761,19 +1761,67 @@ def motor_tradicional_general(url, limite, headers):
 
 
 def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, session=None, step=12, sz=None, max_items=500):
-    import re, requests
+    """
+    Motor Nike robusto de 3 capas integrado perfectamente a Streamlit y Supabase.
+    - Layer 1: JSON Next.js (__NEXT_DATA__)
+    - Layer 2: DOM BeautifulSoup Parsing
+    - Layer 3: Playwright Fallback
+    Guarda trazabilidad completa en ml_debug/
+    """
+    import os, time, re, random, json, requests, socket
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
-    import streamlit as st
+    from datetime import datetime, timezone
+
+    try:
+        import streamlit as st
+    except Exception:
+        st = None
+
+    logs_ejecucion = []
 
     def _safe_log(msg, level="info"):
+        ts = datetime.now(timezone.utc).isoformat()
+        logs_ejecucion.append({"ts": ts, "level": level, "msg": msg})
         try:
-            if level == "error": st.error(msg)
-            elif level == "warning": st.warning(msg)
-            elif level == "success": st.success(msg)
-            else: st.write(f"👉 {msg}")
+            if st:
+                if level == "error": st.error(msg)
+                elif level == "warning": st.warning(msg)
+                elif level == "success": st.success(msg)
+                else: st.write(f"👉 {msg}")
+            else:
+                print(f"[{level.upper()}] {msg}")
         except Exception:
-            print(msg)
+            print(f"[{level.upper()}] {msg}")
+
+    def _ensure_debug_dir():
+        try:
+            d = os.path.join(os.getcwd(), "ml_debug")
+            os.makedirs(d, exist_ok=True)
+            return d
+        except Exception as e:
+            _safe_log(f"No se pudo crear ml_debug: {e}", "warning")
+            return None
+
+    def _save_bytes(path, data_bytes):
+        try:
+            with open(path, "wb") as fh:
+                fh.write(data_bytes)
+                fh.flush()
+            return True
+        except Exception as e:
+            _safe_log(f"No se pudo escribir bytes en {path}: {e}", "warning")
+            return False
+
+    def _save_text(path, text):
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+            return True
+        except Exception as e:
+            _safe_log(f"No se pudo escribir texto en {path}: {e}", "warning")
+            return False
 
     def _safe_parse_price(val):
         try:
@@ -1781,107 +1829,257 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             if s.count('.') > 1: s = s.replace('.', '')
             s = s.replace(',', '.')
             return float(s) if s else 0.0
-        except Exception: return 0.0
+        except Exception:
+            return 0.0
 
     def _normalize_identifier(link):
         try:
-            m = re.search(r'([A-Z0-9\-]{4,})', link.split('?')[0].rstrip('/').split('/')[-1])
-            if m: return f"NIKE-{m.group(1).upper()}"
-            return f"NIKE-{abs(hash(link))}"
+            token = link.split('?')[0].rstrip('/').split('/')[-1]
+            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or str(abs(hash(link)))
+            return f"NIKE-{token.upper()}"
         except Exception:
             return f"NIKE-{abs(hash(link))}"
 
+    start_ts = datetime.now(timezone.utc).isoformat()
     productos = []
-    vistos = set()
+    session = session or requests.Session()
+    sz = sz or step
+    STEP_SIZE = int(step)
+    debug_dir = _ensure_debug_dir()
 
-    _safe_log(f"🚀 Iniciando motor_nike DIRECTO (Sin ScraperAPI) para: {url}")
+    # Lectura de ScraperAPI desde secretos
+    api_key = None
+    try:
+        if st and "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+    except Exception:
+        api_key = None
 
-    # Construimos la URL ligera con parámetro AJAX de Demandware
+    headers_list = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36"
+    ]
+
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
-    query_params["format"] = ["ajax"]
-    query_params["start"] = ["0"]
-    query_params["sz"] = [str(step)]
-    
-    page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, urlencode(query_params, doseq=True), parsed_url.fragment))
+    vistos = set()
+    total_checked = 0
+    page_count = 0
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.nike.com.pe/",
-        "Connection": "keep-alive"
-    }
-
-    _safe_log("⚡ Enviando solicitud directa a Nike (Timeout estricto: 4s)...")
+    _safe_log(f"🚀 Inicio motor_nike | URL: {url} | Límite: S/. {limite}")
 
     try:
-        # Petición directa con timeout ultra corto para no congelar la pantalla
-        resp = requests.get(page_url, headers=headers, timeout=4)
-        _safe_log(f"📡 Respuesta de Nike: Código HTTP {resp.status_code}")
+        for page in range(1, max_pages + 1):
+            page_count += 1
+            offset = (page - 1) * STEP_SIZE
+            query_params["start"] = [str(offset)]
+            query_params["sz"] = [str(sz)]
+            query_params["format"] = ["ajax"] # Parámetro Demandware ultra rápido
+            new_query = urlencode(query_params, doseq=True)
+            page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-        if resp.status_code == 200:
-            text = resp.text
-            _safe_log(f"📄 HTML recibido: {len(text)} caracteres.")
-            
-            soup = BeautifulSoup(text, "html.parser")
-            cards = soup.select(".product-tile, .product-card, .product-grid li, div[data-pid], article, .grid-tile, a[href*='/product/']")
-            _safe_log(f"🔍 Tarjetas detectadas: {len(cards)}")
+            _safe_log(f"⚡ Procesando Página {page} -> {page_url}")
 
-            for t in cards:
+            session.headers["User-Agent"] = random.choice(headers_list)
+            session.headers["Referer"] = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+
+            text = ""
+            resp = None
+
+            # 1️⃣ Intento con ScraperAPI (si hay API Key)
+            if api_key:
+                payload = {"api_key": api_key, "url": page_url}
                 try:
-                    a_el = t if t.name == "a" else t.select_one("a[href]") or t
-                    href = a_el.get("href") if a_el else None
-                    if not href: continue
-                    link_final = urljoin("https://www.nike.com.pe", href)
+                    socket.setdefaulttimeout(15)
+                    resp = requests.get("https://api.scraperapi.com/", params=payload, timeout=(4, 12))
+                    _safe_log(f"📡 ScraperAPI Status: {resp.status_code}")
+                except requests.exceptions.Timeout:
+                    _safe_log("⏰ Timeout en ScraperAPI, cambiando a conexión directa...", "warning")
+                except Exception as e:
+                    _safe_log(f"⚠️ Error ScraperAPI: {e}", "warning")
+                finally:
+                    socket.setdefaulttimeout(None)
 
-                    tit_el = t.select_one(".product-name, .product-tile-title, .pdp-link, h2, h3")
-                    nombre = (tit_el.text.strip() if tit_el else (a_el.get("aria-label") or a_el.text or "")).strip()
-                    if not nombre or len(nombre) < 3: continue
+                if resp and resp.status_code == 200:
+                    try:
+                        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                        if debug_dir:
+                            raw_html_path = os.path.join(debug_dir, f"raw_html_nike_{ts}_start_{offset}.html")
+                            _save_bytes(raw_html_path, resp.content)
+                    except Exception: pass
+                    text = resp.text or ""
 
-                    price_container = t.select_one(".price, .product-price") or t
-                    p_o = _safe_parse_price(price_container.text)
+            # 2️⃣ Intento Directo (si ScraperAPI no está activo o falló)
+            if not text:
+                attempts, backoff = 0, 1
+                while attempts < 2 and not text:
+                    try:
+                        resp2 = session.get(page_url, timeout=5)
+                        if resp2.status_code == 200:
+                            text = resp2.text or ""
+                            _safe_log("📡 Conexión directa a Nike exitosa.", "success")
+                            break
+                        else:
+                            _safe_log(f"⚠️ HTTP Directo rechazado: {resp2.status_code}", "warning")
+                    except Exception as e:
+                        attempts += 1
+                        _safe_log(f"⚠️ Intento directo {attempts} falló: {e}", "warning")
+                        time.sleep(backoff)
 
-                    if p_o == 0.0:
-                        m = re.search(r"(?:S/\.?\s*)(\d[\d\.,]*)", t.text)
-                        if m: p_o = _safe_parse_price(m.group(1))
+            # 3️⃣ Fallback a Playwright
+            if not text and use_playwright_fallback:
+                try:
+                    from playwright.sync_api import sync_playwright
+                    _safe_log("🎭 Ejecutando Playwright Fallback...", "info")
+                    with sync_playwright() as p:
+                        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                        pg = browser.new_page()
+                        pg.goto(page_url, timeout=20000)
+                        try:
+                            pg.wait_for_selector(".product-tile, .product-card, a[href*='/product/']", timeout=8000)
+                        except Exception: pass
+                        rendered = pg.content()
+                        browser.close()
+                    text = rendered
+                except Exception as e:
+                    _safe_log(f"⚠️ Playwright fallback falló: {e}", "warning")
 
-                    if p_o == 0.0 or p_o > limite or p_o < 30.0: continue
+            if not text:
+                _safe_log("🛑 No se obtuvo HTML para procesar esta página.", "warning")
+                break
 
-                    identificador = _normalize_identifier(link_final)
-                    if identificador in vistos: continue
-                    vistos.add(identificador)
+            _safe_log(f"📄 HTML descargado: {len(text)} caracteres")
+            soup = BeautifulSoup(text, "html.parser")
+            page_products = []
 
-                    img_el = t.select_one("img")
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get("data-src") or img_el.get("src") or ""
-                        if img_url.startswith("//"): img_url = "https:" + img_url
+            # Capa A: Búsqueda en JSON embebido Next.js
+            try:
+                next_script = soup.find('script', id='__NEXT_DATA__')
+                if next_script and next_script.string:
+                    json_data = json.loads(next_script.string)
+                    def buscar_productos(nodo):
+                        if isinstance(nodo, dict):
+                            for k, v in nodo.items():
+                                if isinstance(v, list) and v and isinstance(v[0], dict):
+                                    sample = v[0]
+                                    if any(kname in sample for kname in ("title", "name", "displayName", "price", "permalink")):
+                                        return v
+                                res = buscar_productos(v)
+                                if res: return res
+                        elif isinstance(nodo, list):
+                            for x in nodo:
+                                res = buscar_productos(x)
+                                if res: return res
+                        return None
 
-                    productos.append({
-                        "identificador": identificador,
-                        "nombre": f"NIKE - {nombre.upper()}",
-                        "precio": p_o,
-                        "precio_regular": p_o,
-                        "link": link_final,
-                        "img": img_url
-                    })
-                except Exception: continue
+                    items_json = buscar_productos(json_data) or []
+                    for it in items_json:
+                        if len(productos) + len(page_products) >= max_items: break
+                        try:
+                            nombre = (it.get("name") or it.get("title") or it.get("displayName") or "").strip()
+                            if not nombre or len(nombre) < 3: continue
+                            p_o = _safe_parse_price(it.get("salePrice") or it.get("price") or it.get("amount") or 0)
+                            p_r = _safe_parse_price(it.get("originalPrice") or it.get("listPrice") or p_o)
+                            if not (0 < p_o <= limite): continue
+                            link_rel = it.get("permalink") or it.get("url") or it.get("link") or ""
+                            link_final = urljoin(f"{parsed_url.scheme}://{parsed_url.netloc}", link_rel) if link_rel.startswith("/") else link_rel
+                            img = it.get("image") or it.get("thumbnail") or ""
+                            ident = _normalize_identifier(link_final)
+                            if ident in vistos: continue
+                            vistos.add(ident)
+                            page_products.append({
+                                "identificador": ident, "nombre": f"NIKE - {nombre.upper()}",
+                                "precio": p_o, "precio_regular": max(p_r, p_o),
+                                "link": link_final, "img": img, "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                        except Exception: continue
+            except Exception: pass
 
-            if productos:
-                _safe_log(f"✅ ¡Éxito! Se indexaron {len(productos)} ofertas de Nike.", "success")
-            else:
-                _safe_log("⚠️ Nike respondió HTML pero no se detectaron tarjetas.", "warning")
-        else:
-            _safe_log(f"🛑 Nike rechazó la conexión (HTTP {resp.status_code}).", "error")
+            # Capa B: Parsing DOM BeautifulSoup
+            if not page_products:
+                try:
+                    cards = soup.select(".product-tile, .product-card, .product-grid li, .grid-tile, div[data-pid], a[href*='/product/'], a[href*='/productos/']")
+                    _safe_log(f"🔍 Tarjetas detectadas en DOM: {len(cards)}")
+                    for t in cards:
+                        if len(productos) + len(page_products) >= max_items: break
+                        try:
+                            total_checked += 1
+                            a_el = t if t.name == "a" else (t.select_one("a[href]") or t)
+                            href = a_el.get("href") if a_el else None
+                            if not href: continue
+                            link_final = urljoin(f"{parsed_url.scheme}://{parsed_url.netloc}", href) if href.startswith("/") else href
+                            
+                            tit_el = t.select_one(".product-name, .product-tile-title, .product-title, .pdp-link, h2, h3")
+                            nombre = (tit_el.text.strip() if tit_el else (a_el.get("aria-label") or a_el.text or "")).strip()
+                            if not nombre or len(nombre) < 3: continue
 
-    except requests.exceptions.Timeout:
-        _safe_log("⏱️ Nike cortó la conexión (Timeout de 4s alcanzado). El proceso finalizó sin congelar Streamlit.", "warning")
+                            price_container = t.select_one(".price, .product-price, .product-tile-price") or t
+                            p_o = _safe_parse_price(price_container.text)
+                            if p_o == 0.0:
+                                m = re.search(r"(?:S/\.?\s*)(\d[\d\.,]*)", price_container.text)
+                                if m: p_o = _safe_parse_price(m.group(1))
+
+                            if p_o == 0.0 or p_o > limite or p_o < 30.0: continue
+                            
+                            p_r = p_o
+                            del_el = t.select_one("del, .strike-through, .original-price")
+                            if del_el and del_el.text:
+                                p_r_val = _safe_parse_price(del_el.text)
+                                if p_r_val > 0: p_r = p_r_val
+
+                            ident = _normalize_identifier(link_final)
+                            if ident in vistos: continue
+                            vistos.add(ident)
+
+                            img_el = t.select_one("img")
+                            img_url = (img_el.get("data-src") or img_el.get("src") or "") if img_el else ""
+                            if img_url.startswith("//"): img_url = "https:" + img_url
+
+                            page_products.append({
+                                "identificador": ident, "nombre": f"NIKE - {nombre.upper()}",
+                                "precio": p_o, "precio_regular": max(p_r, p_o),
+                                "link": link_final, "img": img_url, "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                        except Exception: continue
+                except Exception as e:
+                    _safe_log(f"Error parseando DOM: {e}", "warning")
+
+            if not page_products:
+                _safe_log(f"Sin más productos en inicio={offset}. Finalizando ciclo.", "info")
+                break
+
+            existing_links = {p["link"] for p in productos}
+            for p in page_products:
+                if p.get("link") not in existing_links:
+                    productos.append(p)
+                    existing_links.add(p.get("link"))
+
+            if len(productos) >= max_items: break
+
     except Exception as e:
-        _safe_log(f"💥 Error directo: {e}", "error")
+        _safe_log(f"💥 Error crítico en motor_nike: {e}", "error")
 
+    # Guardado automático de trazabilidad combined_debug.json
+    try:
+        if debug_dir:
+            combined = {
+                "metadata": {
+                    "url_tested": url, "limit": limite, "max_pages": max_pages,
+                    "step": STEP_SIZE, "timestamp": start_ts, "page_count": page_count, "checked": total_checked
+                },
+                "productos": productos,
+                "logs": logs_ejecucion[-200:]
+            }
+            combined_path = os.path.join(debug_dir, f"combined_debug_nike_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json")
+            _save_text(combined_path, json.dumps(combined, ensure_ascii=False, indent=2))
+            _safe_log(f"📁 Diagnóstico guardado en: {combined_path}", "info")
+    except Exception: pass
+
+    _safe_log(f"✅ Finalizado. Productos indexados: {len(productos)}.", "success")
+    
+    # 🎯 Retorna directamente la lista de productos para compatibilidad total con revisar_ofertas
     return productos
-
 
 
 
