@@ -2009,7 +2009,215 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
     return productos
     
+def motor_natura(url, limite=9999, max_pages=5, session=None, step=12, max_items=200):
+    """
+    Motor especializado para Natura Perú (VTEX Engine).
+    Maneja la carga iterativa ("explorar más resultados") recorriendo las páginas
+    y extrayendo precios en oferta, precios tachados e imágenes.
+    """
+    import os, time, re, random, json, requests
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
+    from bs4 import BeautifulSoup
+    from datetime import datetime, timezone
 
+    try:
+        import streamlit as st
+    except Exception:
+        st = None
+
+    logs_ejecucion = []
+
+    def _safe_log(msg, level="info"):
+        ts = datetime.now(timezone.utc).isoformat()
+        logs_ejecucion.append({"ts": ts, "level": level, "msg": msg})
+        try:
+            if st:
+                if level == "error": st.error(msg)
+                elif level == "warning": st.warning(msg)
+                elif level == "success": st.success(msg)
+                else: st.write(f"👉 {msg}")
+            else:
+                print(f"[{level.upper()}] {msg}")
+        except Exception:
+            print(f"[{level.upper()}] {msg}")
+
+    def _safe_parse_price(val):
+        if not val: return 0.0
+        try:
+            # Busca patrones como S/ 86.50 o 86,50
+            m = re.search(r'(?:S/\.?\s*)?(\d{1,4}(?:[\.,]\d{2})?)', str(val))
+            if m:
+                s = m.group(1).replace(',', '.')
+                return float(s)
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def _normalize_identifier(link):
+        try:
+            token = link.split('?')[0].rstrip('/').split('/')[-1]
+            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or str(abs(hash(link)))
+            return f"NATURA-{token.upper()}"
+        except Exception:
+            return f"NATURA-{abs(hash(link))}"
+
+    productos = []
+    session = session or requests.Session()
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Referer": "https://www.natura.com.pe/"
+    }
+    session.headers.update(headers)
+
+    parsed_url = urlparse(url)
+    query_params = parse_qs(parsed_url.query)
+    vistos = set()
+
+    _safe_log(f"🌿 Iniciando motor_natura para: {url} | Límite: S/. {limite}")
+
+    try:
+        for page in range(1, max_pages + 1):
+            # Simula el botón "explorar más resultados" agregando el parámetro page
+            query_params["page"] = [str(page)]
+            new_query = urlencode(query_params, doseq=True)
+            page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
+
+            _safe_log(f"⚡ Escaneando Natura (Página {page})...")
+
+            resp = None
+            try:
+                resp = session.get(page_url, timeout=10)
+            except Exception as e:
+                _safe_log(f"⚠️ Error al conectar con Natura en página {page}: {e}", "warning")
+                break
+
+            if not resp or resp.status_code != 200:
+                _safe_log(f"🛑 Natura respondió con HTTP {resp.status_code if resp else 'Error'}", "warning")
+                break
+
+            text = resp.text
+            soup = BeautifulSoup(text, "html.parser")
+            page_products = []
+
+            # 1️⃣ Capa A: JSON-LD (Estructura de Schema.org en VTEX)
+            json_scripts = soup.find_all('script', type='application/ld+json')
+            for script in json_scripts:
+                if not script.string: continue
+                try:
+                    data = json.loads(script.string)
+                    items = []
+                    if isinstance(data, dict) and data.get('@type') == 'ItemList':
+                        items = data.get('itemListElement', [])
+                    elif isinstance(data, list):
+                        items = data
+
+                    for it in items:
+                        prod_data = it.get('item', it) if isinstance(it, dict) else {}
+                        if not isinstance(prod_data, dict): continue
+                        
+                        nombre = (prod_data.get('name') or '').strip()
+                        if not nombre or len(nombre) < 3: continue
+
+                        offers = prod_data.get('offers', {})
+                        p_o = _safe_parse_price(offers.get('price') or offers.get('lowPrice') or 0)
+                        p_r = _safe_parse_price(offers.get('highPrice') or p_o)
+
+                        link_rel = prod_data.get('url') or ''
+                        link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else page_url
+                        img = prod_data.get('image') or ''
+
+                        if 0 < p_o <= limite:
+                            ident = _normalize_identifier(link_final)
+                            if ident not in vistos:
+                                vistos.add(ident)
+                                page_products.append({
+                                    "identificador": ident,
+                                    "nombre": f"NATURA - {nombre.upper()}",
+                                    "precio": p_o,
+                                    "precio_regular": max(p_r, p_o),
+                                    "link": link_final,
+                                    "img": img,
+                                    "fecha": datetime.now(timezone.utc).isoformat()
+                                })
+                except Exception:
+                    continue
+
+            # 2️⃣ Capa B: Parsing DOM (Selectores HTML de las tarjetas de Natura)
+            if not page_products:
+                # Selectores típicos de VTEX IO / Natura
+                cards = soup.select("[class*='productSummary'], .vtex-product-summary-2-x-container, div[data-product-id], article")
+                
+                for t in cards:
+                    try:
+                        a_el = t.select_one("a[href*='/p'], a[href]") or (t if t.name == "a" else None)
+                        if not a_el: continue
+                        
+                        href = a_el.get("href", "")
+                        if not href or href == "#": continue
+                        link_final = urljoin("https://www.natura.com.pe", href)
+
+                        # Nombre
+                        tit_el = t.select_one("[class*='productName'], [class*='brandName'], h2, h3, span.vtex-product-summary-2-x-productBrand")
+                        nombre = (tit_el.text.strip() if tit_el else a_el.text).strip()
+                        nombre = re.sub(r'\s+', ' ', nombre)
+                        if not nombre or len(nombre) < 3: continue
+
+                        # Precio de oferta (destacado)
+                        price_el = t.select_one("[class*='sellingPrice'], [class*='currencyContainer'], .vtex-product-price-1-x-sellingPriceValue") or t
+                        p_o = _safe_parse_price(price_el.text)
+
+                        # Precio regular (tachado)
+                        list_price_el = t.select_one("[class*='listPrice'], del, .vtex-product-price-1-x-listPriceValue")
+                        p_r = _safe_parse_price(list_price_el.text) if list_price_el else p_o
+
+                        if p_o == 0.0 or p_o > limite: continue
+
+                        ident = _normalize_identifier(link_final)
+                        if ident in vistos: continue
+                        vistos.add(ident)
+
+                        # Imagen
+                        img_el = t.select_one("img")
+                        img_url = ""
+                        if img_el:
+                            img_url = img_el.get("src") or img_el.get("data-src") or ""
+                            if img_url.startswith("//"): img_url = "https:" + img_url
+
+                        page_products.append({
+                            "identificador": ident,
+                            "nombre": f"NATURA - {nombre.upper()}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_url,
+                            "fecha": datetime.now(timezone.utc).isoformat()
+                        })
+                    except Exception:
+                        continue
+
+            if not page_products:
+                _safe_log(f"ℹ️ No se detectaron más productos en la página {page}. Finalizando escaneo de Natura.")
+                break
+
+            existing_links = {p["link"] for p in productos}
+            for p in page_products:
+                if p.get("link") not in existing_links:
+                    productos.append(p)
+                    existing_links.add(p.get("link"))
+
+            _safe_log(f"📦 Natura acumulados: {len(productos)} productos.")
+            time.sleep(random.uniform(0.5, 1.0))
+
+            if len(productos) >= max_items: break
+
+    except Exception as e:
+        _safe_log(f"💥 Error en motor_natura: {e}", "error")
+
+    _safe_log(f"✅ Escaneo de Natura completado. Total indexado: {len(productos)}", "success")
+    return productos
 
 # =======================================================
 # ENRUTADOR AISLADO
@@ -2036,6 +2244,7 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     #elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     #elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
    # elif "nike.com.pe" in dominio: return motor_nike(url, limite)
+    #elif "nike.com.pe" in url_completa: safe_log("🎯 [Enrutador] ¡Match detectado con Nike! Lanzando motor_nike...", "success") return motor_nike(url, limite)
     #else: return motor_tradicional_general(url, limite, headers)
 def escanear_tienda(url, limite):
     dominio = urlparse(url).netloc.lower()
@@ -2044,9 +2253,9 @@ def escanear_tienda(url, limite):
     safe_log(f"🔎 [Enrutador] Analizando URL: {url} | Dominio detectado: {dominio}", "info")
     
     # 🛡️ Validación robusta usando la URL completa (evita errores por URLs mal copiadas en Supabase)
-    if "nike.com.pe" in url_completa: 
-        safe_log("🎯 [Enrutador] ¡Match detectado con Nike! Lanzando motor_nike...", "success")
-        return motor_nike(url, limite)
+    if "natura.com.pe" in url_completa:
+        safe_log("🎯 [Enrutador] ¡Match exacto con Natura! Lanzando motor_natura...", "success")
+        return motor_natura(url, limite)
     else: 
         safe_log(f"💤 [Enrutador] Tienda omitida (motores desactivados temporalmente para pruebas).", "info")
         return []
