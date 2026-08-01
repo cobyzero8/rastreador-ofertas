@@ -1774,7 +1774,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
         log_entry = f"[{timestamp}] [{level.upper()}] {msg}"
         logs_ejecucion.append(log_entry)
         try:
-            # Imprime directamente en la caja de Streamlit en tiempo real
             if level == "error": st.error(msg)
             elif level == "warning": st.warning(msg)
             elif level == "success": st.success(msg)
@@ -1799,80 +1798,86 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             return f"NIKE-{abs(hash(link))}"
 
     productos = []
-    session = session or requests.Session()
-    sz = sz or step
-    STEP_SIZE = int(step)
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.nike.com.pe/"
-    }
-    session.headers.update(headers)
+    
+    # 🔑 Clave de ScraperAPI
+    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        if "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+    except Exception: pass
 
     parsed_url = urlparse(url)
     query_params = parse_qs(parsed_url.query)
     vistos = set()
 
-    _safe_log(f"🚀 Iniciando motor_nike para URL: {url}")
+    _safe_log(f"🚀 Iniciando motor_nike vía ScraperAPI para URL: {url}")
 
     try:
-        for page in range(1, 2):  # Limitado a 1 página para la prueba
-            offset = (page - 1) * STEP_SIZE
+        for page in range(1, 2):  # Prueba en la Página 1
+            offset = (page - 1) * int(step)
             query_params["start"] = [str(offset)]
-            query_params["sz"] = [str(sz)]
+            query_params["sz"] = [str(step)]
             new_query = urlencode(query_params, doseq=True)
             page_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, new_query, parsed_url.fragment))
 
-            _safe_log(f"⚡ Intentando conexión con Nike (Timeout: 6s)...")
+            _safe_log("🌐 Solicitando túnel residencial a ScraperAPI para bypass de Nike...")
+
+            payload = {
+                'api_key': api_key,
+                'url': page_url,
+                'render': 'true'  # Renderiza el JavaScript de Nike
+            }
 
             resp = None
             try:
-                # 📡 Log justo antes de hacer la petición
-                _safe_log("🌐 [HTTP] Enviando solicitud GET a la web de Nike...")
-                
-                # Timeout reducido a 6s para evitar congelamientos largos
-                resp = session.get(page_url, timeout=6)
-                
-                _safe_log(f"📡 [HTTP] ¡Respuesta recibida! Código de Estado: {resp.status_code}")
-            except requests.exceptions.Timeout:
-                _safe_log("⏰ [HTTP] TIMEOUT: Nike congeló la respuesta (Tarpitting Anti-bot).", "warning")
+                # La petición se envía a la API de ScraperAPI
+                resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=45)
+                _safe_log(f"📡 ¡ScraperAPI respondió! Código HTTP: {resp.status_code}")
             except Exception as e:
-                _safe_log(f"⚠️ [HTTP] Error de conexión: {e}", "warning")
+                _safe_log(f"⚠️ Error al conectar con ScraperAPI: {e}", "warning")
 
             if not resp or resp.status_code != 200:
-                _safe_log("🛑 No se pudo obtener el HTML de Nike debido al bloqueo de red.", "error")
+                _safe_log("🛑 ScraperAPI no pudo obtener la respuesta (Verificar API Key / Créditos).", "error")
                 break
 
             text = resp.text
-            _safe_log(f"📄 HTML descargado: {len(text)} caracteres.")
+            _safe_log(f"📄 HTML recibido con éxito: {len(text)} caracteres descargados.")
 
             soup = BeautifulSoup(text, "html.parser")
-            cards = soup.select(".product-tile, .product-card, .product-grid li, a[href*='/product/']")
-            _safe_log(f"🔍 Tarjetas detectadas en el DOM: {len(cards)}")
+            
+            # 1️⃣ Extracción vía selectores HTML
+            cards = soup.select(".product-tile, .product-card, .product-grid li, div[data-pid], article, .grid-tile, a[href*='/product/']")
+            _safe_log(f"🔍 Tarjetas detectadas en el HTML: {len(cards)}")
 
             for t in cards:
                 try:
                     a_el = t if t.name == "a" else t.select_one("a[href]") or t
                     href = a_el.get("href") if a_el else None
                     if not href: continue
-                    link_final = urljoin(f"{parsed_url.scheme}://{parsed_url.netloc}", href) if href.startswith("/") else href
+                    link_final = urljoin("https://www.nike.com.pe", href)
 
-                    tit_el = t.select_one(".product-name, .product-tile-title, h2, h3")
+                    tit_el = t.select_one(".product-name, .product-tile-title, .pdp-link, h2, h3")
                     nombre = (tit_el.text.strip() if tit_el else (a_el.get("aria-label") or a_el.text or "")).strip()
                     if not nombre or len(nombre) < 3: continue
 
                     price_container = t.select_one(".price, .product-price") or t
                     p_o = _safe_parse_price(price_container.text)
-                    if p_o == 0.0 or p_o > limite: continue
+
+                    if p_o == 0.0:
+                        m = re.search(r"(?:S/\.?\s*)(\d[\d\.,]*)", t.text)
+                        if m: p_o = _safe_parse_price(m.group(1))
+
+                    if p_o == 0.0 or p_o > limite or p_o < 30.0: continue
 
                     identificador = _normalize_identifier(link_final)
                     if identificador in vistos: continue
                     vistos.add(identificador)
 
                     img_el = t.select_one("img")
-                    img_url = (img_el.get("data-src") or img_el.get("src") or "") if img_el else ""
+                    img_url = ""
+                    if img_el:
+                        img_url = img_el.get("data-src") or img_el.get("src") or ""
+                        if img_url.startswith("//"): img_url = "https:" + img_url
 
                     productos.append({
                         "identificador": identificador,
@@ -1883,6 +1888,8 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                         "img": img_url
                     })
                 except Exception: continue
+
+            _safe_log(f"✅ Se indexaron {len(productos)} productos válidos de Nike.", "success" if productos else "warning")
 
     except Exception as e:
         _safe_log(f"💥 Error en motor_nike: {e}", "error")
