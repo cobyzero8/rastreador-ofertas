@@ -2012,12 +2012,15 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_items=500):
     """
-    Motor Natura Perú basado en la API Pública de VTEX IO (Blindado).
+    Motor Natura Perú adaptado a VTEX IO Intelligent Search.
     """
     import os, time, re, random, json, requests
-    from urllib.parse import urlparse, parse_qs, urljoin, unquote
-    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse, urljoin
     from datetime import datetime, timezone
+    import urllib3
+    
+    # Silenciar advertencias SSL en consola
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     try:
         import streamlit as st
@@ -2042,7 +2045,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
 
     def _safe_parse_price(val):
         try:
-            return float(val) if val else 0.0
+            return float(val) if val is not None else 0.0
         except Exception:
             return 0.0
 
@@ -2062,50 +2065,54 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
     session = session or requests.Session()
 
     headers = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "es-PE,es;q=0.9",
         "Referer": "https://www.natura.com.pe/"
     }
 
-    # Extraer el slug de la categoría (ej: perfumeria-masculina)
+    # Extraer el slug o término de búsqueda de la URL
     parsed = urlparse(url)
     path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
     category_slug = path_segments[-1] if path_segments else "perfumeria"
     termino_busqueda = category_slug.replace('-', ' ')
 
-    _log(f"🌿 Iniciando patrullaje Natura Perú | Categoría: {category_slug} | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando patrullaje Natura Perú | Categoría/Búsqueda: {category_slug} | Límite: S/. {limite}")
 
     STEP_SIZE = int(step)
 
     for page in range(1, max_pages + 1):
-        start_idx = (page - 1) * STEP_SIZE
-        end_idx = start_idx + STEP_SIZE - 1
-
-        # Estrategias de Endpoints VTEX
+        # Endpoints modernos de VTEX IO Intelligent Search
         endpoints_a_probar = [
-            (f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{category_slug}", {"_from": start_idx, "_to": end_idx, "O": "OrderByTopSaleDESC"}),
-            ("https://www.natura.com.pe/api/catalog_system/pub/products/search", {"ft": termino_busqueda, "_from": start_idx, "_to": end_idx, "O": "OrderByTopSaleDESC"})
+            (f"https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search/{category_slug}", {"page": page, "count": STEP_SIZE, "sort": "orders:desc"}),
+            ("https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search/", {"query": termino_busqueda, "page": page, "count": STEP_SIZE, "sort": "orders:desc"})
         ]
 
         items = []
         for api_url, params in endpoints_a_probar:
-            _log(f"⚡ Consultando API VTEX Natura ({api_url})...")
+            _log(f"⚡ Consultando API VTEX IO ({api_url})...")
             try:
-                resp = session.get(api_url, params=params, headers=headers, timeout=12, verify=False)
-                _log(f"📡 Estado HTTP API VTEX: {resp.status_code}")
-                if resp.status_code in [200, 206]:
+                resp = session.get(api_url, params=params, headers=headers, timeout=6, verify=False)
+                _log(f"📡 Estado HTTP API VTEX IO: {resp.status_code}")
+                
+                # Validar que la respuesta sea un JSON real y no HTML 404
+                if resp.status_code == 200 and "application/json" in resp.headers.get("Content-Type", "").lower():
                     data = resp.json()
-                    if isinstance(data, list) and len(data) > 0:
+                    # Intelligent search puede devolver {"products": [...]} o directamente una lista
+                    if isinstance(data, dict) and "products" in data:
+                        items = data.get("products", [])
+                    elif isinstance(data, list):
                         items = data
+                    
+                    if items:
                         break
             except Exception as e:
-                _log(f"⚠️ Error al consultar API VTEX: {e}", "warning")
+                _log(f"⚠️ Fallo en consulta VTEX IO: {e}", "warning")
                 continue
 
         page_items = []
 
-        # 1️⃣ PROCESAR RESPUESTA JSON DE LA API DE VTEX
+        # Procesar los productos obtenidos del JSON
         if isinstance(items, list) and len(items) > 0:
             for prod in items:
                 if len(productos) + len(page_items) >= max_items: break
@@ -2113,8 +2120,11 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                     nombre = (prod.get("productName") or "").strip()
                     if not nombre or len(nombre) < 3: continue
 
-                    link_rel = prod.get("link") or ""
-                    link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else url
+                    link_rel = prod.get("link") or prod.get("linkText") or ""
+                    if link_rel and not link_rel.startswith("http"):
+                        link_final = urljoin("https://www.natura.com.pe", f"/{link_rel}/p" if not link_rel.endswith('/p') else link_rel)
+                    else:
+                        link_final = link_rel or url
 
                     prod_id = prod.get("productId")
                     ident = _normalize_identifier(link_final, prod_id)
@@ -2151,46 +2161,6 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 except Exception:
                     continue
 
-        # 2️⃣ FALLBACK: EXTRAER DESDE window.__STATE__ SI LA API NO RETORNA DATOS
-        if not page_items and page == 1:
-            _log("🌐 API VTEX sin resultados. Intentando extracción HTML de respaldo...", "warning")
-            try:
-                web_resp = session.get(url, headers=headers, timeout=12, verify=False)
-                if web_resp.status_code == 200:
-                    soup = BeautifulSoup(web_resp.text, "html.parser")
-                    script_state = soup.find(lambda tag: tag.name == 'script' and '__STATE__' in tag.text)
-                    if script_state:
-                        match = re.search(r'window\.__STATE__\s*=\s*(\{.+?\});', script_state.text)
-                        if match:
-                            state_data = json.loads(match.group(1))
-                            for key, val in state_data.items():
-                                if isinstance(val, dict) and val.get('productName'):
-                                    nombre = val.get('productName')
-                                    link_rel = val.get('linkText') or ""
-                                    link_final = f"https://www.natura.com.pe/{link_rel}/p" if link_rel else url
-                                    ident = _normalize_identifier(link_final)
-                                    if ident in vistos: continue
-                                    
-                                    p_o = 0.0
-                                    for k2, v2 in state_data.items():
-                                        if 'commertialOffer' in k2 and isinstance(v2, dict) and v2.get('Price'):
-                                            p_o = float(v2.get('Price'))
-                                            break
-                                    
-                                    if 0 < p_o <= limite:
-                                        vistos.add(ident)
-                                        page_items.append({
-                                            "identificador": ident,
-                                            "nombre": f"NATURA - {nombre.upper()}",
-                                            "precio": p_o,
-                                            "precio_regular": p_o,
-                                            "link": link_final,
-                                            "img": "",
-                                            "fecha": datetime.now(timezone.utc).isoformat()
-                                        })
-            except Exception as e_fallback:
-                _log(f"⚠️ Error en fallback web: {e_fallback}", "warning")
-
         if not page_items:
             _log(f"ℹ️ Sin más productos encontrados en la página {page}. Finalizando patrullaje.")
             break
@@ -2202,7 +2172,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 existing_links.add(it["link"])
 
         _log(f"📦 Ofertas indexadas hasta ahora: {len(productos)}")
-        time.sleep(random.uniform(0.3, 0.5))
+        time.sleep(0.3)
 
     _log(f"✅ Patrullaje de Natura completado. Total ofertas: {len(productos)}", "success")
     return productos
