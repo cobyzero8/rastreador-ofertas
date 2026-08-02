@@ -13,6 +13,7 @@ import urllib3
 import streamlit as st
 
 try:
+    # Instala el binario de Chromium para Playwright
     subprocess.run(["playwright", "install", "chromium"], check=False)
 except Exception:
     pass
