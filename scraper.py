@@ -2024,8 +2024,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (React Server Components / Next.js App Router Payload Extractor).
-    Desescapa e interpreta las transmisiones de React 18 (self.__next_f) contenidas en los 210 KB del HTML.
+    Motor Natura Perú Definitivo (Next.js App Router RSC Stream Unpacker).
+    Desempaqueta las cadenas de streaming 'self.__next_f.push' de React 18,
+    reconstruye el JSON plano y segmenta el catálogo sin fallos de escape.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2085,50 +2086,87 @@ def motor_natura(
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
-    def _parse_rsc_payload(html_text):
-        """Extrae objetos JSON de productos desescapando la transmisión de React 18 (self.__next_f)"""
-        found_products = []
-        
-        # 1. Normalizar y desescapar secuencias unicode/JS en el HTML
-        clean_text = html_text.replace('\\"', '"').replace('\\\\', '\\')
+    def _unpack_next_rsc_stream(html_text):
+        """Desempaqueta los bloques self.__next_f.push([1, "..."]) de Next.js App Router"""
+        chunks = []
+        matches = re.findall(r'self\.__next_f\.push\((.*?)\);?</script>', html_text, re.DOTALL)
+        if not matches:
+            matches = re.findall(r'self\.__next_f\.push\((.*?)\);?', html_text, re.DOTALL)
 
-        # 2. Buscar fragmentos de productos con patrones típicos de FastStore/VTEX en RSC
-        # Patrón A: Objetos JSON con productName/name y estructuras de precio
-        product_matches = re.findall(
-            r'\{[^{}]*"(?:productName|name)"\s*:\s*"([^"]+)"[^{}]*\}', 
-            clean_text
-        )
-
-        # Patrón B: Extracción mediante bloques estructurados de JSON en fragmentos React
-        json_blocks = re.findall(r'\{"id"[^{}]*"name"\s*:\s*"[^"]+"[^{}]*\}', clean_text)
-        json_blocks += re.findall(r'\{"productName"[^{}]*\}', clean_text)
-
-        raw_candidates = set(json_blocks)
-
-        for block in raw_candidates:
+        for match in matches:
+            match = match.strip()
             try:
-                # Reconstruir JSON si está fragmentado
-                if not block.endswith('}'): block += '}'
-                data = json.loads(block)
-                if isinstance(data, dict) and ('name' in data or 'productName' in data):
-                    found_products.append(data)
+                arr = json.loads(match)
+                if isinstance(arr, list) and len(arr) >= 2 and isinstance(arr[1], str):
+                    chunks.append(arr[1])
             except Exception:
+                str_match = re.search(r'^\s*\[\s*\d+\s*,\s*"(.*)"\s*\]\s*$', match, re.DOTALL)
+                if str_match:
+                    raw_str = str_match.group(1)
+                    cleaned = raw_str.replace('\\"', '"').replace('\\\\', '\\').replace('\\n', '\n')
+                    chunks.append(cleaned)
+
+        return "\n".join(chunks)
+
+    def _extract_from_rsc_stream(full_stream, base_url, limite, max_items):
+        prods = []
+        vistos = set()
+
+        # Segmentar la transmisión por cada inicio de objeto con producto
+        blocks = re.split(r'(?=\{(?:"id"|"__typename"|"productName"|"name"):)', full_stream)
+
+        for block in blocks:
+            if len(prods) >= max_items: break
+            if len(block) < 20: continue
+
+            # 1. Nombre del producto
+            m_name = re.search(r'"(?:productName|name)"\s*:\s*"([^"]{3,120})"', block)
+            if not m_name: continue
+            name = m_name.group(1).strip()
+
+            if any(bad in name.lower() for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'sobre natura', 'favoritos', 'tiendas']):
                 continue
 
-        # 3. Expresión regular global de respaldo sobre el texto desescapado para capturar pares nombre/slug/precio
-        if not found_products:
-            regex_p = re.compile(
-                r'"name"\s*:\s*"([^"]+)".*?"(?:slug|link|url)"\s*:\s*"([^"]+)".*?"(?:price|spotPrice|lowPrice)"\s*:\s*(\d+(?:\.\d+)?)',
-                re.DOTALL
-            )
-            for m in regex_p.finditer(clean_text):
-                found_products.append({
-                    "name": m.group(1),
-                    "slug": m.group(2),
-                    "price": float(m.group(3))
-                })
+            # 2. Enlace / Slug
+            m_slug = re.search(r'"(?:slug|linkText|url|link)"\s*:\s*"([^"]+)"', block)
+            if not m_slug: continue
+            slug = m_slug.group(1).strip()
 
-        return found_products
+            if any(bad in slug.lower() for bad in ['/c/', 'ayuda', 'blog', 'favoritos', 'encuentra-natura', 'politicas']):
+                continue
+
+            # 3. Extraer precios
+            prices = re.findall(r'"(?:price|spotPrice|lowPrice|Price|value|listPrice|ListPrice|highPrice)"\s*:\s*(\d+(?:[\.,]\d+)?)', block)
+            parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
+
+            if not parsed_prices: continue
+
+            p_o = min(parsed_prices)
+            p_r = max(parsed_prices)
+
+            if p_o <= 0.0 or p_o > limite: continue
+
+            link_final = urljoin(base_url, slug.split('?')[0])
+            ident = _normalize_identifier(link_final)
+
+            if ident in vistos: continue
+            vistos.add(ident)
+
+            # 4. Imagen del producto
+            m_img = re.search(r'"(?:imageUrl|image|url)"\s*:\s*"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block, re.I)
+            img_url = m_img.group(1) if m_img else ""
+
+            prods.append({
+                "identificador": ident,
+                "nombre": f"NATURA - {name.upper()}",
+                "precio": p_o,
+                "precio_regular": max(p_r, p_o),
+                "link": link_final,
+                "img": img_url,
+                "fecha": datetime.now(timezone.utc).isoformat()
+            })
+
+        return prods
 
     productos, vistos = [], set()
     page_count = 0
@@ -2138,7 +2176,7 @@ def motor_natura(
     category_slug = path_segments[-1] if path_segments else "perfumeria"
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú (React Server Components Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (RSC Unpacker Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
     headers_base = {
@@ -2166,98 +2204,19 @@ def motor_natura(
             _log(f"ℹ️ Sin respuesta de la página {page}.")
             break
 
-        _log(f"📄 HTML recibido: {len(html_content)} bytes. Analizando payload de React 18...")
+        _log(f"📄 HTML recibido: {len(html_content)} bytes. Desempaquetando transmisión RSC...")
 
-        page_items = 0
+        # FASE 1: Desempaquetado del payload Next.js RSC
+        full_stream = _unpack_next_rsc_stream(html_content)
+        _log(f"📜 Transmisión RSC desempaquetada: {len(full_stream)} caracteres de JSON plano.")
 
-        # --- Extracción desde Payload RSC ---
-        candidates = _parse_rsc_payload(html_content)
-        _log(f"🧩 Candidatos extraídos de React Stream: {len(candidates)}")
+        page_products = _extract_from_rsc_stream(full_stream, base_url, limite, max_items - len(productos))
+        page_items = len(page_products)
 
-        for item in candidates:
-            if len(productos) >= max_items: break
-            try:
-                nombre = str(item.get('name') or item.get('productName') or '').strip()
-                if not nombre or len(nombre) < 3: continue
-
-                # Evitar nombres de categorías o del sistema
-                if any(bad in nombre.lower() for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar']):
-                    continue
-
-                slug = item.get('slug') or item.get('link') or item.get('url') or ''
-                if not slug or any(b in slug.lower() for b in ['/c/', 'ayuda', 'blog', 'favoritos']):
-                    continue
-
-                link_final = urljoin(base_url, slug.split('?')[0])
-                ident = _normalize_identifier(link_final)
-                if ident in vistos: continue
-
-                # Extraer precios de las distintas llaves posibles en FastStore
-                p_o = _safe_parse_price(item.get('price') or item.get('spotPrice') or item.get('lowPrice'))
-                p_r = _safe_parse_price(item.get('listPrice') or item.get('highPrice')) or p_o
-
-                if p_o <= 0.0 or p_o > limite: continue
-
-                vistos.add(ident)
-
-                # Imagen
-                img_url = item.get('image') or item.get('imageUrl') or ""
-                if isinstance(img_url, list) and img_url: img_url = img_url[0]
-                if isinstance(img_url, dict): img_url = img_url.get('url', '')
-
-                productos.append({
-                    "identificador": ident,
-                    "nombre": f"NATURA - {nombre.upper()}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": str(img_url),
-                    "fecha": datetime.now(timezone.utc).isoformat()
-                })
-                page_items += 1
-            except Exception:
-                continue
-
-        # --- Fallback directo por Regex sobre el cuerpo HTML desescapado ---
-        if page_items == 0:
-            _log("🔍 Ejecutando escaneo regex profundo sobre variables del servidor...")
-            # Capturar patrones: "name":"EAU DE TOILETTE...","slug":"...","spotPrice":97.3
-            pattern = re.compile(
-                r'"(?:productName|name)"\s*:\s*"([^"]{3,100})".*?"(?:slug|link|url)"\s*:\s*"([^"]+)".*?"(?:price|spotPrice|lowPrice|value)"\s*:\s*(\d+(?:[\.,]\d+)?)',
-                re.IGNORECASE | re.DOTALL
-            )
-            
-            clean_html = html_content.replace('\\"', '"')
-            for m in pattern.finditer(clean_html):
-                if len(productos) >= max_items: break
-                try:
-                    p_name = m.group(1).strip()
-                    p_slug = m.group(2).strip()
-                    p_price = _safe_parse_price(m.group(3))
-
-                    if not p_name or len(p_name) < 3 or p_price <= 0.0 or p_price > limite:
-                        continue
-
-                    if any(b in p_slug.lower() for b in ['/c/', 'ayuda', 'blog', 'favoritos']):
-                        continue
-
-                    link_final = urljoin(base_url, p_slug.split('?')[0])
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
-
-                    vistos.add(ident)
-                    productos.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {p_name.upper()}",
-                        "precio": p_price,
-                        "precio_regular": p_price,
-                        "link": link_final,
-                        "img": "",
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                    page_items += 1
-                except Exception:
-                    continue
+        for p in page_products:
+            if p["identificador"] not in vistos:
+                vistos.add(p["identificador"])
+                productos.append(p)
 
         _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         if page_items == 0 or len(productos) >= max_items:
@@ -2267,12 +2226,11 @@ def motor_natura(
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_rsc_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_rsc_unpacker_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
