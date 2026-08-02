@@ -2025,7 +2025,8 @@ def motor_natura(
 ):
     """
     Motor Natura Perú Definitivo.
-    Incluye lista negra de rutas de menú/cuenta y filtro estricto de productos (/p).
+    Separa el filtro de lista negra de URLs del nombre de productos y extrae ofertas
+    tanto desde el JSON embebido de Next.js como desde el DOM HTML.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2087,25 +2088,28 @@ def motor_natura(
             return f"NATURA-{abs(hash(link))}"
 
     def _is_blacklisted_url(href):
-        """Filtra páginas de sistema, cuentas, tiendas y menús de navegación"""
+        """Filtra únicamente enlaces del sistema, menús y cuenta"""
         blacklist = [
             'encuentra-natura', 'mis-datos', 'favoritos', 'quiero-ser',
             'aplicativo', 'sobre-natura', 'ayuda', 'blog', 'revista',
             'tiendas', 'login', 'cart', 'checkout', 'politicas',
-            'terminos', '/c/', 'mi-cuenta', 'pedidos', 'cupones'
+            'terminos', 'mi-cuenta', 'pedidos', 'cupones'
         ]
         href_lower = href.lower()
+        # Evita coincidir con categorías de producto en la ruta
+        if href_lower.startswith('/c/'):
+            return True
         return any(b in href_lower for b in blacklist)
 
     def _extract_products_from_json(obj):
-        """Busca recursivamente nodos de producto dentro del JSON de Next.js / FastStore"""
+        """Busca recursivamente nodos de producto dentro del estado de Next.js"""
         items = []
         if isinstance(obj, dict):
             name = obj.get('name') or obj.get('productName') or obj.get('title')
-            has_price_info = any(k in obj for k in ['priceRange', 'offers', 'spotPrice', 'sellers', 'price'])
-            has_product_link = any(k in obj for k in ['slug', 'link', 'url', 'sku', 'productId'])
+            has_price = any(k in obj for k in ['priceRange', 'offers', 'spotPrice', 'sellers', 'price', 'listPrice'])
+            has_link = any(k in obj for k in ['slug', 'link', 'url', 'sku', 'productId', 'id'])
 
-            if name and (has_price_info or has_product_link):
+            if name and (has_price or has_link):
                 items.append(obj)
             else:
                 for v in obj.values():
@@ -2168,7 +2172,7 @@ def motor_natura(
                     if len(productos) >= max_items: break
                     try:
                         nombre = str(node.get('name') or node.get('productName') or '').strip()
-                        if not nombre or len(nombre) < 3 or _is_blacklisted_url(nombre): continue
+                        if not nombre or len(nombre) < 3: continue
 
                         slug = node.get('slug') or node.get('link') or node.get('url') or ''
                         if not slug or _is_blacklisted_url(slug): continue
@@ -2220,29 +2224,29 @@ def motor_natura(
             except Exception as e:
                 _log(f"⚠️ Error procesando JSON de Next.js: {e}", "warning")
 
-        # --- FASE 2: Extracción DOM Filtrada (Solo enlaces de productos reales /p) ---
+        # --- FASE 2: Extracción DOM Filtrada ---
         if page_items == 0:
-            # Buscar únicamente enlaces <a> que apunten a fichas de producto /p
-            product_anchors = soup.find_all('a', href=re.compile(r'/p(?:/|\?|$)|\-p(?:/|\?|$)'))
-            
-            # Si no hay enlaces /p strict, buscar enlaces con slugs largos excluyendo la blacklist
-            if not product_anchors:
-                all_a = soup.find_all('a', href=True)
-                product_anchors = [a for a in all_a if a['href'].startswith('/') and not _is_blacklisted_url(a['href']) and len(a['href']) > 15]
+            all_a = soup.find_all('a', href=True)
+            product_anchors = []
+
+            for a in all_a:
+                href = a.get('href', '')
+                if not href or _is_blacklisted_url(href): continue
+                # Aceptar enlaces de producto (rutas relativas con slugs largos o parámetros de producto)
+                if href.startswith('/') and len(href) > 12:
+                    product_anchors.append(a)
 
             _log(f"🧩 [DIAGNÓSTICO DOM] Enlaces de productos filtrados: {len(product_anchors)}")
 
             for a_tag in product_anchors:
                 if len(productos) >= max_items: break
                 try:
-                    href = a_tag.get('href', '')
-                    if not href or _is_blacklisted_url(href): continue
-
+                    href = a_tag['href']
                     link_final = urljoin(base_url, href.split('?')[0])
                     ident = _normalize_identifier(link_final)
                     if ident in vistos: continue
 
-                    # Buscar la tarjeta más cercana sin subir hasta el header o body
+                    # Ascender únicamente 2 a 3 niveles para no atrapar menús contenedores
                     card = a_tag
                     for _ in range(3):
                         if card.parent and card.parent.name not in ['body', 'html', 'main', 'section', 'header', 'nav']:
@@ -2250,8 +2254,9 @@ def motor_natura(
 
                     txt = card.get_text(separator=' ')
 
-                    prices = re.findall(r'S/\s*(\d+(?:[\.,]\d+)?)', txt)
-                    parsed_prices = [_safe_parse_price(p) for p in prices if 10.0 <= _safe_parse_price(p) <= 2000.0]
+                    # Buscar cualquier patrón numérico de precio (ej. S/ 97.30, S/.97,30 o 97.30)
+                    prices = re.findall(r'(?:S/\s*|S/\.\s*)?(\d+(?:[\.,]\d+)?)', txt)
+                    parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
                     if not parsed_prices: continue
 
@@ -2264,8 +2269,6 @@ def motor_natura(
                     if not nombre_raw or len(nombre_raw) < 3:
                         title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'])
                         if title_el: nombre_raw = title_el.get_text().strip()
-
-                    if _is_blacklisted_url(nombre_raw): continue
 
                     nombre_limpio = re.sub(r'(?i)agregar\s+a\s+mi\s+bolsa', '', nombre_raw)
                     nombre_limpio = re.sub(r'(?i)últimas\s+horas', '', nombre_limpio)
@@ -2308,7 +2311,6 @@ def motor_natura(
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
