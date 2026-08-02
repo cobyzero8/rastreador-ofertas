@@ -2012,19 +2012,18 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_items=500):
     """
-    Motor Natura Perú Ultra-Rápido.
-    Acceso directo a GraphQL con TLS de Chrome (curl_cffi) eliminando bloqueos de interfaz.
+    Motor Natura Perú Definitivo (GraphQL + Anti-403 + Fallback ScraperAPI).
     """
-    import time, re, json
+    import os, time, re, json, requests
     from urllib.parse import urlparse
     from datetime import datetime, timezone
 
     try:
         from curl_cffi import requests as curl_requests
-        USE_CURL_CFFI = True
+        USE_CURL = True
     except ImportError:
         import requests as curl_requests
-        USE_CURL_CFFI = False
+        USE_CURL = False
 
     try:
         import streamlit as st
@@ -2068,7 +2067,17 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
     productos = []
     vistos = set()
 
-    # Sanitizar categoría a término de búsqueda
+    # API Key para ScraperAPI si ocurre un 403
+    api_key_scraper = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        if st and "SCRAPERAPI_KEY" in st.secrets:
+            api_key_scraper = st.secrets["SCRAPERAPI_KEY"]
+        elif "SCRAPERAPI_KEY" in os.environ:
+            api_key_scraper = os.environ["SCRAPERAPI_KEY"]
+    except Exception:
+        pass
+
+    # Mapeo de búsqueda
     parsed = urlparse(url)
     path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
     category_slug = path_segments[-1] if path_segments else "perfumeria"
@@ -2083,21 +2092,24 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
 
     _log(f"🌿 Iniciando Natura Perú | Búsqueda: '{termino_busqueda}' | Límite: S/. {limite}")
 
-    # Inicializar cliente curl_cffi con TLS de Chrome
-    if USE_CURL_CFFI:
+    # Inicializar sesión
+    if USE_CURL:
         sess = curl_requests.Session(impersonate="chrome120")
     else:
         import requests
         sess = requests.Session()
 
-    headers = {
-        "accept": "*/*",
+    headers_base = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "accept-language": "es-PE,es-ES;q=0.9,es;q=0.8",
-        "content-type": "application/json",
-        "origin": "https://www.natura.com.pe",
-        "referer": url,
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
+
+    # 1. Warm-up quick GET para obtener cookies de contexto VTEX
+    try:
+        sess.get("https://www.natura.com.pe/", headers=headers_base, timeout=5)
+    except Exception:
+        pass
 
     graphql_url = f"{base_url}/_v/public/graphql/v1"
     graphql_query = """
@@ -2122,6 +2134,23 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
         }
     """
 
+    headers_gql = {
+        "accept": "*/*",
+        "accept-language": "es-PE,es;q=0.9",
+        "content-type": "application/json",
+        "origin": "https://www.natura.com.pe",
+        "referer": url,
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+
+    use_proxy = False
+
     for page in range(1, max_pages + 1):
         _log(f"⚡ Consultando GraphQL Natura (Página {page})...")
 
@@ -2139,12 +2168,36 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
             }
         }
 
-        try:
-            # Petición ultra-rápida (Timeout 5 segundos máximo)
-            resp = sess.post(graphql_url, json=payload, headers=headers, timeout=5)
-            _log(f"📡 Respuesta GraphQL HTTP {resp.status_code}")
+        resp = None
+        # INTENTO 1: Consulta Directa con Headers Completos
+        if not use_proxy:
+            try:
+                resp = sess.post(graphql_url, json=payload, headers=headers_gql, timeout=6)
+                _log(f"📡 Respuesta GraphQL HTTP {resp.status_code}")
+                if resp.status_code == 403:
+                    _log("⚠️ Bloqueo HTTP 403 detectado. Activando ScraperAPI Proxy...", "warning")
+                    use_proxy = True
+            except Exception as e_post:
+                _log(f"⚠️ Error directo: {e_post}. Activando ScraperAPI Proxy...", "warning")
+                use_proxy = True
 
-            if resp.status_code == 200:
+        # INTENTO 2: Fallback vía ScraperAPI
+        if use_proxy:
+            try:
+                _log(f"🚀 Enviando GraphQL vía ScraperAPI...", "info")
+                proxy_payload = {
+                    'api_key': api_key_scraper,
+                    'url': graphql_url,
+                    'keep_headers': 'true'
+                }
+                resp = requests.post('https://api.scraperapi.com/', params=proxy_payload, json=payload, headers=headers_gql, timeout=25)
+                _log(f"📡 Respuesta ScraperAPI Proxy HTTP {resp.status_code}")
+            except Exception as e_proxy:
+                _log(f"❌ Falló ScraperAPI: {e_proxy}", "error")
+                break
+
+        if resp and resp.status_code == 200:
+            try:
                 data = resp.json()
                 raw_products = data.get("data", {}).get("productSearch", {}).get("products", []) or []
 
@@ -2196,17 +2249,16 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 else:
                     _log(f"ℹ️ Fin del catálogo en página {page}.")
                     break
-            else:
-                _log(f"⚠️ Error HTTP GraphQL ({resp.status_code}).", "warning")
+            except Exception as e_json:
+                _log(f"❌ Error al procesar respuesta JSON: {e_json}", "error")
                 break
-
-        except Exception as e_gql:
-            _log(f"❌ Error al consultar GraphQL: {e_gql}", "error")
+        else:
+            _log(f"🛑 No se pudo obtener respuesta válida (HTTP {resp.status_code if resp else 'N/A'}).", "error")
             break
 
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
         if len(productos) >= max_items: break
-        time.sleep(0.2)
+        time.sleep(0.3)
 
     _log(f"✅ Patrullaje de Natura completado. Total ofertas: {len(productos)}", "success")
     return productos
