@@ -2025,8 +2025,8 @@ def motor_natura(
 ):
     """
     Motor Natura Perú Definitivo.
-    Soporta extracción profunda de precios en esquemas JSON de VTEX (items -> sellers -> commertialOffer)
-    y normaliza textos DOM para evitar fallos por saltos de línea entre 'S/' y el monto.
+    - Navegación recursiva profunda en esquemas VTEX/Next.js (dehydratedState).
+    - Selector de títulos DOM resistente a etiquetas de descuento y ofertas.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2094,57 +2094,68 @@ def motor_natura(
             'tiendas', 'login', 'cart', 'checkout', 'politicas',
             'terminos', 'mi-cuenta', 'pedidos', 'cupones'
         ]
-        href_lower = href.lower()
+        href_lower = str(href).lower()
         if href_lower.startswith('/c/'): return True
         return any(b in href_lower for b in blacklist)
 
+    def _extract_vtex_products(obj, visited_ids=None):
+        """Busca nodos reales de producto VTEX sin detener la recursión en los nodos padres"""
+        if visited_ids is None: visited_ids = set()
+        prods = []
+        if isinstance(obj, dict):
+            p_id = obj.get('productId') or obj.get('id')
+            p_name = obj.get('productName') or obj.get('name')
+
+            # Un producto válido de VTEX requiere nombre y atributos de catálogo/oferta
+            has_product_structure = any(k in obj for k in ['items', 'sellers', 'priceRange', 'linkText', 'slug'])
+
+            if p_name and has_product_structure:
+                name_str = str(p_name).strip()
+                if len(name_str) > 3 and not name_str.lower().startswith(('perfumer', 'categor', 'banner')):
+                    if p_id and p_id not in visited_ids:
+                        visited_ids.add(p_id)
+                        prods.append(obj)
+                    elif not p_id:
+                        prods.append(obj)
+
+            for k, v in obj.items():
+                if k not in ['sellers', 'commertialOffer']:
+                    prods.extend(_extract_vtex_products(v, visited_ids))
+
+        elif isinstance(obj, list):
+            for item in obj:
+                prods.extend(_extract_vtex_products(item, visited_ids))
+        return prods
+
     def _extract_price_from_json_node(node):
-        """Extrae el precio de oferta y regular explorando todas las capas de VTEX/Next.js"""
         p_o, p_r = 0.0, 0.0
         
-        # 1. Caso VTEX IO (items -> sellers -> commertialOffer)
-        if 'items' in node and isinstance(node['items'], list) and node['items']:
-            first_item = node['items'][0]
-            if 'sellers' in first_item and isinstance(first_item['sellers'], list) and first_item['sellers']:
-                offer = first_item['sellers'][0].get('commertialOffer', {})
-                p_o = _safe_parse_price(offer.get('Price'))
+        items = node.get('items') or []
+        if isinstance(items, list) and items:
+            first_item = items[0]
+            sellers = first_item.get('sellers') or []
+            if isinstance(sellers, list) and sellers:
+                offer = sellers[0].get('commertialOffer', {})
+                p_o = _safe_parse_price(offer.get('Price') or offer.get('spotPrice'))
                 p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
 
-        # 2. Caso direct sellers
-        if p_o == 0.0 and 'sellers' in node and isinstance(node['sellers'], list) and node['sellers']:
-            offer = node['sellers'][0].get('commertialOffer', {})
-            p_o = _safe_parse_price(offer.get('Price'))
-            p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
+        if p_o == 0.0:
+            sellers = node.get('sellers') or []
+            if isinstance(sellers, list) and sellers:
+                offer = sellers[0].get('commertialOffer', {})
+                p_o = _safe_parse_price(offer.get('Price') or offer.get('spotPrice'))
+                p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
 
-        # 3. Caso FastStore / priceRange
-        if p_o == 0.0 and 'priceRange' in node and isinstance(node['priceRange'], dict):
-            p_o = _safe_parse_price(node['priceRange'].get('minPrice', {}).get('price'))
-            p_r = _safe_parse_price(node['priceRange'].get('maxPrice', {}).get('price')) or p_o
-
-        # 4. Caso direct offers / spotPrice / price
-        if p_o == 0.0 and 'offers' in node and isinstance(node['offers'], dict):
-            p_o = _safe_parse_price(node['offers'].get('lowPrice') or node['offers'].get('price'))
-            p_r = _safe_parse_price(node['offers'].get('highPrice') or node['offers'].get('listPrice')) or p_o
+        if p_o == 0.0 and isinstance(node.get('priceRange'), dict):
+            pr = node['priceRange']
+            p_o = _safe_parse_price(pr.get('minPrice', {}).get('price'))
+            p_r = _safe_parse_price(pr.get('maxPrice', {}).get('price')) or p_o
 
         if p_o == 0.0:
             p_o = _safe_parse_price(node.get('spotPrice') or node.get('price'))
             p_r = _safe_parse_price(node.get('listPrice') or node.get('list_price')) or p_o
 
         return p_o, max(p_r, p_o)
-
-    def _extract_products_from_json(obj):
-        items = []
-        if isinstance(obj, dict):
-            name = obj.get('name') or obj.get('productName') or obj.get('title')
-            if name and any(k in obj for k in ['slug', 'link', 'url', 'sku', 'productId', 'id', 'items', 'sellers', 'price']):
-                items.append(obj)
-            else:
-                for v in obj.values():
-                    items.extend(_extract_products_from_json(v))
-        elif isinstance(obj, list):
-            for elem in obj:
-                items.extend(_extract_products_from_json(elem))
-        return items
 
     productos, vistos = [], set()
     page_count = 0
@@ -2188,20 +2199,20 @@ def motor_natura(
 
         page_items = 0
 
-        # --- FASE 1: Extracción JSON (__NEXT_DATA__) ---
+        # --- FASE 1: Extracción en __NEXT_DATA__ ---
         next_data_script = soup.find('script', id='__NEXT_DATA__')
         if next_data_script and next_data_script.string:
             try:
                 data_json = json.loads(next_data_script.string)
-                nodes = _extract_products_from_json(data_json.get('props', {}))
+                nodes = _extract_vtex_products(data_json.get('props', {}))
 
                 for node in nodes:
                     if len(productos) >= max_items: break
                     try:
-                        nombre = str(node.get('name') or node.get('productName') or '').strip()
+                        nombre = str(node.get('productName') or node.get('name') or '').strip()
                         if not nombre or len(nombre) < 3: continue
 
-                        slug = node.get('slug') or node.get('link') or node.get('url') or ''
+                        slug = node.get('linkText') or node.get('slug') or node.get('link') or node.get('url') or ''
                         if not slug or _is_blacklisted_url(slug): continue
 
                         link_final = urljoin(base_url, slug.split('?')[0])
@@ -2209,19 +2220,21 @@ def motor_natura(
                         if ident in vistos: continue
 
                         p_o, p_r = _extract_price_from_json_node(node)
-
                         if p_o <= 0.0 or p_o > limite: continue
 
                         vistos.add(ident)
                         img_url = ""
-                        if 'image' in node:
+                        items = node.get('items') or []
+                        if isinstance(items, list) and items:
+                            images = items[0].get('images') or []
+                            if images and isinstance(images, list):
+                                img_url = images[0].get('imageUrl') or images[0].get('src') or ""
+
+                        if not img_url and 'image' in node:
                             img_obj = node['image']
                             if isinstance(img_obj, list) and img_obj: img_obj = img_obj[0]
                             if isinstance(img_obj, dict): img_url = img_obj.get('url', '')
                             elif isinstance(img_obj, str): img_url = img_obj
-                        elif 'items' in node and node['items']:
-                            images = node['items'][0].get('images', [])
-                            if images: img_url = images[0].get('imageUrl', '')
 
                         productos.append({
                             "identificador": ident,
@@ -2241,7 +2254,7 @@ def motor_natura(
             except Exception as e:
                 _log(f"⚠️ Error procesando JSON de Next.js: {e}", "warning")
 
-        # --- FASE 2: Extracción DOM Normalizada (Fallback) ---
+        # --- FASE 2: Extracción DOM Inteligente (Fallback) ---
         if page_items == 0:
             all_a = soup.find_all('a', href=True)
             product_anchors = []
@@ -2262,17 +2275,14 @@ def motor_natura(
                     ident = _normalize_identifier(link_final)
                     if ident in vistos: continue
 
-                    # Subir 3 a 4 niveles en el DOM
                     card = a_tag
                     for _ in range(4):
                         if card.parent and card.parent.name not in ['body', 'html', 'main', 'section', 'header', 'nav']:
                             card = card.parent
 
-                    # Normalizar espacios en el texto para resolver 'S/\n97.30'
-                    raw_txt = card.get_text(separator=' ')
+                    raw_txt = card.get_text(separator='\n')
                     clean_txt = re.sub(r'\s+', ' ', raw_txt)
 
-                    # Regex para capturar precios en soles
                     price_matches = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', clean_txt, re.IGNORECASE)
                     parsed_prices = [_safe_parse_price(p) for p in price_matches if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
@@ -2283,18 +2293,28 @@ def motor_natura(
 
                     if p_o <= 0.0 or p_o > limite: continue
 
-                    # Obtener nombre
-                    nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
+                    # Extracción inteligente del título
+                    nombre_raw = ""
+                    title_el = card.select_one('[class*="name" i], [class*="title" i], [data-testid*="name" i], h2, h3, h4')
+                    if title_el:
+                        nombre_raw = title_el.get_text().strip()
+
                     if not nombre_raw or len(nombre_raw) < 3:
-                        title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'])
-                        if title_el: nombre_raw = title_el.get_text().strip()
+                        nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
 
-                    nombre_limpio = re.sub(r'(?i)agregar\s+a\s+mi\s+bolsa', '', nombre_raw)
-                    nombre_limpio = re.sub(r'(?i)últimas\s+horas', '', nombre_limpio)
-                    nombre_limpio = re.sub(r'S/\s*\.?\s*\d+(?:[\.,]\d+)?', '', nombre_limpio)
-                    nombre_limpio = re.sub(r'-\d+%', '', nombre_limpio)
-                    nombre_limpio = re.sub(r'\s+', ' ', nombre_limpio).strip().upper()
+                    if not nombre_raw or len(nombre_raw) < 3:
+                        lines = [l.strip() for l in raw_txt.split('\n') if l.strip()]
+                        clean_lines = []
+                        for l in lines:
+                            l_up = l.upper()
+                            if any(bad in l_up for bad in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS', 'HORAS', 'FAVORITOS', 'HASTA', 'OFF', 'RATING']):
+                                continue
+                            if len(l) >= 3 and not re.match(r'^\d+[\.,]?\d*$', l):
+                                clean_lines.append(l)
+                        if clean_lines:
+                            nombre_raw = " ".join(clean_lines[:2])
 
+                    nombre_limpio = re.sub(r'\s+', ' ', nombre_raw).strip().upper()
                     if not nombre_limpio or len(nombre_limpio) < 3: continue
 
                     img_el = card.find('img')
@@ -2330,8 +2350,6 @@ def motor_natura(
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
-
 
 
 
