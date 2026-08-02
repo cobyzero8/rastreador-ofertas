@@ -6,4 +6,3 @@ httpx
 curl_cffi
 urllib3
 cloudscraper
-playwright
