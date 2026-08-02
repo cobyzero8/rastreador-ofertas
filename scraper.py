@@ -1,4 +1,4 @@
-import os
+import os, subprocess
 import json
 import requests
 import httpx
@@ -11,6 +11,12 @@ from urllib.parse import urljoin, urlparse, parse_qs, quote
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
+
+try:
+    subprocess.run(["playwright", "install", "chromium"], check=False)
+except Exception:
+    pass
+    
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =======================================================
