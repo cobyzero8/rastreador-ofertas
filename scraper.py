@@ -2023,8 +2023,7 @@ def motor_natura(
 ):
     """
     Motor Natura Perú Definitivo (Extractor Híbrido: __NEXT_DATA__ + DOM por Article).
-    Indexa la totalidad del catálogo de la categoría (Kaiak, Essencial, Homem, etc.)
-    con precios de oferta reales, descuentos e imágenes HD.
+    Corregido error page_count NameError y advertencias de ScriptRunContext en ejecuciones headless.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2048,19 +2047,29 @@ def motor_natura(
 
     logs_list = []
 
+    # Control inteligente de log para evitar spam 'missing ScriptRunContext' en CLI/GitHub Actions
     def _log(msg, level="info"):
         ts = datetime.now(timezone.utc).isoformat()
         entry = f"[{level.upper()}] {ts} - {msg}"
         logs_list.append(entry)
-        try:
-            if st:
+
+        has_ctx = False
+        if st:
+            try:
+                from streamlit.runtime.scriptrunner import get_script_run_ctx
+                has_ctx = get_script_run_ctx() is not None
+            except Exception:
+                has_ctx = False
+
+        if has_ctx:
+            try:
                 if level == "error": st.error(msg)
                 elif level == "warning": st.warning(msg)
                 elif level == "success": st.success(msg)
                 else: st.write(msg)
-            else:
+            except Exception:
                 print(entry)
-        except Exception:
+        else:
             print(entry)
 
     def _safe_parse_price(txt):
@@ -2087,6 +2096,7 @@ def motor_natura(
 
     productos = []
     vistos = set()
+    page_count = 0  # 👈 Inicialización correcta de page_count
 
     # 🔑 Obtención Segura de API Key
     api_key_scraper = None
@@ -2116,6 +2126,7 @@ def motor_natura(
         headers_base.update(headers_override)
 
     for page in range(1, max_pages + 1):
+        page_count += 1
         target_page_url = f"{url}?page={page}" if page > 1 else url
         html_content = None
 
@@ -2314,7 +2325,7 @@ def motor_natura(
 
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
-    # Guardar trazabilidad para Diagnóstico en app.py
+    # Guardar trazabilidad para Diagnóstico
     try:
         os.makedirs("ml_debug", exist_ok=True)
         debug_path = "ml_debug/combined_debug.json"
