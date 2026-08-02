@@ -2023,9 +2023,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Master (Deep Unicode Unescaped RSC Payload Parser).
-    Bypassea la codificación Next.js App Router (\u002f, \u002d) para extraer
-    todos los perfumes de la parrilla con sus ofertas e imágenes reales.
+    Motor Natura Perú Master (Deep Flight Payload JSON Scanner + Diagnóstico Detallado).
+    Escanea la memoria RSC/Next.js extrayendo objetos JSON de productos y reporta
+    en los logs cada candidato detectado, sus precios parseados y el motivo de filtrado.
     """
     import os, time, re, json, html, requests
     from urllib.parse import urlparse, urljoin
@@ -2073,15 +2073,24 @@ def motor_natura(
         else:
             print(entry)
 
-    def _safe_parse_price(txt):
-        if txt is None: return 0.0
+    def _safe_parse_price(val):
+        if val is None: return 0.0
         try:
-            s = re.sub(r'[^\d\.,]', '', str(txt)).strip()
+            if isinstance(val, (int, float)):
+                v = float(val)
+                # Si el precio viene en centavos (ej. 9730 -> 97.30)
+                if v > 2000 and v < 100000:
+                    v = v / 100.0
+                return v
+            s = re.sub(r'[^\d\.,]', '', str(val)).strip()
             if not s: return 0.0
             if s.count('.') > 1: s = s.replace('.', '')
             s = s.replace(',', '.')
             m = re.search(r'\d+\.?\d*', s)
-            return float(m.group(0)) if m else 0.0
+            res = float(m.group(0)) if m else 0.0
+            if res > 2000 and res < 100000:
+                res = res / 100.0
+            return res
         except Exception:
             return 0.0
 
@@ -2124,7 +2133,6 @@ def motor_natura(
 
         html_content = None
 
-        # 1. Petición Directa HTTP
         try:
             resp = sess.get(target_url, headers=headers_base, timeout=10, verify=False)
             _log(f"📡 Respuesta Directa HTTP: {resp.status_code}")
@@ -2138,68 +2146,131 @@ def motor_natura(
             break
 
         # -----------------------------------------------------------------
-        # DEEP UNESCAPE UNICODE & RSC PAYLOAD DECODING
+        # DEEP UNESCAPE & FLIGHT PAYLOAD JSON PARSER
         # -----------------------------------------------------------------
         clean_text = html.unescape(html_content)
         clean_text = re.sub(r'\\u002[fF]', '/', clean_text)
         clean_text = re.sub(r'\\u002[dD]', '-', clean_text)
+        clean_text = re.sub(r'\\u0022', '"', clean_text)
         clean_text = clean_text.replace(r'\"', '"').replace(r'\/', '/').replace(r'\\', '\\')
 
-        # Buscar enlaces /p/ desescapados
-        p_matches = list(set(re.findall(r'/p/([a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', clean_text, re.I)))
-        skus_found = list(set(re.findall(r'NATPER-\d+', clean_text, re.I)))
+        # Buscar fragmentos JSON que contengan datos de producto
+        json_chunks = re.findall(r'\{[^{}]*?"(?:productName|name|displayName)"\s*:\s*"[^"]+"[^{}]*?\}', clean_text)
+        _log(f"🔍 Candidatos JSON estructurados detectados: {len(json_chunks)}")
 
-        _log(f"⚡ Enlaces /p/ revelados tras desescapar Unicode: {len(p_matches)} | SKUs: {len(skus_found)}", "info")
-
-        if p_matches or skus_found:
-            items_to_process = p_matches if p_matches else skus_found
-
-            for item_token in items_to_process:
+        if json_chunks:
+            for chunk in json_chunks:
                 if len(productos) >= max_items: break
                 try:
-                    rel_link = item_token if item_token.startswith('/p/') else f"/p/{item_token}"
-                    link_final = urljoin(base_url, rel_link)
+                    # Intento de parseo JSON estricto
+                    data_obj = None
+                    try:
+                        data_obj = json.loads(chunk)
+                    except Exception:
+                        pass
 
+                    nombre = ""
+                    rel_link = ""
+                    p_o, p_r = 0.0, 0.0
+                    img_url = ""
+
+                    if isinstance(data_obj, dict):
+                        nombre = (data_obj.get("productName") or data_obj.get("name") or data_obj.get("displayName") or "").strip()
+                        rel_link = data_obj.get("linkText") or data_obj.get("slug") or data_obj.get("url") or ""
+                        p_o = _safe_parse_price(data_obj.get("price") or data_obj.get("spotPrice") or data_obj.get("sellingPrice"))
+                        p_r = _safe_parse_price(data_obj.get("listPrice") or data_obj.get("regularPrice") or p_o)
+                    else:
+                        m_name = re.search(r'"(?:productName|name|displayName)"\s*:\s*"([^"]+)"', chunk)
+                        if m_name: nombre = m_name.group(1).strip()
+
+                        m_link = re.search(r'"(?:linkText|slug|url|href)"\s*:\s*"([^"]+)"', chunk)
+                        if m_link: rel_link = m_link.group(1).strip()
+
+                        prices = re.findall(r'"(?:price|spotPrice|sellingPrice|listPrice|value)"\s*:\s*(\d+(?:\.\d+)?)', chunk)
+                        parsed_prices = [_safe_parse_price(p) for p in prices if _safe_parse_price(p) > 0]
+                        if parsed_prices:
+                            p_o = min(parsed_prices)
+                            p_r = max(parsed_prices)
+
+                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+
+                    link_final = urljoin(base_url, rel_link) if rel_link else url
+                    ident = _normalize_identifier(link_final, fallback=nombre)
+                    if ident in vistos: continue
+
+                    if p_o == 0.0:
+                        # Buscar precios formateados en el contexto cercano
+                        idx = clean_text.find(nombre)
+                        if idx != -1:
+                            snippet = clean_text[max(0, idx - 200):min(len(clean_text), idx + 400)]
+                            txt_prices = re.findall(r'S/\s*(\d+[\.,]?\d*)', snippet)
+                            parsed_txt = [_safe_parse_price(tp) for tp in txt_prices if _safe_parse_price(tp) > 0]
+                            if parsed_txt:
+                                p_o = min(parsed_txt)
+                                p_r = max(parsed_txt)
+
+                    if p_o == 0.0:
+                        continue
+
+                    if p_o > limite:
+                        _log(f"⏳ Producto '{nombre}' omitido por superar límite: S/. {p_o} > S/. {limite}")
+                        continue
+
+                    m_img = re.search(r'"(https://[^\s"]*(?:vtexassets|natura\.com)[^\s"]*\.(?:jpg|png|webp)[^"]*)"', clean_text[max(0, clean_text.find(nombre) - 300):min(len(clean_text), clean_text.find(nombre) + 500)], re.I)
+                    if m_img: img_url = m_img.group(1)
+
+                    vistos.add(ident)
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre.upper()}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                    page_items += 1
+                except Exception:
+                    continue
+
+        # -----------------------------------------------------------------
+        # ESTRATEGIA B: ANCLAJE POR EXTRACTOR GENERAL DE BLOQUES DE PRODUCTO
+        # -----------------------------------------------------------------
+        if page_items == 0:
+            _log("⚡ Aplicando escáner de patrones por URLs de producto y contexto...", "info")
+            p_urls = list(set(re.findall(r'(/p/[a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', clean_text, re.I)))
+            _log(f"🔍 Rutas de producto /p/ encontradas en el buffer: {len(p_urls)}")
+
+            for rel_link in p_urls:
+                if len(productos) >= max_items: break
+                try:
+                    link_final = urljoin(base_url, rel_link)
                     ident = _normalize_identifier(link_final)
                     if ident in vistos: continue
 
-                    idx = clean_text.find(item_token)
+                    idx = clean_text.find(rel_link)
                     if idx == -1: continue
+                    snippet = clean_text[max(0, idx - 450):min(len(clean_text), idx + 550)]
 
-                    snippet = clean_text[max(0, idx - 500):min(len(clean_text), idx + 800)]
-
-                    # Nombre del producto
+                    # Nombre
                     nombre = ""
                     m_aria = re.search(r'aria-label=["\']([^"\']+)["\']', snippet, re.I)
                     if m_aria and "descuento" not in m_aria.group(1).lower() and "agregar" not in m_aria.group(1).lower():
                         nombre = m_aria.group(1).strip()
 
                     if not nombre:
-                        m_name = re.search(r'"(?:productName|name|displayName|title)"\s*:\s*"([^"]+)"', snippet, re.I)
-                        if m_name and len(m_name.group(1)) > 3:
-                            nombre = m_name.group(1).strip()
+                        m_title = re.search(r'"(Eau de [^"<>]+|Perfume [^"<>]+|Colonia [^"<>]+|Luna [^"<>]+|Homem [^"<>]+|Kaiak [^"<>]+|Una [^"<>]+|Essencial [^"<>]+|Humor [^"<>]+)"', snippet, re.I)
+                        if m_title: nombre = m_title.group(1).strip()
 
                     if not nombre:
-                        m_fragrance = re.search(r'"(Eau de [^"<>]+|Perfume [^"<>]+|Colonia [^"<>]+|Luna [^"<>]+|Homem [^"<>]+|Kaiak [^"<>]+|Una [^"<>]+|Essencial [^"<>]+|Humor [^"<>]+)"', snippet, re.I)
-                        if m_fragrance:
-                            nombre = m_fragrance.group(1).strip()
-
-                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper():
                         slug_part = rel_link.split('/p/')[-1].split('/')[0].replace('-', ' ')
                         nombre = slug_part.title()
 
-                    if not nombre or len(nombre) < 3: continue
+                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
 
                     # Precios
                     prices_found = []
-
-                    m_por = re.search(r'product-price-por[^>]*>\s*(?:S/|S/&nbsp;)?\s*(\d+[\.,]?\d*)', snippet, re.I)
-                    if m_por: prices_found.append(_safe_parse_price(m_por.group(1)))
-
-                    m_de = re.search(r'product-price-de[^>]*>\s*(?:S/|S/&nbsp;)?\s*(\d+[\.,]?\d*)', snippet, re.I)
-                    if m_de: prices_found.append(_safe_parse_price(m_de.group(1)))
-
-                    num_prices = re.findall(r'"(?:price|Price|spotPrice|salesPrice|highPrice|listPrice|ListPrice|value)"\s*:\s*(\d+(?:\.\d+)?)', snippet)
+                    num_prices = re.findall(r'"(?:price|spotPrice|sellingPrice|listPrice|value)"\s*:\s*(\d+(?:\.\d+)?)', snippet)
                     for np in num_prices:
                         val = _safe_parse_price(np)
                         if val > 0: prices_found.append(val)
@@ -2214,12 +2285,13 @@ def motor_natura(
                     p_o = min(prices_found)
                     p_r = max(prices_found)
 
-                    if p_o == 0.0 or p_o > limite: continue
+                    if p_o == 0.0: continue
+                    if p_o > limite:
+                        _log(f"⏳ Omitido '{nombre}' (S/. {p_o}) por exceder límite de S/. {limite}")
+                        continue
 
-                    # Imagen
                     img_url = ""
-                    m_img = re.search(r'"(https://production\.na01\.natura\.com/[^"]+)"', snippet, re.I) or \
-                            re.search(r'"(https://[^\s"]*(?:vtexassets|natura\.com)[^\s"]*\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
+                    m_img = re.search(r'"(https://[^\s"]*(?:vtexassets|natura\.com)[^\s"]*\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
                     if m_img: img_url = m_img.group(1)
 
                     vistos.add(ident)
@@ -2245,7 +2317,6 @@ def motor_natura(
 
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
-    # Guardar trazabilidad para el módulo de diagnóstico de app.py
     try:
         os.makedirs("ml_debug", exist_ok=True)
         debug_path = "ml_debug/combined_debug.json"
@@ -2260,7 +2331,7 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_master_unescape_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_deep_flight_scanner", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
