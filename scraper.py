@@ -2023,11 +2023,14 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (RSC Unescaped Stream & JSON Payload Parser).
-    Desescapa secuencias React Server Components (\", \/) y extrae precios numéricos
-    nativos (spotPrice, price, ListPrice) e imágenes HD de vtexassets.com.
+    Motor Natura Perú Definitivo (DOM Parser con Selectores Nativos del Inspector).
+    Basado en inspección real:
+    - Grilla: [data-testid="plp-products-grid"]
+    - Tarjetas: <article data-testid="product-card-NATPER-xxx">
+    - Precios: #product-price-por y #product-price-de
+    - Imagen: img[src*="natura.com/dw/image/v2"]
     """
-    import os, time, re, json, html, requests
+    import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
     from datetime import datetime, timezone
     from bs4 import BeautifulSoup
@@ -2074,7 +2077,7 @@ def motor_natura(
             print(entry)
 
     def _safe_parse_price(txt):
-        if txt is None: return 0.0
+        if not txt: return 0.0
         try:
             s = re.sub(r'[^\d\.,]', '', str(txt)).strip()
             if not s: return 0.0
@@ -2142,76 +2145,76 @@ def motor_natura(
             _log(f"ℹ️ Sin respuesta de la página {page}.")
             break
 
-        # -----------------------------------------------------------------
-        # DESESCAPADO COMPLETO DE PAYLOAD REACT SERVER COMPONENTS (RSC)
-        # -----------------------------------------------------------------
-        clean_text = html.unescape(html_content)
-        clean_text = clean_text.replace(r'\"', '"').replace(r'\/', '/').replace(r'\\', '\\')
-
+        soup = BeautifulSoup(html_content, "html.parser")
         page_items = 0
 
-        # Buscar todos los enlaces a detalle de producto /p/
-        p_matches = re.findall(r'(/p/[a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', clean_text)
-        p_matches = list(set(p_matches))
+        # 1. Localizar tarjetas de producto <article>
+        cards = soup.select('[data-testid="plp-products-grid"] article') or \
+                soup.find_all('article') or \
+                soup.select('article[data-testid*="product-card"]')
 
-        _log(f"⚡ Enlaces /p/ detectados en el payload RSC: {len(p_matches)}", "info")
+        _log(f"🔍 Tarjetas <article> detectadas en el DOM: {len(cards)}")
 
-        for rel_link in p_matches:
+        for card in cards:
             if len(productos) >= max_items: break
             try:
-                link_final = urljoin(base_url, rel_link)
+                # A) Enlace al Producto
+                a_tag = card.find('a', href=re.compile(r'/p/')) or (card if card.name == 'a' else None)
+                if not a_tag: continue
+
+                href = a_tag.get('href', '')
+                if not href or '/p/' not in href: continue
+
+                link_final = urljoin(base_url, href.split('?')[0])
                 ident = _normalize_identifier(link_final)
                 if ident in vistos: continue
 
-                # Extraer fragmento alrededor del enlace (350 caracteres)
-                idx = clean_text.find(rel_link)
-                if idx == -1: continue
-                snippet = clean_text[max(0, idx - 350):min(len(clean_text), idx + 350)]
-
-                # 1. Nombre del Producto
+                # B) Nombre del Producto
                 nombre = ""
-                m_name = re.search(r'"(?:productName|name|displayName)"\s*:\s*"([^"]+)"', snippet, re.I)
-                if m_name:
-                    nombre = m_name.group(1).strip()
+                # Intentar aria-label en el enlace (visto en captura image_bb67e5.png)
+                aria_lbl = a_tag.get('aria-label', '')
+                if aria_lbl and "descuento" not in aria_lbl.lower() and "pricefromto" not in aria_lbl.lower():
+                    nombre = aria_lbl.strip()
 
                 if not nombre:
-                    m_title = re.search(r'"(Eau de [^"]+|Perfume [^"]+|Colonia [^"]+|Luna [^"]+|Homem [^"]+|Kaiak [^"]+|Una [^"]+|Essencial [^"]+|[A-Z][a-z0-9\s]{3,35} \d+ml)"', snippet, re.I)
-                    if m_title:
-                        nombre = m_title.group(1).strip()
+                    for child_a in card.find_all('a'):
+                        al = child_a.get('aria-label', '')
+                        if al and "descuento" not in al.lower() and "pricefromto" not in al.lower():
+                            nombre = al.strip()
+                            break
 
                 if not nombre:
-                    slug_clean = rel_link.split('/p/')[-1].split('/')[0].replace('-', ' ')
-                    nombre = slug_clean.title()
+                    nombre = a_tag.get_text().strip() or card.get_text().strip()
 
-                if len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+                nombre = re.sub(r'\s+', ' ', nombre)
+                if len(nombre) > 120: nombre = nombre.split('\n')[0].strip()
+                if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
 
-                # 2. Precios Numéricos y Formateados
-                prices_found = []
-                # Expresión regular para precios numéricos JSON (price, Price, spotPrice, ListPrice)
-                num_prices = re.findall(r'"(?:price|Price|spotPrice|salesPrice|highPrice|listPrice|ListPrice)"\s*:\s*(\d+(?:\.\d+)?)', snippet)
-                for np in num_prices:
-                    val = _safe_parse_price(np)
-                    if val > 0: prices_found.append(val)
+                # C) Precios exactos: #product-price-por y #product-price-de (visto en captura image_bb64db.png)
+                por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
+                de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
 
-                # Expresión regular para texto formateado S/ XX.XX
-                txt_prices = re.findall(r'S/\s*(\d+[\.,]?\d*)', snippet)
-                for tp in txt_prices:
-                    val = _safe_parse_price(tp)
-                    if val > 0: prices_found.append(val)
+                p_o = _safe_parse_price(por_el.get_text() if por_el else "")
+                p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
 
-                if not prices_found: continue
-
-                p_o = min(prices_found)
-                p_r = max(prices_found)
+                if p_o == 0.0:
+                    prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', card.get_text())
+                    if prices_found:
+                        parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
+                        if parsed_prices:
+                            p_o = min(parsed_prices)
+                            p_r = max(parsed_prices)
 
                 if p_o == 0.0 or p_o > limite: continue
 
-                # 3. Imagen de Producto (vtexassets / cdn)
+                # D) Imagen HD del Producto (visto en captura image_bb6846.png)
                 img_url = ""
-                m_img = re.search(r'"(https://natura\.vtexassets\.com/[^"]+\.(?:jpg|png|webp)[^"]*)"', snippet, re.I) or \
-                        re.search(r'"(https://[^\s"]+\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
-                if m_img:
-                    img_url = m_img.group(1)
+                img_el = card.find('img')
+                if img_el:
+                    img_url = img_el.get('src') or img_el.get('data-src') or ""
+                    if not img_url and img_el.get('srcset'):
+                        img_url = img_el.get('srcset').split(' ')[0]
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
 
                 vistos.add(ident)
                 productos.append({
@@ -2251,7 +2254,7 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_rsc_unescaped_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_dom_native_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
