@@ -2012,58 +2012,266 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 
 
-def motor_natura(url, limite=9999, max_pages=1, **kwargs):
+def motor_natura(
+    url,
+    limite=9999,
+    max_pages=10,
+    step=48,
+    session=None,
+    max_items=500,
+    use_playwright_fallback=False,
+    headers_override=None,
+    return_as_dict=False
+):
     """
-    Script de Diagnóstico Quirúrgico para Natura Perú.
-    Muestra en los logs la estructura real del HTML y los scripts embebidos.
+    Motor Natura Perú Definitivo (React Server Components / Next.js App Router Payload Extractor).
+    Desescapa e interpreta las transmisiones de React 18 (self.__next_f) contenidas en los 210 KB del HTML.
     """
-    import json, re, requests
-    from bs4 import BeautifulSoup
+    import os, time, re, json, requests
+    from urllib.parse import urlparse, urljoin
+    from datetime import datetime, timezone
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
     try:
         from curl_cffi import requests as curl_requests
-        sess = curl_requests.Session(impersonate="chrome120")
+        USE_CURL = True
     except Exception:
-        sess = requests.Session()
+        import requests as curl_requests  # type: ignore
+        USE_CURL = False
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    }
+    try:
+        import streamlit as st
+    except Exception:
+        st = None
 
-    st.info("🔬 [DIAGNÓSTICO] Solicitando página a Natura...")
-    resp = sess.get(url, headers=headers, timeout=12, verify=False)
-    
-    st.write(f"📊 **Estado HTTP:** {resp.status_code} | **Tamaño:** {len(resp.text)} bytes")
+    logs_list = []
 
-    soup = BeautifulSoup(resp.text, 'html.parser')
+    def _log(msg, level="info"):
+        ts = datetime.now(timezone.utc).isoformat()
+        entry = f"[{level.upper()}] {ts} - {msg}"
+        logs_list.append(entry)
+        if st:
+            try:
+                from streamlit.runtime.scriptrunner import get_script_run_ctx
+                if get_script_run_ctx():
+                    if level == "error": st.error(msg)
+                    elif level == "warning": st.warning(msg)
+                    elif level == "success": st.success(msg)
+                    else: st.write(msg)
+            except Exception:
+                print(entry)
+        else:
+            print(entry)
 
-    # 1. Inspeccionar scripts con JSON embebido
-    scripts = soup.find_all('script')
-    st.write(f"📜 **Total de etiquetas `<script>` encontradas:** {len(scripts)}")
-    
-    script_ids = [s.get('id') for s in scripts if s.get('id')]
-    st.write(f"🏷️ **IDs de Scripts con datos:** `{script_ids}`")
-
-    # 2. Inspeccionar __NEXT_DATA__
-    next_script = soup.find('script', id='__NEXT_DATA__')
-    if next_script and next_script.string:
+    def _safe_parse_price(val):
+        if val is None: return 0.0
         try:
-            data = json.loads(next_script.string)
-            page_props = data.get('props', {}).get('pageProps', {})
-            st.success("✅ Script __NEXT_DATA__ localizado.")
-            st.json({"pageProps_keys": list(page_props.keys())})
+            s = re.sub(r'[^\d\.,]', '', str(val)).strip()
+            if not s: return 0.0
+            if s.count('.') > 1: s = s.replace('.', '')
+            s = s.replace(',', '.')
+            m = re.search(r'\d+\.?\d*', s)
+            return float(m.group(0)) if m else 0.0
+        except Exception:
+            return 0.0
+
+    def _normalize_identifier(link, fallback=None):
+        try:
+            token = link.split('?')[0].rstrip('/').split('/')[-1]
+            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or (fallback or str(abs(hash(link))))
+            return f"NATURA-{token.upper()}"
+        except Exception:
+            return f"NATURA-{abs(hash(link))}"
+
+    def _parse_rsc_payload(html_text):
+        """Extrae objetos JSON de productos desescapando la transmisión de React 18 (self.__next_f)"""
+        found_products = []
+        
+        # 1. Normalizar y desescapar secuencias unicode/JS en el HTML
+        clean_text = html_text.replace('\\"', '"').replace('\\\\', '\\')
+
+        # 2. Buscar fragmentos de productos con patrones típicos de FastStore/VTEX en RSC
+        # Patrón A: Objetos JSON con productName/name y estructuras de precio
+        product_matches = re.findall(
+            r'\{[^{}]*"(?:productName|name)"\s*:\s*"([^"]+)"[^{}]*\}', 
+            clean_text
+        )
+
+        # Patrón B: Extracción mediante bloques estructurados de JSON en fragmentos React
+        json_blocks = re.findall(r'\{"id"[^{}]*"name"\s*:\s*"[^"]+"[^{}]*\}', clean_text)
+        json_blocks += re.findall(r'\{"productName"[^{}]*\}', clean_text)
+
+        raw_candidates = set(json_blocks)
+
+        for block in raw_candidates:
+            try:
+                # Reconstruir JSON si está fragmentado
+                if not block.endswith('}'): block += '}'
+                data = json.loads(block)
+                if isinstance(data, dict) and ('name' in data or 'productName' in data):
+                    found_products.append(data)
+            except Exception:
+                continue
+
+        # 3. Expresión regular global de respaldo sobre el texto desescapado para capturar pares nombre/slug/precio
+        if not found_products:
+            regex_p = re.compile(
+                r'"name"\s*:\s*"([^"]+)".*?"(?:slug|link|url)"\s*:\s*"([^"]+)".*?"(?:price|spotPrice|lowPrice)"\s*:\s*(\d+(?:\.\d+)?)',
+                re.DOTALL
+            )
+            for m in regex_p.finditer(clean_text):
+                found_products.append({
+                    "name": m.group(1),
+                    "slug": m.group(2),
+                    "price": float(m.group(3))
+                })
+
+        return found_products
+
+    productos, vistos = [], set()
+    page_count = 0
+
+    parsed = urlparse(url)
+    path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
+    category_slug = path_segments[-1] if path_segments else "perfumeria"
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    _log(f"🌿 Iniciando Natura Perú (React Server Components Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
+
+    sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
+    headers_base = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": "es-PE,es;q=0.9",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    if headers_override and isinstance(headers_override, dict):
+        headers_base.update(headers_override)
+
+    for page in range(1, max_pages + 1):
+        page_count += 1
+        target_page_url = f"{url}&page={page}" if "?" in url and page > 1 else f"{url}?page={page}" if page > 1 else url
+        _log(f"🔗 [Pág. {page}] Consultando URL: {target_page_url}")
+
+        html_content = None
+        try:
+            resp = sess.get(target_page_url, headers=headers_base, timeout=12, verify=False)
+            if resp.status_code == 200 and resp.text:
+                html_content = resp.text
         except Exception as e:
-            st.error(f"Error al parsear __NEXT_DATA__: {e}")
-    else:
-        st.warning("⚠️ No se encontró el script __NEXT_DATA__ con contenido.")
+            _log(f"⚠️ Error directo ({e}).", "warning")
 
-    # 3. Muestra de los primeros 5 enlaces del HTML
-    anchors = soup.find_all('a', href=True)[:5]
-    st.write("🔗 **Muestra de primeros 5 enlaces `<a>` en el HTML crudo:**")
-    for a in anchors:
-        st.code(f"href: {a['href']} | Texto: {a.get_text().strip()[:50]}")
+        if not html_content:
+            _log(f"ℹ️ Sin respuesta de la página {page}.")
+            break
 
-    return []
+        _log(f"📄 HTML recibido: {len(html_content)} bytes. Analizando payload de React 18...")
+
+        page_items = 0
+
+        # --- Extracción desde Payload RSC ---
+        candidates = _parse_rsc_payload(html_content)
+        _log(f"🧩 Candidatos extraídos de React Stream: {len(candidates)}")
+
+        for item in candidates:
+            if len(productos) >= max_items: break
+            try:
+                nombre = str(item.get('name') or item.get('productName') or '').strip()
+                if not nombre or len(nombre) < 3: continue
+
+                # Evitar nombres de categorías o del sistema
+                if any(bad in nombre.lower() for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar']):
+                    continue
+
+                slug = item.get('slug') or item.get('link') or item.get('url') or ''
+                if not slug or any(b in slug.lower() for b in ['/c/', 'ayuda', 'blog', 'favoritos']):
+                    continue
+
+                link_final = urljoin(base_url, slug.split('?')[0])
+                ident = _normalize_identifier(link_final)
+                if ident in vistos: continue
+
+                # Extraer precios de las distintas llaves posibles en FastStore
+                p_o = _safe_parse_price(item.get('price') or item.get('spotPrice') or item.get('lowPrice'))
+                p_r = _safe_parse_price(item.get('listPrice') or item.get('highPrice')) or p_o
+
+                if p_o <= 0.0 or p_o > limite: continue
+
+                vistos.add(ident)
+
+                # Imagen
+                img_url = item.get('image') or item.get('imageUrl') or ""
+                if isinstance(img_url, list) and img_url: img_url = img_url[0]
+                if isinstance(img_url, dict): img_url = img_url.get('url', '')
+
+                productos.append({
+                    "identificador": ident,
+                    "nombre": f"NATURA - {nombre.upper()}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": str(img_url),
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+                page_items += 1
+            except Exception:
+                continue
+
+        # --- Fallback directo por Regex sobre el cuerpo HTML desescapado ---
+        if page_items == 0:
+            _log("🔍 Ejecutando escaneo regex profundo sobre variables del servidor...")
+            # Capturar patrones: "name":"EAU DE TOILETTE...","slug":"...","spotPrice":97.3
+            pattern = re.compile(
+                r'"(?:productName|name)"\s*:\s*"([^"]{3,100})".*?"(?:slug|link|url)"\s*:\s*"([^"]+)".*?"(?:price|spotPrice|lowPrice|value)"\s*:\s*(\d+(?:[\.,]\d+)?)',
+                re.IGNORECASE | re.DOTALL
+            )
+            
+            clean_html = html_content.replace('\\"', '"')
+            for m in pattern.finditer(clean_html):
+                if len(productos) >= max_items: break
+                try:
+                    p_name = m.group(1).strip()
+                    p_slug = m.group(2).strip()
+                    p_price = _safe_parse_price(m.group(3))
+
+                    if not p_name or len(p_name) < 3 or p_price <= 0.0 or p_price > limite:
+                        continue
+
+                    if any(b in p_slug.lower() for b in ['/c/', 'ayuda', 'blog', 'favoritos']):
+                        continue
+
+                    link_final = urljoin(base_url, p_slug.split('?')[0])
+                    ident = _normalize_identifier(link_final)
+                    if ident in vistos: continue
+
+                    vistos.add(ident)
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {p_name.upper()}",
+                        "precio": p_price,
+                        "precio_regular": p_price,
+                        "link": link_final,
+                        "img": "",
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                    page_items += 1
+                except Exception:
+                    continue
+
+        _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
+        if page_items == 0 or len(productos) >= max_items:
+            break
+        time.sleep(0.3)
+
+    _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
+
+    summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
+    metadata = {"source": "natura_rsc_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+    if return_as_dict:
+        return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
+    return productos
 
 
 
