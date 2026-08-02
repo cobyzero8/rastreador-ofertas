@@ -2023,9 +2023,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (React Server Components + Schema JSON-LD Parser).
-    Procesa directamente el HTML de 210 KB decodificando los scripts de estado de Next.js (_R_)
-    y Schemas collectionpage-schema.org, evitando el bloqueo 403 de ScraperAPI Render.
+    Motor Natura Perú Definitivo (RSC Unescaped Stream & JSON Payload Parser).
+    Desescapa secuencias React Server Components (\", \/) y extrae precios numéricos
+    nativos (spotPrice, price, ListPrice) e imágenes HD de vtexassets.com.
     """
     import os, time, re, json, html, requests
     from urllib.parse import urlparse, urljoin
@@ -2074,7 +2074,7 @@ def motor_natura(
             print(entry)
 
     def _safe_parse_price(txt):
-        if not txt: return 0.0
+        if txt is None: return 0.0
         try:
             s = re.sub(r'[^\d\.,]', '', str(txt)).strip()
             if not s: return 0.0
@@ -2142,177 +2142,90 @@ def motor_natura(
             _log(f"ℹ️ Sin respuesta de la página {page}.")
             break
 
-        soup = BeautifulSoup(html_content, "html.parser")
+        # -----------------------------------------------------------------
+        # DESESCAPADO COMPLETO DE PAYLOAD REACT SERVER COMPONENTS (RSC)
+        # -----------------------------------------------------------------
+        clean_text = html.unescape(html_content)
+        clean_text = clean_text.replace(r'\"', '"').replace(r'\/', '/').replace(r'\\', '\\')
+
         page_items = 0
 
-        # -----------------------------------------------------------------
-        # ESTRATEGIA 1: Extracción desde Scripts Schema JSON-LD
-        # -----------------------------------------------------------------
-        schema_scripts = soup.find_all('script', type='application/ld+json') or soup.find_all('script', id=re.compile(r'schema', re.I))
-        for script in schema_scripts:
-            if not script.string: continue
+        # Buscar todos los enlaces a detalle de producto /p/
+        p_matches = re.findall(r'(/p/[a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', clean_text)
+        p_matches = list(set(p_matches))
+
+        _log(f"⚡ Enlaces /p/ detectados en el payload RSC: {len(p_matches)}", "info")
+
+        for rel_link in p_matches:
+            if len(productos) >= max_items: break
             try:
-                data_ld = json.loads(script.string)
-                items_ld = []
-                if isinstance(data_ld, dict):
-                    if data_ld.get("@type") in ["ItemList", "CollectionPage"]:
-                        items_ld = data_ld.get("itemListElement", [])
-                    elif data_ld.get("@type") == "Product":
-                        items_ld = [data_ld]
-                elif isinstance(data_ld, list):
-                    items_ld = data_ld
+                link_final = urljoin(base_url, rel_link)
+                ident = _normalize_identifier(link_final)
+                if ident in vistos: continue
 
-                for item in items_ld:
-                    prod_obj = item.get("item", item) if isinstance(item, dict) else {}
-                    if not isinstance(prod_obj, dict): continue
+                # Extraer fragmento alrededor del enlace (350 caracteres)
+                idx = clean_text.find(rel_link)
+                if idx == -1: continue
+                snippet = clean_text[max(0, idx - 350):min(len(clean_text), idx + 350)]
 
-                    nombre = (prod_obj.get("name") or prod_obj.get("productName") or "").strip()
-                    if not nombre or len(nombre) < 3: continue
+                # 1. Nombre del Producto
+                nombre = ""
+                m_name = re.search(r'"(?:productName|name|displayName)"\s*:\s*"([^"]+)"', snippet, re.I)
+                if m_name:
+                    nombre = m_name.group(1).strip()
 
-                    link_rel = prod_obj.get("url") or prod_obj.get("link") or ""
-                    link_final = urljoin(base_url, link_rel) if link_rel else url
+                if not nombre:
+                    m_title = re.search(r'"(Eau de [^"]+|Perfume [^"]+|Colonia [^"]+|Luna [^"]+|Homem [^"]+|Kaiak [^"]+|Una [^"]+|Essencial [^"]+|[A-Z][a-z0-9\s]{3,35} \d+ml)"', snippet, re.I)
+                    if m_title:
+                        nombre = m_title.group(1).strip()
 
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
+                if not nombre:
+                    slug_clean = rel_link.split('/p/')[-1].split('/')[0].replace('-', ' ')
+                    nombre = slug_clean.title()
 
-                    offers = prod_obj.get("offers", {})
-                    p_o, p_r = 0.0, 0.0
-                    if isinstance(offers, dict):
-                        p_o = _safe_parse_price(offers.get("price"))
-                        p_r = _safe_parse_price(offers.get("highPrice") or p_o)
-                    elif isinstance(offers, list) and len(offers) > 0:
-                        p_o = _safe_parse_price(offers[0].get("price"))
-                        p_r = _safe_parse_price(offers[0].get("highPrice") or p_o)
+                if len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
 
-                    if p_o == 0.0 or p_o > limite: continue
+                # 2. Precios Numéricos y Formateados
+                prices_found = []
+                # Expresión regular para precios numéricos JSON (price, Price, spotPrice, ListPrice)
+                num_prices = re.findall(r'"(?:price|Price|spotPrice|salesPrice|highPrice|listPrice|ListPrice)"\s*:\s*(\d+(?:\.\d+)?)', snippet)
+                for np in num_prices:
+                    val = _safe_parse_price(np)
+                    if val > 0: prices_found.append(val)
 
-                    img_url = prod_obj.get("image", "")
-                    if isinstance(img_url, list) and len(img_url) > 0: img_url = img_url[0]
+                # Expresión regular para texto formateado S/ XX.XX
+                txt_prices = re.findall(r'S/\s*(\d+[\.,]?\d*)', snippet)
+                for tp in txt_prices:
+                    val = _safe_parse_price(tp)
+                    if val > 0: prices_found.append(val)
 
-                    vistos.add(ident)
-                    productos.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url if isinstance(img_url, str) else "",
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                    page_items += 1
+                if not prices_found: continue
+
+                p_o = min(prices_found)
+                p_r = max(prices_found)
+
+                if p_o == 0.0 or p_o > limite: continue
+
+                # 3. Imagen de Producto (vtexassets / cdn)
+                img_url = ""
+                m_img = re.search(r'"(https://natura\.vtexassets\.com/[^"]+\.(?:jpg|png|webp)[^"]*)"', snippet, re.I) or \
+                        re.search(r'"(https://[^\s"]+\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
+                if m_img:
+                    img_url = m_img.group(1)
+
+                vistos.add(ident)
+                productos.append({
+                    "identificador": ident,
+                    "nombre": f"NATURA - {nombre.upper()}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+                page_items += 1
             except Exception:
                 continue
-
-        # -----------------------------------------------------------------
-        # ESTRATEGIA 2: Regex Extractor sobre Payload de React / Next.js
-        # -----------------------------------------------------------------
-        if page_items == 0:
-            _log("⚡ Decodificando Payload de React Server Components...", "info")
-            raw_text = html.unescape(html_content)
-
-            # Buscar bloques de productos codificados en los scripts
-            product_blocks = re.findall(
-                r'\{[^{}]*?"name"\s*:\s*"([^"]+)"[^{}]*?"href"\s*:\s*"(/p/[^"]+)"[^{}]*?\}',
-                raw_text, re.DOTALL
-            )
-
-            if not product_blocks:
-                # Patrón secundario de URLs /p/ y precios
-                p_matches = re.findall(r'(/p/[a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', raw_text)
-                p_matches = list(set(p_matches))
-                
-                for rel_link in p_matches:
-                    if len(productos) >= max_items: break
-                    try:
-                        link_final = urljoin(base_url, rel_link)
-                        ident = _normalize_identifier(link_final)
-                        if ident in vistos: continue
-
-                        # Extraer contexto alrededor de la URL en el texto desescapado
-                        idx = raw_text.find(rel_link)
-                        if idx == -1: continue
-                        snippet = raw_text[max(0, idx - 400):min(len(raw_text), idx + 400)]
-
-                        # Buscar Nombre
-                        m_name = re.search(r'"(Eau de [^"]+|Perfume [^"]+|Colonia [^"]+|[A-Z][a-z0-9\s]{3,40} \d+ml)"', snippet, re.I)
-                        nombre = m_name.group(1).strip() if m_name else ""
-
-                        if not nombre:
-                            slug_clean = rel_link.split('/p/')[-1].split('/')[0].replace('-', ' ')
-                            nombre = slug_clean.title()
-
-                        if len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
-
-                        # Buscar Precios S/ XX.XX
-                        prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', snippet)
-                        if not prices_found:
-                            prices_found = re.findall(r'"price"\s*:\s*(\d+[\.,]?\d*)', snippet)
-
-                        if prices_found:
-                            parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
-                            if parsed_prices:
-                                p_o = min(parsed_prices)
-                                p_r = max(parsed_prices)
-                            else:
-                                continue
-                        else:
-                            continue
-
-                        if p_o == 0.0 or p_o > limite: continue
-
-                        # Buscar Imagen
-                        m_img = re.search(r'"(https://natura\.vtexassets\.com/architecture-assets/assets/[^"]+)"', snippet) or \
-                                re.search(r'"(https://[^\s"]+\.(?:jpg|png|webp)[^"]*)"', snippet)
-                        img_url = m_img.group(1) if m_img else ""
-
-                        vistos.add(ident)
-                        productos.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre.upper()}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url,
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                        page_items += 1
-                    except Exception:
-                        continue
-            else:
-                for name_raw, href_raw in product_blocks:
-                    if len(productos) >= max_items: break
-                    try:
-                        link_final = urljoin(base_url, href_raw)
-                        ident = _normalize_identifier(link_final)
-                        if ident in vistos: continue
-
-                        idx = raw_text.find(href_raw)
-                        snippet = raw_text[max(0, idx - 300):min(len(raw_text), idx + 300)]
-
-                        prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', snippet) or re.findall(r'"price"\s*:\s*(\d+[\.,]?\d*)', snippet)
-                        if not prices_found: continue
-
-                        parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
-                        if not parsed_prices: continue
-
-                        p_o = min(parsed_prices)
-                        p_r = max(parsed_prices)
-
-                        if p_o == 0.0 or p_o > limite: continue
-
-                        vistos.add(ident)
-                        productos.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {name_raw.upper()}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": "",
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                        page_items += 1
-                    except Exception:
-                        continue
 
         _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
@@ -2338,12 +2251,11 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_react_payload_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_rsc_unescaped_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
