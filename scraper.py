@@ -2024,9 +2024,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (RSC Stream Window Extractor).
-    Desempaqueta el streaming de React 18 (self.__next_f) y extrae las ofertas
-    mediante análisis por ventana contextual sobre los 109 KB de JSON plano.
+    Motor Natura Perú Definitivo (RSC Unquoted JS Key Extractor).
+    Procesa las transmisiones de React 18 / FastStore tolerando claves JS
+    con y sin comillas (ej. name:"...", spotPrice:97.3, slug:"...").
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2109,32 +2109,38 @@ def motor_natura(
         return "\n".join(chunks)
 
     def _extract_via_context_window(full_stream, base_url, limite, max_items):
-        """Escanea el texto JSON plano usando ventanas contextuales alrededor de cada producto"""
         prods = []
         vistos = set()
 
-        # Limpiar comillas escapadas residuales
+        # Limpiar caracteres escapados
         clean_text = full_stream.replace('\\"', '"').replace('\\\\', '\\')
 
-        # Buscar apariciones de productName o name
-        name_matches = list(re.finditer(r'"(?:productName|name)"\s*:\s*"([^"]{3,120})"', clean_text))
+        # Regex flexible para nombres (acepta "name":"..." o name:"...")
+        name_matches = list(re.finditer(
+            r'(?:"?productName"?|"?name"?|"?displayName"?)\s*:\s*"([^"]{3,120})"', 
+            clean_text, 
+            re.IGNORECASE
+        ))
 
         for match in name_matches:
             if len(prods) >= max_items: break
             name = match.group(1).strip()
 
-            # Filtrar términos del sistema o menú
             name_lower = name.lower()
             if any(bad in name_lower for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'sobre natura', 'favoritos', 'tiendas', 'carrito', 'banner']):
                 continue
 
-            # Crear ventana de inspección (600 caracteres antes y 1000 después del nombre)
-            start_pos = max(0, match.start() - 600)
-            end_pos = min(len(clean_text), match.end() + 1000)
+            # Crear ventana contextual amplia (800 caracteres antes y 1200 después)
+            start_pos = max(0, match.start() - 800)
+            end_pos = min(len(clean_text), match.end() + 1200)
             window = clean_text[start_pos:end_pos]
 
-            # 1. Extraer enlace / slug
-            m_slug = re.search(r'"(?:slug|linkText|url|link)"\s*:\s*"([^"]+)"', window)
+            # 1. Extraer enlace / slug (soporta claves con y sin comillas)
+            m_slug = re.search(r'(?:"?slug"?|"?linkText"?|"?url"?|"?link"?|"?href"?)\s*:\s*"([^"]+)"', window, re.IGNORECASE)
+            if not m_slug:
+                # Fallback: Buscar rutas relativas o slugs de productos
+                m_slug = re.search(r'"(/[^"]{5,100})"', window)
+
             if not m_slug: continue
             slug = m_slug.group(1).strip()
 
@@ -2146,9 +2152,18 @@ def motor_natura(
 
             if ident in vistos: continue
 
-            # 2. Extraer precios dentro de la ventana
-            prices = re.findall(r'"(?:price|spotPrice|lowPrice|Price|value|listPrice|ListPrice|highPrice)"\s*:\s*(\d+(?:[\.,]\d+)?)', window)
+            # 2. Extraer precios (soporta "spotPrice":97.3, spotPrice:97.3, sellingPrice:97.3, etc.)
+            prices = re.findall(
+                r'(?:"?price"?|"?spotPrice"?|"?lowPrice"?|"?Price"?|"?value"?|"?listPrice"?|"?ListPrice"?|"?highPrice"?|"?sellingPrice"?)\s*:\s*(\d+(?:[\.,]\d+)?)', 
+                window, 
+                re.IGNORECASE
+            )
             parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
+
+            # Fallback: Si no hay claves numéricas con nombre, buscar montos aislados en la ventana
+            if not parsed_prices:
+                raw_nums = re.findall(r'\b(\d{2,4}\.\d{1,2})\b', window)
+                parsed_prices = [_safe_parse_price(p) for p in raw_nums if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
             if not parsed_prices: continue
 
@@ -2159,11 +2174,11 @@ def motor_natura(
 
             vistos.add(ident)
 
-            # 3. Extraer imagen si existe en la ventana
-            m_img = re.search(r'"(?:imageUrl|image|url)"\s*:\s*"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', window, re.I)
+            # 3. Extraer imagen
+            m_img = re.search(r'(?:"?imageUrl"?|"?image"?|"?url"?)\s*:\s*"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', window, re.IGNORECASE)
             img_url = m_img.group(1) if m_img else ""
 
-            prods.append({
+            productos.append({
                 "identificador": ident,
                 "nombre": f"NATURA - {name.upper()}",
                 "precio": p_o,
@@ -2183,7 +2198,7 @@ def motor_natura(
     category_slug = path_segments[-1] if path_segments else "perfumeria"
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú (RSC Window Extractor) | Categoría: '{category_slug}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (RSC Unquoted JS Key Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
     headers_base = {
@@ -2214,7 +2229,7 @@ def motor_natura(
         _log(f"📄 HTML recibido: {len(html_content)} bytes. Desempaquetando transmisión RSC...")
 
         full_stream = _unpack_next_rsc_stream(html_content)
-        _log(f"📜 Transmisión RSC desempaquetada: {len(full_stream)} caracteres de JSON plano.")
+        _log(f"📜 Transmisión RSC desempaquetada: {len(full_stream)} caracteres de texto plano.")
 
         page_products = _extract_via_context_window(full_stream, base_url, limite, max_items - len(productos))
         page_items = len(page_products)
@@ -2232,7 +2247,7 @@ def motor_natura(
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_rsc_window_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_rsc_unquoted_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
