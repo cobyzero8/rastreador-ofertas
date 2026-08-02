@@ -2022,9 +2022,13 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (Anclaje Directo por Enlaces /p/ y Parámetros Query).
-    Procesa de forma precisa URLs como /c/perfumeria-para-quien?pageSize=48&sort=discounts
-    sin falsos positivos por selectores 'data-testid'.
+    Motor Natura Perú Completo y Blindado (Estrategia Híbrida Triple):
+    - Mantiene intactos parámetros query (?pageSize=48&sort=discounts) y paginación (&page=N).
+    - Muestra diagnóstico de HTML en tiempo real (tamaño, scripts, títulos y enlaces).
+    - Estrategia 1: Parseo de __NEXT_DATA__ (JSON Next.js/VTEX).
+    - Estrategia 2: Parseo DOM anclado por enlaces /p/ y contenedores de precio.
+    - Estrategia 3: Fallback automático a ScraperAPI Render (JS Engine) si el HTML estático viene vacío.
+    - Manejo seguro de logs para evitar advertencias 'missing ScriptRunContext' en ejecuciones headless/CLI.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2140,120 +2144,245 @@ def motor_natura(
         try:
             resp = sess.get(target_page_url, headers=headers_base, timeout=8, verify=False)
             status_code = getattr(resp, "status_code", None)
-            _log(f"📡 Respuesta Directa HTML: HTTP {status_code}")
+            _log(f"📡 Respuesta Directa HTTP: {status_code}")
 
-            if status_code == 200 and resp.text and len(resp.text) > 5000:
+            if status_code == 200 and resp.text:
                 html_content = resp.text
         except Exception as e:
-            _log(f"⚠️ Error directo ({e}). Intentando vía ScraperAPI...", "warning")
-
-        # 2. Fallback ScraperAPI Fast Mode
-        if not html_content and api_key_scraper:
-            _log(f"🚀 [Pág. {page}] Obteniendo HTML vía ScraperAPI...", "info")
-            try:
-                params = {"api_key": api_key_scraper, "url": target_page_url}
-                resp = requests.get("https://api.scraperapi.com/", params=params, timeout=15)
-                status_code = getattr(resp, "status_code", None)
-                _log(f"📡 Respuesta ScraperAPI: HTTP {status_code}")
-                if status_code == 200 and resp.text:
-                    html_content = resp.text
-            except Exception as e_proxy:
-                _log(f"❌ Falló conexión con ScraperAPI: {e_proxy}", "error")
+            _log(f"⚠️ Error directo ({e}).", "warning")
 
         if not html_content:
-            _log(f"ℹ️ Sin contenido HTML disponible en la página {page}.")
+            _log(f"ℹ️ Sin respuesta de la página {page}.")
             break
 
+        # Diagnóstico de HTML en vivo
         soup = BeautifulSoup(html_content, "html.parser")
+        title_tag = soup.title.string.strip() if soup.title and soup.title.string else "SIN TÍTULO"
+        _log(f"📄 [DIAGNÓSTICO] Título HTML: '{title_tag}' | Tamaño: {len(html_content)} bytes")
+
+        scripts = soup.find_all('script')
+        script_ids = [s.get('id') for s in scripts if s.get('id')]
+        _log(f"🧩 [DIAGNÓSTICO] Scripts totales: {len(scripts)} | Script IDs clave: {script_ids[:8]}")
+
+        all_a = soup.find_all('a', href=True)
+        p_links = [a['href'] for a in all_a if '/p/' in a['href']]
+        _log(f"🔗 [DIAGNÓSTICO] Enlaces /p/ encontrados: {len(p_links)}")
+
+        body_text = re.sub(r'\s+', ' ', soup.get_text())[:180]
+        _log(f"📝 [DIAGNÓSTICO] Texto inicial en HTML: \"{body_text}\"")
+
         page_items = 0
 
-        # -----------------------------------------------------------------
-        # PARSER ANCLADO EN ENLACES DE PRODUCTO /p/
-        # -----------------------------------------------------------------
-        a_tags = soup.find_all('a', href=re.compile(r'/p/'))
-        _log(f"🔍 Enlaces /p/ detectados en la página {page}: {len(a_tags)}")
-
-        for a_tag in a_tags:
-            if len(productos) >= max_items: break
+        # ESTRATEGIA 1: Extracción desde script __NEXT_DATA__
+        next_script = soup.find('script', id='__NEXT_DATA__')
+        if next_script and next_script.string:
+            _log("⚡ Detectado script '__NEXT_DATA__'. Extrayendo JSON directo...")
             try:
-                href = a_tag.get('href', '')
-                if not href or '/p/' not in href: continue
+                next_json = json.loads(next_script.string)
 
-                link_final = urljoin(base_url, href.split('?')[0])
-                ident = _normalize_identifier(link_final)
-                if ident in vistos: continue
+                def _recursive_find_products(d):
+                    found = []
+                    if isinstance(d, dict):
+                        if ("productName" in d or "name" in d) and ("linkText" in d or "slug" in d or "url" in d or "id" in d):
+                            if "price" in d or "priceRange" in d or "sellers" in d or "items" in d or "offers" in d:
+                                found.append(d)
+                        for v in d.values():
+                            found.extend(_recursive_find_products(v))
+                    elif isinstance(d, list):
+                        for item in d:
+                            found.extend(_recursive_find_products(item))
+                    return found
 
-                # Encontrar el contenedor raíz de la tarjeta subiendo por los elementos padres
-                card = a_tag
-                for parent in a_tag.parents:
-                    if parent.name in ['body', 'html']: break
-                    if parent.find(id=re.compile(r'product-price-por|product-price-de')):
-                        card = parent
-                        break
+                raw_prods = _recursive_find_products(next_json.get('props', {}).get('pageProps', {}))
+                _log(f"🔍 Productos parseados en __NEXT_DATA__: {len(raw_prods)}")
 
-                # A) Nombre del Producto
-                nombre = ""
-                aria_lbl = a_tag.get('aria-label', '')
-                if aria_lbl and "descuento" not in aria_lbl.lower() and "pricefromto" not in aria_lbl.lower():
-                    nombre = aria_lbl.strip()
+                for prod in raw_prods:
+                    if len(productos) >= max_items: break
+                    try:
+                        nombre = (prod.get("productName") or prod.get("name") or "").strip()
+                        if not nombre or len(nombre) < 3: continue
 
-                if not nombre:
-                    for child_a in card.find_all('a'):
-                        al = child_a.get('aria-label', '')
-                        if al and "descuento" not in al.lower() and "pricefromto" not in al.lower():
-                            nombre = al.strip()
+                        link_text = prod.get("linkText") or prod.get("slug") or prod.get("url") or ""
+                        link_final = f"{base_url}/{link_text}/p" if link_text and not link_text.startswith("http") else (link_text or url)
+
+                        prod_id = prod.get("productId") or prod.get("id")
+                        ident = _normalize_identifier(link_final, fallback=str(prod_id) if prod_id else None)
+                        if ident in vistos: continue
+
+                        p_o, p_r, img_url = 0.0, 0.0, ""
+
+                        items_list = prod.get("items") or []
+                        if items_list and isinstance(items_list, list):
+                            first_item = items_list[0]
+                            sellers = first_item.get("sellers") or []
+                            if sellers:
+                                comm = sellers[0].get("commertialOffer") or {}
+                                p_o = _safe_parse_price(comm.get("Price"))
+                                p_r = _safe_parse_price(comm.get("ListPrice") or p_o)
+                            imgs = first_item.get("images") or []
+                            if imgs:
+                                img_url = imgs[0].get("imageUrl") if isinstance(imgs[0], dict) else str(imgs[0])
+
+                        if p_o == 0.0:
+                            p_o = _safe_parse_price(prod.get("price") or prod.get("Price"))
+                            p_r = _safe_parse_price(prod.get("listPrice") or prod.get("ListPrice") or p_o)
+
+                        if p_o == 0.0 or p_o > limite: continue
+
+                        vistos.add(ident)
+                        productos.append({
+                            "identificador": ident,
+                            "nombre": f"NATURA - {nombre.upper()}",
+                            "precio": p_o,
+                            "precio_regular": max(p_r, p_o),
+                            "link": link_final,
+                            "img": img_url,
+                            "fecha": datetime.now(timezone.utc).isoformat()
+                        })
+                        page_items += 1
+                    except Exception:
+                        continue
+            except Exception as e_next:
+                _log(f"⚠️ Error al leer __NEXT_DATA__: {e_next}", "warning")
+
+        # ESTRATEGIA 2: Extracción DOM Anclada en Enlaces /p/
+        if page_items == 0 and len(p_links) > 0:
+            _log(f"🔍 Intentando extracción DOM directa sobre {len(p_links)} enlaces...")
+            for a_tag in soup.find_all('a', href=re.compile(r'/p/')):
+                if len(productos) >= max_items: break
+                try:
+                    href = a_tag.get('href', '')
+                    if not href or '/p/' not in href: continue
+
+                    link_final = urljoin(base_url, href.split('?')[0])
+                    ident = _normalize_identifier(link_final)
+                    if ident in vistos: continue
+
+                    card = a_tag
+                    for parent in a_tag.parents:
+                        if parent.name in ['body', 'html']: break
+                        if parent.find(id=re.compile(r'product-price-por|product-price-de')):
+                            card = parent
                             break
 
-                if not nombre:
-                    nombre = a_tag.get_text().strip() or card.get_text().strip()
+                    nombre = a_tag.get('aria-label') or a_tag.get_text() or card.get_text()
+                    nombre = re.sub(r'\s+', ' ', nombre).strip()
+                    if len(nombre) > 120: nombre = nombre.split('\n')[0].strip()
+                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
 
-                nombre = re.sub(r'\s+', ' ', nombre)
-                if len(nombre) > 120:
-                    lines = [l.strip() for l in nombre.split('\n') if len(l.strip()) > 3]
-                    if lines: nombre = lines[0]
+                    por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
+                    de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
 
-                if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+                    p_o = _safe_parse_price(por_el.get_text() if por_el else "")
+                    p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
 
-                # B) Precios (#product-price-por e #product-price-de)
-                por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
-                de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
+                    if p_o == 0.0:
+                        prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', card.get_text())
+                        if prices_found:
+                            parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
+                            if parsed_prices:
+                                p_o = min(parsed_prices)
+                                p_r = max(parsed_prices)
 
-                p_o = _safe_parse_price(por_el.get_text() if por_el else "")
-                p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
+                    if p_o == 0.0 or p_o > limite: continue
 
-                if p_o == 0.0:
-                    prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', card.get_text())
-                    if prices_found:
-                        parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
-                        if parsed_prices:
-                            p_o = min(parsed_prices)
-                            p_r = max(parsed_prices)
+                    img_url = ""
+                    img_el = card.find('img')
+                    if img_el:
+                        img_url = img_el.get('src') or img_el.get('data-src') or ""
+                        if img_url.startswith('//'): img_url = 'https:' + img_url
 
-                if p_o == 0.0 or p_o > limite: continue
+                    vistos.add(ident)
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre.upper()}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                    page_items += 1
+                except Exception:
+                    continue
 
-                # C) Imagen HD
-                img_url = ""
-                img_el = card.find('img')
-                if img_el:
-                    img_url = img_el.get('src') or img_el.get('data-src') or ""
-                    if not img_url and img_el.get('srcset'):
-                        img_url = img_el.get('srcset').split(' ')[0]
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
-                    elif img_url.startswith('/'): img_url = urljoin(base_url, img_url)
+        # ESTRATEGIA 3: Fallback a ScraperAPI Render si el HTML estático viene vacío
+        if page_items == 0 and len(p_links) == 0 and api_key_scraper:
+            _log("⚠️ HTML directo es un cascarón vacío sin enlaces /p/. Activando ScraperAPI Render (JS Engine)...", "warning")
+            try:
+                params = {
+                    "api_key": api_key_scraper,
+                    "url": target_page_url,
+                    "render": "true",
+                    "country_code": "pe"
+                }
+                resp_render = requests.get("https://api.scraperapi.com/", params=params, timeout=40)
+                _log(f"📡 Respuesta ScraperAPI Render: HTTP {getattr(resp_render, 'status_code', 'N/A')}")
 
-                vistos.add(ident)
-                productos.append({
-                    "identificador": ident,
-                    "nombre": f"NATURA - {nombre.upper()}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url,
-                    "fecha": datetime.now(timezone.utc).isoformat()
-                })
-                page_items += 1
-            except Exception:
-                continue
+                if getattr(resp_render, "status_code", None) == 200 and resp_render.text:
+                    soup_render = BeautifulSoup(resp_render.text, "html.parser")
+                    a_rendered = soup_render.find_all('a', href=re.compile(r'/p/'))
+                    _log(f"🔍 [Renderizado] Enlaces /p/ detectados tras ejecutar JS: {len(a_rendered)}")
+
+                    for a_tag in a_rendered:
+                        if len(productos) >= max_items: break
+                        try:
+                            href = a_tag.get('href', '')
+                            if not href or '/p/' not in href: continue
+
+                            link_final = urljoin(base_url, href.split('?')[0])
+                            ident = _normalize_identifier(link_final)
+                            if ident in vistos: continue
+
+                            card = a_tag
+                            for parent in a_tag.parents:
+                                if parent.name in ['body', 'html']: break
+                                if parent.find(id=re.compile(r'product-price-por|product-price-de')):
+                                    card = parent
+                                    break
+
+                            nombre = a_tag.get('aria-label') or a_tag.get_text() or card.get_text()
+                            nombre = re.sub(r'\s+', ' ', nombre).strip()
+                            if len(nombre) > 120: nombre = nombre.split('\n')[0].strip()
+                            if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+
+                            por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
+                            de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
+
+                            p_o = _safe_parse_price(por_el.get_text() if por_el else "")
+                            p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
+
+                            if p_o == 0.0:
+                                prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', card.get_text())
+                                if prices_found:
+                                    parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
+                                    if parsed_prices:
+                                        p_o = min(parsed_prices)
+                                        p_r = max(parsed_prices)
+
+                            if p_o == 0.0 or p_o > limite: continue
+
+                            img_url = ""
+                            img_el = card.find('img')
+                            if img_el:
+                                img_url = img_el.get('src') or img_el.get('data-src') or ""
+                                if img_url.startswith('//'): img_url = 'https:' + img_url
+
+                            vistos.add(ident)
+                            productos.append({
+                                "identificador": ident,
+                                "nombre": f"NATURA - {nombre.upper()}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url,
+                                "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                            page_items += 1
+                        except Exception:
+                            continue
+            except Exception as e_p:
+                _log(f"❌ Error en ScraperAPI Render: {e_p}", "error")
 
         _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
@@ -2264,6 +2393,7 @@ def motor_natura(
 
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
+    # Guardar trazabilidad para Diagnóstico en app.py
     try:
         os.makedirs("ml_debug", exist_ok=True)
         debug_path = "ml_debug/combined_debug.json"
@@ -2278,12 +2408,11 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_anchor_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_complete_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
