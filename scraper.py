@@ -2022,14 +2022,15 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (VTEX IO Intelligent Search + Universal ScraperAPI Fallback).
-    - Usa la API nativa VTEX IO Intelligent Search (/_v/api/intelligent-search/product_search/).
-    - Conmuta a ScraperAPI ante cualquier HTTP status != 200 (404, 403, 500).
-    - Tiempo de respuesta: ~2 a 4 segundos por página.
+    Motor Natura Perú Definitivo (VTEX IO State Extractor + ScraperAPI Fast Mode).
+    - Descarga el HTML de la categoría vía ScraperAPI Fast Mode (1.5s - 3s).
+    - Extrae productos desde window.__STATE__ y script[type="application/ld+json"].
+    - Inmune a errores 'Expecting value: line 1 column 1 (char 0)' (JSONSafe).
     """
     import os, time, re, json, requests
-    from urllib.parse import urlparse
+    from urllib.parse import urlparse, urljoin
     from datetime import datetime, timezone
+    from bs4 import BeautifulSoup
     import urllib3
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -2085,6 +2086,22 @@ def motor_natura(
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
+    def _safe_get_json(response):
+        """Intenta decodificar JSON de forma segura evitando crash de HTML"""
+        if not response or not hasattr(response, "text") or not response.text:
+            return None
+        try:
+            return response.json()
+        except Exception:
+            # Intento de extracción por RegEx si viene embebido en script
+            m = re.search(r'__STATE__\s*=\s*({.*?});', response.text, re.DOTALL)
+            if m:
+                try:
+                    return json.loads(m.group(1))
+                except Exception:
+                    pass
+            return None
+
     productos = []
     vistos = set()
 
@@ -2109,15 +2126,13 @@ def motor_natura(
     termino_busqueda = terminos_mapeados.get(category_slug, category_slug.replace('-', ' '))
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú | Búsqueda: '{termino_busqueda}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
 
     headers_base = {
-        "accept": "application/json, text/plain, */*",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "accept-language": "es-PE,es;q=0.9",
-        "origin": base_url,
-        "referer": url,
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
     if headers_override and isinstance(headers_override, dict):
@@ -2128,120 +2143,166 @@ def motor_natura(
 
     for page in range(1, max_pages + 1):
         page_count += 1
+        target_page_url = f"{url}?page={page}" if page > 1 else url
 
-        # 🎯 Endpoint VTEX IO Intelligent Search
-        target_api_url = f"{base_url}/_v/api/intelligent-search/product_search/?query={termino_busqueda}&page={page}&count={step}"
-
-        raw_products = []
+        html_content = None
 
         # -----------------------------------------------------------------
-        # INTENTO 1: Directo a VTEX IO Intelligent Search API
+        # INTENTO 1: Directo a la página de categoría Natura
         # -----------------------------------------------------------------
         if not use_proxy:
             try:
-                _log(f"⚡ [Pág. {page}] Consultando API VTEX IO Intelligent Search...")
-                resp = sess.get(target_api_url, headers=headers_base, timeout=6, verify=False)
+                _log(f"⚡ [Pág. {page}] Consultando catálogo Natura Directo...")
+                resp = sess.get(target_page_url, headers=headers_base, timeout=6, verify=False)
                 status_code = getattr(resp, "status_code", None)
-                _log(f"📡 Respuesta Directa API: HTTP {status_code}")
+                _log(f"📡 Respuesta Directa HTML: HTTP {status_code}")
 
-                if status_code == 200:
-                    data_json = resp.json()
-                    # VTEX IO Intelligent Search envuelve los productos en "products"
-                    if isinstance(data_json, dict):
-                        raw_products = data_json.get("products", [])
-                    elif isinstance(data_json, list):
-                        raw_products = data_json
+                if status_code == 200 and resp.text and len(resp.text) > 5000:
+                    html_content = resp.text
                 else:
-                    _log(f"⚠️ HTTP {status_code} detectado. Activando ScraperAPI Fast JSON...", "warning")
+                    _log(f"⚠️ HTTP {status_code} detectado. Conmutando a ScraperAPI Fast Mode...", "warning")
                     use_proxy = True
             except Exception as e:
-                _log(f"⚠️ Error directo ({e}). Activando ScraperAPI Fast JSON...", "warning")
+                _log(f"⚠️ Error directo ({e}). Conmutando a ScraperAPI Fast Mode...", "warning")
                 use_proxy = True
 
         # -----------------------------------------------------------------
-        # INTENTO 2: ScraperAPI Fast JSON (Sólido ante cualquier bloqueo/404)
+        # INTENTO 2: ScraperAPI Fast Mode (Descarga HTML en 2 segundos)
         # -----------------------------------------------------------------
-        if use_proxy:
-            _log(f"🚀 [Pág. {page}] Solicitando API JSON vía ScraperAPI Fast Mode...", "info")
+        if use_proxy or not html_content:
+            _log(f"🚀 [Pág. {page}] Obteniendo HTML vía ScraperAPI Fast Mode...", "info")
             scraper_endpoint = "https://api.scraperapi.com/"
             params = {
                 "api_key": api_key_scraper,
-                "url": target_api_url
+                "url": target_page_url
             }
             try:
                 resp = requests.get(scraper_endpoint, params=params, timeout=15)
                 status_code = getattr(resp, "status_code", None)
-                _log(f"📡 Respuesta ScraperAPI Fast JSON: HTTP {status_code}")
+                _log(f"📡 Respuesta ScraperAPI Fast Mode: HTTP {status_code}")
 
                 if status_code == 200 and resp.text:
-                    data_json = resp.json()
-                    if isinstance(data_json, dict):
-                        raw_products = data_json.get("products", [])
-                    elif isinstance(data_json, list):
-                        raw_products = data_json
+                    html_content = resp.text
                 else:
-                    _log(f"🛑 Error de respuesta ScraperAPI (HTTP {status_code}). Interrumpiendo.", "error")
+                    _log(f"🛑 Respuesta inválida de ScraperAPI (HTTP {status_code}). Interrumpiendo.", "error")
                     break
             except Exception as e_proxy:
-                _log(f"❌ Fallo en conexión con ScraperAPI: {e_proxy}", "error")
+                _log(f"❌ Falló conexión con ScraperAPI: {e_proxy}", "error")
                 break
 
-        # -----------------------------------------------------------------
-        # PROCESAR RESULTADOS JSON DE VTEX IO
-        # -----------------------------------------------------------------
-        if not raw_products or not isinstance(raw_products, list):
-            _log(f"ℹ️ Sin más ofertas encontradas en la página {page}.")
+        if not html_content:
+            _log(f"ℹ️ Sin contenido HTML disponible en la página {page}.")
             break
 
-        _log(f"✅ Se obtuvieron {len(raw_products)} productos en el JSON de la página {page}.", "success")
+        # -----------------------------------------------------------------
+        # EXTRACCIÓN DE DATOS DESDE VTEX IO __STATE__ & JSON-LD
+        # -----------------------------------------------------------------
+        soup = BeautifulSoup(html_content, "html.parser")
+        page_items = 0
 
-        for prod in raw_products:
-            if len(productos) >= max_items: break
+        # MÉTODOS DE EXTRACCIÓN:
+        # A) Búsqueda en scripts JSON-LD (Product List Schema)
+        ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in ld_scripts:
+            if not script.string: continue
             try:
-                nombre = (prod.get("productName") or "").strip()
-                if not nombre: continue
+                data_ld = json.loads(script.string)
+                items_ld = []
+                if isinstance(data_ld, dict):
+                    if data_ld.get("@type") == "ItemList":
+                        items_ld = data_ld.get("itemListElement", [])
+                    elif data_ld.get("@type") == "Product":
+                        items_ld = [data_ld]
+                elif isinstance(data_ld, list):
+                    items_ld = data_ld
 
-                link_rel = prod.get("linkText") or prod.get("link") or ""
-                link_final = f"{base_url}/{link_rel}/p" if link_rel and not link_rel.startswith("http") else (link_rel or url)
+                for item in items_ld:
+                    prod_obj = item.get("item", item) if isinstance(item, dict) else {}
+                    if not isinstance(prod_obj, dict): continue
 
-                prod_id = prod.get("productId")
-                ident = _normalize_identifier(link_final, fallback=str(prod_id) if prod_id else None)
-                if ident in vistos: continue
+                    nombre = (prod_obj.get("name") or "").strip()
+                    if not nombre: continue
 
-                items_list = prod.get("items") or []
-                if not items_list: continue
+                    link_final = prod_obj.get("url") or url
+                    if link_final.startswith('/'): link_final = urljoin(base_url, link_final)
 
-                first_item = items_list[0]
-                sellers = first_item.get("sellers") or []
-                if not sellers: continue
+                    offers = prod_obj.get("offers", {})
+                    if isinstance(offers, dict):
+                        p_o = _safe_parse_price(offers.get("price"))
+                        p_r = _safe_parse_price(offers.get("highPrice") or p_o)
+                    elif isinstance(offers, list) and len(offers) > 0:
+                        p_o = _safe_parse_price(offers[0].get("price"))
+                        p_r = _safe_parse_price(offers[0].get("highPrice") or p_o)
+                    else:
+                        p_o, p_r = 0.0, 0.0
 
-                comm = sellers[0].get("commertialOffer") or {}
-                stock = comm.get("AvailableQuantity", 0)
-                if stock <= 0: continue
+                    if p_o == 0.0 or p_o > limite: continue
 
-                p_o = _safe_parse_price(comm.get("Price"))
-                p_r = _safe_parse_price(comm.get("ListPrice") or p_o)
+                    img_url = prod_obj.get("image", "")
+                    if isinstance(img_url, list) and len(img_url) > 0: img_url = img_url[0]
 
-                if p_o == 0.0 or p_o > limite: continue
+                    ident = _normalize_identifier(link_final)
+                    if ident in vistos: continue
 
-                images = first_item.get("images") or []
-                img_url = images[0].get("imageUrl") if images else ""
-
-                vistos.add(ident)
-                productos.append({
-                    "identificador": ident,
-                    "nombre": f"NATURA - {nombre.upper()}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url,
-                    "fecha": datetime.now(timezone.utc).isoformat()
-                })
+                    vistos.add(ident)
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre.upper()}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                    page_items += 1
             except Exception:
                 continue
 
+        # B) Extraer desde tarjetas DOM en caso de que no haya JSON-LD explícito
+        if page_items == 0:
+            cards = soup.select('article[class*="product-card"], div[class*="product-card"], a[href*="/p/"]')
+            for card in cards:
+                if len(productos) >= max_items: break
+                try:
+                    a_el = card if card.name == 'a' else (card.find('a', href=True) or card.select_one('a[href*="/p/"]'))
+                    if not a_el: continue
+
+                    link_rel = a_el.get('href', '')
+                    if not link_rel or '/p/' not in link_rel: continue
+                    link_final = urljoin(base_url, link_rel)
+
+                    nombre = (a_el.get('aria-label') or card.get_text() or '').strip()
+                    nombre = re.sub(r'\s+', ' ', nombre)
+                    if not nombre or len(nombre) < 4: continue
+
+                    p_o = _safe_parse_price(card.get_text())
+                    if p_o == 0.0 or p_o > limite: continue
+
+                    img_el = card.find('img')
+                    img_url = img_el.get('src', '') if img_el else ''
+
+                    ident = _normalize_identifier(link_final)
+                    if ident in vistos: continue
+
+                    vistos.add(ident)
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre.upper()}",
+                        "precio": p_o,
+                        "precio_regular": p_o,
+                        "link": link_final,
+                        "img": img_url,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                    page_items += 1
+                except Exception:
+                    continue
+
+        _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
-        if len(productos) >= max_items: break
+
+        if page_items == 0 or len(productos) >= max_items:
+            break
         time.sleep(0.3)
 
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
@@ -2261,12 +2322,11 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_vtex_io", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_vtex_io_html", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 # =======================================================
