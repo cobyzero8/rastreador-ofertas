@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import time
 import pandas as pd
 import requests
 import threading
@@ -347,7 +348,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
     with col_status:
         if st.session_state.get("scraper_running", False):
-            st.warning("🟡 El patrullaje está en curso. Espera a que termine.")
+            st.warning("🟡 El patrullaje está en curso. Espera a que termine...")
         else:
             st.info("🔵 Listo para iniciar patrullaje manual.")
 
@@ -356,12 +357,24 @@ elif menu == "💥 Forzar Escaneo Intensivo":
             result_msg = revisar_ofertas(target)
             st.session_state.scraper_result = {"resumen": result_msg, "target": target}
 
+            # 🛠️ PRESERVAR LOGS EXISTENTES
             os.makedirs("ml_debug", exist_ok=True)
+            debug_path = "ml_debug/combined_debug.json"
+            existing_logs = []
+            if os.path.exists(debug_path):
+                try:
+                    with open(debug_path, "r", encoding="utf-8") as fh:
+                        existing_data = json.load(fh)
+                        existing_logs = existing_data.get("logs", [])
+                except Exception:
+                    pass
+
             combined = {
                 "metadata": {"target": target, "timestamp": datetime.now(timezone.utc).isoformat()},
-                "result": result_msg
+                "result": result_msg,
+                "logs": existing_logs
             }
-            with open("ml_debug/combined_debug.json", "w", encoding="utf-8") as fh:
+            with open(debug_path, "w", encoding="utf-8") as fh:
                 json.dump(combined, fh, ensure_ascii=False, indent=2)
         except Exception as e:
             st.session_state.scraper_result = {"error": str(e), "target": target}
@@ -377,6 +390,12 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         add_script_run_ctx(thread)
         thread.start()
         st.success("Patrullaje iniciado en segundo plano.")
+        st.rerun()
+
+    # 🔄 AUTO-REFRESCO MIENTRAS SE EJECUTA EN SEGUNDO PLANO
+    if st.session_state.get("scraper_running", False):
+        time.sleep(2)
+        st.rerun()
 
     # 📊 REPORTE DE OFERTAS EN VIVO
     st.write("---")
@@ -483,7 +502,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     except Exception as err_rep:
         st.error(f"Error cargando catálogo: {err_rep}")
 
-    # 📄 DIAGNÓSTICO Y LOGS EN PANTALLA (Cero desorden de botones)
+    # 📄 DIAGNÓSTICO Y LOGS EN PANTALLA
     debug_path = "ml_debug/combined_debug.json"
     if os.path.exists(debug_path):
         try:
