@@ -2025,8 +2025,8 @@ def motor_natura(
 ):
     """
     Motor Natura Perú Definitivo.
-    Separa el filtro de lista negra de URLs del nombre de productos y extrae ofertas
-    tanto desde el JSON embebido de Next.js como desde el DOM HTML.
+    Extracción precisa de ofertas mediante regex estricta de moneda (S/)
+    y selector inteligente de títulos para evitar descartes por nombres vacíos.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2088,7 +2088,6 @@ def motor_natura(
             return f"NATURA-{abs(hash(link))}"
 
     def _is_blacklisted_url(href):
-        """Filtra únicamente enlaces del sistema, menús y cuenta"""
         blacklist = [
             'encuentra-natura', 'mis-datos', 'favoritos', 'quiero-ser',
             'aplicativo', 'sobre-natura', 'ayuda', 'blog', 'revista',
@@ -2096,13 +2095,10 @@ def motor_natura(
             'terminos', 'mi-cuenta', 'pedidos', 'cupones'
         ]
         href_lower = href.lower()
-        # Evita coincidir con categorías de producto en la ruta
-        if href_lower.startswith('/c/'):
-            return True
+        if href_lower.startswith('/c/'): return True
         return any(b in href_lower for b in blacklist)
 
     def _extract_products_from_json(obj):
-        """Busca recursivamente nodos de producto dentro del estado de Next.js"""
         items = []
         if isinstance(obj, dict):
             name = obj.get('name') or obj.get('productName') or obj.get('title')
@@ -2224,7 +2220,7 @@ def motor_natura(
             except Exception as e:
                 _log(f"⚠️ Error procesando JSON de Next.js: {e}", "warning")
 
-        # --- FASE 2: Extracción DOM Filtrada ---
+        # --- FASE 2: Extracción DOM Inteligente (Fallback) ---
         if page_items == 0:
             all_a = soup.find_all('a', href=True)
             product_anchors = []
@@ -2232,11 +2228,10 @@ def motor_natura(
             for a in all_a:
                 href = a.get('href', '')
                 if not href or _is_blacklisted_url(href): continue
-                # Aceptar enlaces de producto (rutas relativas con slugs largos o parámetros de producto)
                 if href.startswith('/') and len(href) > 12:
                     product_anchors.append(a)
 
-            _log(f"🧩 [DIAGNÓSTICO DOM] Enlaces de productos filtrados: {len(product_anchors)}")
+            _log(f"🧩 [DIAGNÓSTICO DOM] Enlaces candidatos filtrados: {len(product_anchors)}")
 
             for a_tag in product_anchors:
                 if len(productos) >= max_items: break
@@ -2246,17 +2241,17 @@ def motor_natura(
                     ident = _normalize_identifier(link_final)
                     if ident in vistos: continue
 
-                    # Ascender únicamente 2 a 3 niveles para no atrapar menús contenedores
+                    # Subir hasta el contenedor de la tarjeta
                     card = a_tag
                     for _ in range(3):
                         if card.parent and card.parent.name not in ['body', 'html', 'main', 'section', 'header', 'nav']:
                             card = card.parent
 
-                    txt = card.get_text(separator=' ')
+                    txt = card.get_text(separator='\n')
 
-                    # Buscar cualquier patrón numérico de precio (ej. S/ 97.30, S/.97,30 o 97.30)
-                    prices = re.findall(r'(?:S/\s*|S/\.\s*)?(\d+(?:[\.,]\d+)?)', txt)
-                    parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
+                    # Extraer únicamente números precedidos por S/ o S/.
+                    price_matches = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', txt, re.IGNORECASE)
+                    parsed_prices = [_safe_parse_price(p) for p in price_matches if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
                     if not parsed_prices: continue
 
@@ -2265,16 +2260,24 @@ def motor_natura(
 
                     if p_o <= 0.0 or p_o > limite: continue
 
+                    # Obtención limpia del nombre del producto
                     nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
-                    if not nombre_raw or len(nombre_raw) < 3:
-                        title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'])
-                        if title_el: nombre_raw = title_el.get_text().strip()
 
-                    nombre_limpio = re.sub(r'(?i)agregar\s+a\s+mi\s+bolsa', '', nombre_raw)
-                    nombre_limpio = re.sub(r'(?i)últimas\s+horas', '', nombre_limpio)
-                    nombre_limpio = re.sub(r'S/\s*\d+(?:[\.,]\d+)?', '', nombre_limpio)
-                    nombre_limpio = re.sub(r'-\d+%', '', nombre_limpio)
-                    nombre_limpio = re.sub(r'\s+', ' ', nombre_limpio).strip().upper()
+                    if not nombre_raw or len(nombre_raw) < 3:
+                        # Buscar la línea de texto descriptiva más larga excluyendo precios y botones
+                        lines = [line.strip() for line in txt.split('\n') if line.strip()]
+                        valid_lines = []
+                        for l in lines:
+                            l_upper = l.upper()
+                            if any(k in l_upper for k in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS HORAS', 'FAVORITOS', 'HASTA']):
+                                continue
+                            if len(l) >= 4:
+                                valid_lines.append(l)
+
+                        if valid_lines:
+                            nombre_raw = max(valid_lines, key=len)
+
+                    nombre_limpio = re.sub(r'\s+', ' ', nombre_raw).strip().upper()
 
                     if not nombre_limpio or len(nombre_limpio) < 3: continue
 
