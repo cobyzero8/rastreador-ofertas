@@ -2023,9 +2023,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Completo (Reverse Engineering & RSC Payload Extractor).
-    Bypassea el renderizado cliente decodificando el estado de React Server Components
-    o consultando directamente las APIs nativas de catálogo de VTEX.
+    Motor Natura Perú Master (SKU Anclaje Nativo NATPER-\d+).
+    Bypassea el hidratado de React Server Components extrayendo las ofertas
+    directamente desde los bloques SKU nativos de Natura Perú.
     """
     import os, time, re, json, html, requests
     from urllib.parse import urlparse, urljoin
@@ -2143,48 +2143,67 @@ def motor_natura(
 
         page_items = 0
 
-        # -----------------------------------------------------------------
-        # VECTOR 1: PARSEO Y DESESCAPADO DE PAYLOAD REACT SERVER COMPONENTS
-        # -----------------------------------------------------------------
+        # Desescapar caracteres HTML y RSC
         clean_text = html.unescape(html_content)
         clean_text = clean_text.replace(r'\"', '"').replace(r'\/', '/').replace(r'\\', '\\')
 
-        # Buscar todas las rutas de detalle /p/
-        p_matches = list(set(re.findall(r'(/p/[a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', clean_text)))
+        # -----------------------------------------------------------------
+        # ESTRATEGIA A: ANCLAJE POR SKU NATPER-\d+ (Nativo Natura Perú)
+        # -----------------------------------------------------------------
+        skus_found = list(set(re.findall(r'NATPER-\d+', clean_text, re.IGNORECASE)))
+        _log(f"⚡ SKUs 'NATPER-' detectados en la memoria: {len(skus_found)}", "info")
 
-        if p_matches:
-            _log(f"⚡ Enlaces /p/ interceptados en la memoria RSC: {len(p_matches)}", "info")
-
-            for rel_link in p_matches:
+        if skus_found:
+            for sku in skus_found:
                 if len(productos) >= max_items: break
                 try:
-                    link_final = urljoin(base_url, rel_link)
-                    ident = _normalize_identifier(link_final)
+                    sku_str = sku.upper()
+                    ident = f"NATURA-{sku_str}"
                     if ident in vistos: continue
 
-                    # Ventana de contexto alrededor del producto (400 caracteres)
-                    idx = clean_text.find(rel_link)
+                    idx = clean_text.upper().find(sku_str)
                     if idx == -1: continue
-                    snippet = clean_text[max(0, idx - 400):min(len(clean_text), idx + 400)]
 
-                    # 1. Extracción de Nombre
+                    snippet = clean_text[max(0, idx - 500):min(len(clean_text), idx + 800)]
+
+                    # Enlace
+                    m_link = re.search(r'(/p/[^"\'\s\?]*' + re.escape(sku) + r'[^"\'\s\?]*)', snippet, re.I) or \
+                             re.search(r'(/p/[^"\'\s\?]+)', snippet, re.I)
+                    link_final = urljoin(base_url, m_link.group(1).split('?')[0]) if m_link else f"{base_url}/p/{sku_str}"
+
+                    # Nombre
                     nombre = ""
-                    m_name = re.search(r'"(?:productName|name|displayName)"\s*:\s*"([^"]+)"', snippet, re.I)
-                    if m_name:
-                        nombre = m_name.group(1).strip()
+                    m_aria = re.search(r'aria-label=["\']([^"\']+)["\']', snippet, re.I)
+                    if m_aria and "descuento" not in m_aria.group(1).lower() and "agregar" not in m_aria.group(1).lower():
+                        nombre = m_aria.group(1).strip()
 
                     if not nombre:
-                        m_title = re.search(r'"(Eau de [^"]+|Perfume [^"]+|Colonia [^"]+|Luna [^"]+|Homem [^"]+|Kaiak [^"]+|Una [^"]+|Essencial [^"]+|[A-Z][a-z0-9\s]{3,35} \d+ml)"', snippet, re.I)
-                        if m_title: nombre = m_title.group(1).strip()
+                        m_name = re.search(r'"(?:productName|name|displayName|title)"\s*:\s*"([^"]+)"', snippet, re.I)
+                        if m_name and len(m_name.group(1)) > 3:
+                            nombre = m_name.group(1).strip()
 
                     if not nombre:
-                        slug_clean = rel_link.split('/p/')[-1].split('/')[0].replace('-', ' ')
-                        nombre = slug_clean.title()
+                        m_fragrance = re.search(r'"(Eau de [^"]+|Perfume [^"]+|Colonia [^"]+|Luna [^"]+|Homem [^"]+|Kaiak [^"]+|Una [^"]+|Essencial [^"]+|Humor [^"]+|[A-Z][a-z0-9\s]{3,35} \d+ml)"', snippet, re.I)
+                        if m_fragrance:
+                            nombre = m_fragrance.group(1).strip()
 
-                    if len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper():
+                        if "/p/" in link_final:
+                            slug_part = link_final.split('/p/')[-1].split('/')[0].replace('-', ' ')
+                            nombre = slug_part.title()
 
-                    # 2. Extracción de Precios (Numéricos JSON + Formateados)
+                    if not nombre or len(nombre) < 3: continue
+
+                    # Precios
                     prices_found = []
+                    m_por = re.search(r'id=["\']product-price-por["\'][^>]*>\s*(?:S/\s*)?(\d+[\.,]?\d*)', snippet, re.I) or \
+                            re.search(r'product-price-por[^>]*>\s*(?:S/\s*)?(\d+[\.,]?\d*)', snippet, re.I)
+                    if m_por: prices_found.append(_safe_parse_price(m_por.group(1)))
+
+                    m_de = re.search(r'id=["\']product-price-de["\'][^>]*>\s*(?:S/\s*)?(\d+[\.,]?\d*)', snippet, re.I) or \
+                           re.search(r'product-price-de[^>]*>\s*(?:S/\s*)?(\d+[\.,]?\d*)', snippet, re.I)
+                    if m_de: prices_found.append(_safe_parse_price(m_de.group(1)))
+
                     num_prices = re.findall(r'"(?:price|Price|spotPrice|salesPrice|highPrice|listPrice|ListPrice|value)"\s*:\s*(\d+(?:\.\d+)?)', snippet)
                     for np in num_prices:
                         val = _safe_parse_price(np)
@@ -2202,112 +2221,12 @@ def motor_natura(
 
                     if p_o == 0.0 or p_o > limite: continue
 
-                    # 3. Imagen del producto
+                    # Imagen
                     img_url = ""
-                    m_img = re.search(r'"(https://[^\s"]*(?:vtexassets|natura\.com)[^\s"]*\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
+                    m_img = re.search(r'src=["\'](https://[^"\'\s]*' + re.escape(sku) + r'[^"\'\s]*)["\']', snippet, re.I) or \
+                            re.search(r'"(https://production\.na01\.natura\.com/[^"]+)"', snippet, re.I) or \
+                            re.search(r'"(https://[^\s"]*(?:vtexassets|natura\.com)[^\s"]*\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
                     if m_img: img_url = m_img.group(1)
-
-                    vistos.add(ident)
-                    productos.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                    page_items += 1
-                except Exception:
-                    continue
-
-        # -----------------------------------------------------------------
-        # VECTOR 2: API DIRECTA DE CATÁLOGO VTEX (Bypass si Vector 1 no trae ítems)
-        # -----------------------------------------------------------------
-        if page_items == 0:
-            _log("🚀 Vector 1 sin ítems. Consultando API REST de VTEX Catalog System...", "info")
-            from_idx = (page - 1) * step
-            to_idx = from_idx + step - 1
-            vtex_api_url = f"{base_url}/api/catalog_system/pub/products/search/{category_slug}?_from={from_idx}&_to={to_idx}"
-
-            try:
-                resp_api = sess.get(vtex_api_url, headers=headers_base, timeout=8, verify=False)
-                if resp_api.status_code == 200 and resp_api.text:
-                    data_json = resp_api.json()
-                    if isinstance(data_json, list):
-                        _log(f"🔍 Ítems recuperados vía VTEX API: {len(data_json)}")
-                        for prod in data_json:
-                            if len(productos) >= max_items: break
-                            try:
-                                nombre = (prod.get("productName") or prod.get("brand") or "").strip()
-                                link_rel = prod.get("linkText") or ""
-                                link_final = f"{base_url}/{link_rel}/p" if link_rel else url
-
-                                ident = _normalize_identifier(link_final)
-                                if ident in vistos: continue
-
-                                items_list = prod.get("items", [])
-                                p_o, p_r, img_url = 0.0, 0.0, ""
-
-                                if items_list:
-                                    sellers = items_list[0].get("sellers", [])
-                                    if sellers:
-                                        comm = sellers[0].get("commertialOffer", {})
-                                        p_o = _safe_parse_price(comm.get("Price"))
-                                        p_r = _safe_parse_price(comm.get("ListPrice") or p_o)
-                                    imgs = items_list[0].get("images", [])
-                                    if imgs:
-                                        img_url = imgs[0].get("imageUrl", "")
-
-                                if p_o == 0.0 or p_o > limite: continue
-
-                                vistos.add(ident)
-                                productos.append({
-                                    "identificador": ident,
-                                    "nombre": f"NATURA - {nombre.upper()}",
-                                    "precio": p_o,
-                                    "precio_regular": max(p_r, p_o),
-                                    "link": link_final,
-                                    "img": img_url,
-                                    "fecha": datetime.now(timezone.utc).isoformat()
-                                })
-                                page_items += 1
-                            except Exception:
-                                continue
-            except Exception as e_api:
-                _log(f"⚠️ Error en VTEX Catalog API: {e_api}", "warning")
-
-        # -----------------------------------------------------------------
-        # VECTOR 3: PARSER DOM TRADICIONAL (Respaldo final)
-        # -----------------------------------------------------------------
-        if page_items == 0:
-            soup = BeautifulSoup(html_content, "html.parser")
-            cards = soup.select('article') or soup.select('[data-testid*="product-card"]')
-
-            for card in cards:
-                if len(productos) >= max_items: break
-                try:
-                    a_tag = card.find('a', href=re.compile(r'/p/')) or (card if card.name == 'a' else None)
-                    if not a_tag or not a_tag.get('href'): continue
-
-                    link_final = urljoin(base_url, a_tag['href'].split('?')[0])
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
-
-                    nombre = a_tag.get('aria-label') or a_tag.get_text().strip() or card.get_text().strip()
-                    nombre = re.sub(r'\s+', ' ', nombre)
-                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
-
-                    por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
-                    de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
-
-                    p_o = _safe_parse_price(por_el.get_text() if por_el else "")
-                    p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
-
-                    if p_o == 0.0 or p_o > limite: continue
-
-                    img_el = card.find('img')
-                    img_url = img_el.get('src') if img_el else ""
 
                     vistos.add(ident)
                     productos.append({
@@ -2332,7 +2251,6 @@ def motor_natura(
 
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
-    # Guardar trazabilidad para el módulo de diagnóstico de app.py
     try:
         os.makedirs("ml_debug", exist_ok=True)
         debug_path = "ml_debug/combined_debug.json"
@@ -2347,7 +2265,7 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_triple_vector_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_sku_anchor_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
