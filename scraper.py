@@ -2024,9 +2024,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (RSC Unquoted JS Key Extractor).
-    Procesa las transmisiones de React 18 / FastStore tolerando claves JS
-    con y sin comillas (ej. name:"...", spotPrice:97.3, slug:"...").
+    Motor Natura Perú Definitivo (Brand-Targeted RSC Extractor).
+    - Escanea los 109 KB de transmisión RSC buscando líneas oficiales de perfumes Natura.
+    - Imprime una muestra de inspección en vivo para depuración visual.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2108,62 +2108,54 @@ def motor_natura(
 
         return "\n".join(chunks)
 
-    def _extract_via_context_window(full_stream, base_url, limite, max_items):
+    def _extract_natura_perfumes(full_stream, base_url, limite, max_items):
         prods = []
         vistos = set()
 
-        # Limpiar caracteres escapados
+        # Limpiar secuencias escapadas
         clean_text = full_stream.replace('\\"', '"').replace('\\\\', '\\')
 
-        # Regex flexible para nombres (acepta "name":"..." o name:"...")
-        name_matches = list(re.finditer(
-            r'(?:"?productName"?|"?name"?|"?displayName"?)\s*:\s*"([^"]{3,120})"', 
-            clean_text, 
+        # Marcadores de marcas de perfumería Natura
+        marcas_natura = r'(?:LUNA|KAIAK|HUMOR|UNA|ESSENCIAL|EKOS|BIOGRAFIA|ILIA|HOMEM|URBANO|AGUAS)'
+
+        # 1. Buscar coincidencias de perfumes
+        pattern = re.compile(
+            r'("([^"]*?' + marcas_natura + r'[^"]*?)")', 
             re.IGNORECASE
-        ))
+        )
 
-        for match in name_matches:
+        matches = list(pattern.finditer(clean_text))
+
+        for m in matches:
             if len(prods) >= max_items: break
-            name = match.group(1).strip()
+            name = m.group(2).strip()
 
-            name_lower = name.lower()
-            if any(bad in name_lower for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'sobre natura', 'favoritos', 'tiendas', 'carrito', 'banner']):
+            if len(name) < 5 or len(name) > 100: continue
+            if any(bad in name.lower() for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'banner', 'sobre natura', 'favoritos']):
                 continue
 
-            # Crear ventana contextual amplia (800 caracteres antes y 1200 después)
-            start_pos = max(0, match.start() - 800)
-            end_pos = min(len(clean_text), match.end() + 1200)
+            # Crear ventana alrededor del hallazgo (600 caracteres antes y 1000 después)
+            start_pos = max(0, m.start() - 600)
+            end_pos = min(len(clean_text), m.end() + 1000)
             window = clean_text[start_pos:end_pos]
 
-            # 1. Extraer enlace / slug (soporta claves con y sin comillas)
-            m_slug = re.search(r'(?:"?slug"?|"?linkText"?|"?url"?|"?link"?|"?href"?)\s*:\s*"([^"]+)"', window, re.IGNORECASE)
-            if not m_slug:
-                # Fallback: Buscar rutas relativas o slugs de productos
-                m_slug = re.search(r'"(/[^"]{5,100})"', window)
+            # Buscar slug o URL
+            m_slug = re.search(r'"([^"]{5,120}\/p|/[a-z0-9\-]{10,100})"', window)
+            slug = m_slug.group(1) if m_slug else ""
 
-            if not m_slug: continue
-            slug = m_slug.group(1).strip()
+            if not slug or any(b in slug.lower() for b in ['/c/', 'ayuda', 'blog', 'favoritos', 'encuentra-natura']):
+                # Generar enlace sintáctico si no hay slug explícito
+                slug_sintactico = re.sub(r'[^a-zA-Z0-9\-]', '-', name.lower()).strip('-')
+                link_final = f"{base_url}/{slug_sintactico}/p"
+            else:
+                link_final = urljoin(base_url, slug.split('?')[0])
 
-            if any(bad in slug.lower() for bad in ['/c/', 'ayuda', 'blog', 'favoritos', 'encuentra-natura', 'politicas']):
-                continue
-
-            link_final = urljoin(base_url, slug.split('?')[0])
             ident = _normalize_identifier(link_final)
-
             if ident in vistos: continue
 
-            # 2. Extraer precios (soporta "spotPrice":97.3, spotPrice:97.3, sellingPrice:97.3, etc.)
-            prices = re.findall(
-                r'(?:"?price"?|"?spotPrice"?|"?lowPrice"?|"?Price"?|"?value"?|"?listPrice"?|"?ListPrice"?|"?highPrice"?|"?sellingPrice"?)\s*:\s*(\d+(?:[\.,]\d+)?)', 
-                window, 
-                re.IGNORECASE
-            )
-            parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
-
-            # Fallback: Si no hay claves numéricas con nombre, buscar montos aislados en la ventana
-            if not parsed_prices:
-                raw_nums = re.findall(r'\b(\d{2,4}\.\d{1,2})\b', window)
-                parsed_prices = [_safe_parse_price(p) for p in raw_nums if 15.0 <= _safe_parse_price(p) <= 2000.0]
+            # Extraer montos numéricos de precios dentro de la ventana
+            prices = re.findall(r'\b(\d{2,4}\.\d{1,2})\b', window)
+            parsed_prices = [_safe_parse_price(p) for p in prices if 25.0 <= _safe_parse_price(p) <= 1500.0]
 
             if not parsed_prices: continue
 
@@ -2174,11 +2166,11 @@ def motor_natura(
 
             vistos.add(ident)
 
-            # 3. Extraer imagen
-            m_img = re.search(r'(?:"?imageUrl"?|"?image"?|"?url"?)\s*:\s*"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', window, re.IGNORECASE)
+            # Buscar URL de imagen en la ventana
+            m_img = re.search(r'"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', window, re.I)
             img_url = m_img.group(1) if m_img else ""
 
-            productos.append({
+            prods.append({
                 "identificador": ident,
                 "nombre": f"NATURA - {name.upper()}",
                 "precio": p_o,
@@ -2198,7 +2190,7 @@ def motor_natura(
     category_slug = path_segments[-1] if path_segments else "perfumeria"
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú (RSC Unquoted JS Key Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (Brand Extractor) | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
     headers_base = {
@@ -2231,7 +2223,15 @@ def motor_natura(
         full_stream = _unpack_next_rsc_stream(html_content)
         _log(f"📜 Transmisión RSC desempaquetada: {len(full_stream)} caracteres de texto plano.")
 
-        page_products = _extract_via_context_window(full_stream, base_url, limite, max_items - len(productos))
+        # --- INSPECCIÓN EN VIVO PARA LOGS ---
+        idx_sample = full_stream.upper().find("LUNA")
+        if idx_sample != -1:
+            sample_text = full_stream[max(0, idx_sample - 50):min(len(full_stream), idx_sample + 250)]
+            _log(f"🔬 [MUESTRA REAL EN TEXTO]: {sample_text}")
+        else:
+            _log("🔬 [MUESTRA REAL EN TEXTO]: No se encontró 'LUNA' en el stream.")
+
+        page_products = _extract_natura_perfumes(full_stream, base_url, limite, max_items - len(productos))
         page_items = len(page_products)
 
         for p in page_products:
@@ -2247,7 +2247,7 @@ def motor_natura(
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_rsc_unquoted_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_brand_rsc_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
