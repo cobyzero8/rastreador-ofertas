@@ -2015,8 +2015,9 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 def motor_natura(url, limite=9999, max_items=500):
     """
     Motor Natura Perú Definitivo.
-    Soporta extracción por JSON embebido (__NEXT_DATA__) y fallback HTML DOM.
-    Limpia etiquetas de botón ('AGREGAR A MI BOLSA') sin descartar el producto.
+    1. Extrae productos desde JSON-LD (Schema.org) inyectado por Natura para SEO.
+    2. Realiza búsqueda en __NEXT_DATA__ y scripts internos.
+    3. Fallback a barrido flexible del DOM HTML.
     """
     import json
     import re
@@ -2053,102 +2054,94 @@ def motor_natura(url, limite=9999, max_items=500):
         soup = BeautifulSoup(resp.text, 'html.parser')
         
         # -------------------------------------------------------------
-        # ESTRATEGIA 1: Búsqueda Profunda en __NEXT_DATA__
+        # ESTRATEGIA 1: Parsing de microdatos JSON-LD (Schema.org / SEO)
         # -------------------------------------------------------------
-        next_data_script = soup.find('script', id='__NEXT_DATA__')
-        if next_data_script and next_data_script.string:
+        json_ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in json_ld_scripts:
+            if not script.string: continue
             try:
-                data_json = json.loads(next_data_script.string)
+                ld_data = json.loads(script.string)
+                items_ld = []
                 
-                # Función recursiva para ubicar nodos de productos dentro del árbol JSON de Next.js
-                def extract_products_recursive(obj):
-                    found = []
-                    if isinstance(obj, dict):
-                        if ('productName' in obj or 'name' in obj) and ('price' in obj or 'offers' in obj or 'sellers' in obj or 'spotPrice' in obj):
-                            found.append(obj)
-                        else:
-                            for v in obj.values():
-                                found.extend(extract_products_recursive(v))
-                    elif isinstance(obj, list):
-                        for item in obj:
-                            found.extend(extract_products_recursive(item))
-                    return found
+                if isinstance(ld_data, dict):
+                    if ld_data.get('@type') == 'ItemList':
+                        items_ld = ld_data.get('itemListElement', [])
+                    elif ld_data.get('@type') == 'Product':
+                        items_ld = [ld_data]
+                elif isinstance(ld_data, list):
+                    items_ld = ld_data
 
-                raw_prods = extract_products_recursive(data_json.get('props', {}))
-                
-                for p in raw_prods:
+                for elem in items_ld:
                     if len(productos) >= max_items: break
-                    try:
-                        nombre = (p.get('productName') or p.get('name') or '').strip().upper()
-                        if not nombre or len(nombre) < 3: continue
+                    prod_obj = elem.get('item', elem) if isinstance(elem, dict) else {}
+                    if not isinstance(prod_obj, dict): continue
 
-                        link_rel = p.get('link') or p.get('url') or p.get('slug') or ''
-                        if not link_rel: continue
-                        link_final = urljoin("https://www.natura.com.pe", link_rel.split('?')[0])
+                    nombre = str(prod_obj.get('name', '')).strip().upper()
+                    if not nombre or len(nombre) < 3: continue
 
-                        p_o, p_r = 0.0, 0.0
-                        if 'price' in p and isinstance(p['price'], (int, float)):
-                            p_o = float(p['price'])
-                            p_r = float(p.get('listPrice', p_o))
-                        elif 'offers' in p and isinstance(p['offers'], dict):
-                            p_o = float(p['offers'].get('lowPrice') or p['offers'].get('price') or 0.0)
-                            p_r = float(p['offers'].get('highPrice') or p['offers'].get('listPrice') or p_o)
-                        elif 'sellers' in p and p['sellers']:
-                            offer = p['sellers'][0].get('commertialOffer', {})
-                            p_o = float(offer.get('Price', 0.0))
-                            p_r = float(offer.get('ListPrice', p_o))
+                    link_rel = prod_obj.get('url') or prod_obj.get('@id') or ''
+                    if not link_rel: continue
+                    link_final = urljoin("https://www.natura.com.pe", link_rel.split('?')[0])
 
-                        if p_o <= 0 or p_o > limite: continue
+                    if link_final in vistos: continue
 
-                        ident = f"NATURA-{p.get('productId') or p.get('id') or abs(hash(link_final))}"
-                        if ident in vistos: continue
-                        vistos.add(ident)
+                    offers = prod_obj.get('offers', {})
+                    if isinstance(offers, list) and offers: offers = offers[0]
 
-                        img_url = p.get('image') or p.get('imageUrl') or ''
-                        if isinstance(img_url, list) and img_url: img_url = img_url[0]
+                    p_o = 0.0
+                    p_r = 0.0
+                    if isinstance(offers, dict):
+                        p_o = float(offers.get('price') or offers.get('lowPrice') or 0.0)
+                        p_r = float(offers.get('highPrice') or offers.get('listPrice') or p_o)
 
-                        productos.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": str(img_url),
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                    except Exception:
-                        continue
+                    if p_o <= 0 or p_o > limite: continue
 
-                if productos:
-                    safe_log(f"✅ [Natura JSON] Se extrajeron {len(productos)} perfumes de __NEXT_DATA__.", "success")
-                    return productos
-            except Exception as e:
-                safe_log(f"⚠️ [Natura] Advertencia en parsing JSON: {e}", "warning")
+                    vistos.add(link_final)
+                    img_url = prod_obj.get('image', '')
+                    if isinstance(img_url, list) and img_url: img_url = img_url[0]
+
+                    ident = f"NATURA-LD-{abs(hash(link_final))}"
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": str(img_url),
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+            except Exception:
+                continue
+
+        if productos:
+            safe_log(f"✅ [Natura JSON-LD] Se extrajeron {len(productos)} perfumes desde microdatos.", "success")
+            return productos
 
         # -------------------------------------------------------------
-        # ESTRATEGIA 2: Parsing Estructurado del DOM HTML (Fallback)
+        # ESTRATEGIA 2: Búsqueda flexible en todos los <a> y contenedores DOM
         # -------------------------------------------------------------
-        a_tags = soup.find_all('a', href=re.compile(r'/p(?:/|\?|$)'))
-        safe_log(f"🔍 [Natura HTML] Enlaces /p/ detectados: {len(a_tags)}", "info")
+        all_links = soup.find_all('a', href=True)
+        product_links = [a for a in all_links if '/p/' in a['href'] or '/p?' in a['href']]
+        
+        safe_log(f"🔍 [Natura HTML] Enlaces de productos detectados: {len(product_links)}", "info")
 
-        for a_tag in a_tags:
+        for a_tag in product_links:
             if len(productos) >= max_items: break
             try:
-                link_rel = a_tag.get('href', '')
-                if not link_rel: continue
+                link_rel = a_tag['href']
                 link_final = urljoin("https://www.natura.com.pe", link_rel.split('?')[0])
 
                 if link_final in vistos: continue
 
-                # Ascender hasta el contenedor principal de la tarjeta de producto
+                # Subir en el DOM para capturar la tarjeta del producto
                 card = a_tag
-                for _ in range(4):
+                for _ in range(5):
                     if card.parent and card.parent.name not in ['body', 'html', 'main', 'section']:
                         card = card.parent
 
                 txt = card.get_text(separator=' ')
 
-                # Extraer montos del tipo S/ 97.30 o S/ 139.00
+                # Extraer precios de la tarjeta
                 prices = re.findall(r'S/\s*(\d+(?:[\.,]\d+)?)', txt)
                 if not prices: continue
 
@@ -2165,15 +2158,14 @@ def motor_natura(url, limite=9999, max_items=500):
 
                 if p_o > limite: continue
 
-                # Obtención y limpieza del nombre
-                nombre_raw = ""
-                title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'], class_=re.compile(r'name|title|product', re.I))
-                if title_el:
-                    nombre_raw = title_el.get_text().strip()
-                else:
-                    nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or txt
+                # Limpieza de texto de la tarjeta
+                nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
+                if not nombre_raw:
+                    title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'])
+                    if title_el: nombre_raw = title_el.get_text().strip()
 
-                # Limpieza de textos del botón e indicadores de oferta
+                if not nombre_raw: nombre_raw = txt
+
                 nombre_limpio = re.sub(r'(?i)agregar\s+a\s+mi\s+bolsa', '', nombre_raw)
                 nombre_limpio = re.sub(r'(?i)últimas\s+horas', '', nombre_limpio)
                 nombre_limpio = re.sub(r'S/\s*\d+(?:[\.,]\d+)?', '', nombre_limpio)
