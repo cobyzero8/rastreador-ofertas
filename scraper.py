@@ -2023,14 +2023,10 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (DOM Parser con Selectores Nativos del Inspector).
-    Basado en inspección real:
-    - Grilla: [data-testid="plp-products-grid"]
-    - Tarjetas: <article data-testid="product-card-NATPER-xxx">
-    - Precios: #product-price-por y #product-price-de
-    - Imagen: img[src*="natura.com/dw/image/v2"]
+    Motor Natura Perú Resiliente.
+    Manejo seguro de logs Streamlit + Extracción Híbrida (DOM flexible + JSON __NEXT_DATA__).
     """
-    import os, time, re, json, requests
+    import os, time, re, json, html, requests
     from urllib.parse import urlparse, urljoin
     from datetime import datetime, timezone
     from bs4 import BeautifulSoup
@@ -2056,21 +2052,16 @@ def motor_natura(
         ts = datetime.now(timezone.utc).isoformat()
         entry = f"[{level.upper()}] {ts} - {msg}"
         logs_list.append(entry)
-
-        has_ctx = False
         if st:
             try:
                 from streamlit.runtime.scriptrunner import get_script_run_ctx
-                has_ctx = get_script_run_ctx() is not None
-            except Exception:
-                has_ctx = False
-
-        if has_ctx:
-            try:
-                if level == "error": st.error(msg)
-                elif level == "warning": st.warning(msg)
-                elif level == "success": st.success(msg)
-                else: st.write(msg)
+                if get_script_run_ctx():
+                    if level == "error": st.error(msg)
+                    elif level == "warning": st.warning(msg)
+                    elif level == "success": st.success(msg)
+                    else: st.write(msg)
+                else:
+                    print(entry)
             except Exception:
                 print(entry)
         else:
@@ -2098,8 +2089,7 @@ def motor_natura(
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
-    productos = []
-    vistos = set()
+    productos, vistos = [], set()
     page_count = 0
 
     parsed = urlparse(url)
@@ -2110,7 +2100,6 @@ def motor_natura(
     _log(f"🌿 Iniciando Natura Perú | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
-
     headers_base = {
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "accept-language": "es-PE,es;q=0.9",
@@ -2121,22 +2110,13 @@ def motor_natura(
 
     for page in range(1, max_pages + 1):
         page_count += 1
-
-        if "?" in url:
-            target_page_url = f"{url}&page={page}" if page > 1 else url
-        else:
-            target_page_url = f"{url}?page={page}" if page > 1 else url
-
+        target_page_url = f"{url}&page={page}" if "?" in url and page > 1 else f"{url}?page={page}" if page > 1 else url
         _log(f"🔗 [Pág. {page}] Consultando URL: {target_page_url}")
 
         html_content = None
-
         try:
             resp = sess.get(target_page_url, headers=headers_base, timeout=10, verify=False)
-            status_code = getattr(resp, "status_code", None)
-            _log(f"📡 Respuesta Directa HTTP: {status_code}")
-
-            if status_code == 200 and resp.text:
+            if resp.status_code == 200 and resp.text:
                 html_content = resp.text
         except Exception as e:
             _log(f"⚠️ Error directo ({e}).", "warning")
@@ -2146,51 +2126,30 @@ def motor_natura(
             break
 
         soup = BeautifulSoup(html_content, "html.parser")
+        title_tag = soup.title.string.strip() if soup.title and soup.title.string else "SIN TÍTULO"
+        _log(f"📄 [DIAGNÓSTICO] Título HTML: '{title_tag}' | Tamaño: {len(html_content)} bytes")
+
         page_items = 0
 
-        # 1. Localizar tarjetas de producto <article>
-        cards = soup.select('[data-testid="plp-products-grid"] article') or \
-                soup.find_all('article') or \
-                soup.select('article[data-testid*="product-card"]')
+        # ESTRATEGIA 1: Búsqueda DOM Flexible por etiquetas <article> o contenedores de producto
+        all_cards = soup.select('article') or soup.select('[data-testid*="product-card"]')
+        _log(f"🧩 [DIAGNÓSTICO] Cards detectadas en el DOM: {len(all_cards)}")
 
-        _log(f"🔍 Tarjetas <article> detectadas en el DOM: {len(cards)}")
-
-        for card in cards:
+        for card in all_cards:
             if len(productos) >= max_items: break
             try:
-                # A) Enlace al Producto
                 a_tag = card.find('a', href=re.compile(r'/p/')) or (card if card.name == 'a' else None)
-                if not a_tag: continue
+                if not a_tag or not a_tag.get('href'): continue
 
-                href = a_tag.get('href', '')
-                if not href or '/p/' not in href: continue
-
-                link_final = urljoin(base_url, href.split('?')[0])
+                link_final = urljoin(base_url, a_tag['href'].split('?')[0])
                 ident = _normalize_identifier(link_final)
                 if ident in vistos: continue
 
-                # B) Nombre del Producto
-                nombre = ""
-                # Intentar aria-label en el enlace (visto en captura image_bb67e5.png)
-                aria_lbl = a_tag.get('aria-label', '')
-                if aria_lbl and "descuento" not in aria_lbl.lower() and "pricefromto" not in aria_lbl.lower():
-                    nombre = aria_lbl.strip()
-
-                if not nombre:
-                    for child_a in card.find_all('a'):
-                        al = child_a.get('aria-label', '')
-                        if al and "descuento" not in al.lower() and "pricefromto" not in al.lower():
-                            nombre = al.strip()
-                            break
-
-                if not nombre:
-                    nombre = a_tag.get_text().strip() or card.get_text().strip()
-
+                nombre = a_tag.get('aria-label') or a_tag.get_text().strip() or card.get_text().strip()
                 nombre = re.sub(r'\s+', ' ', nombre)
                 if len(nombre) > 120: nombre = nombre.split('\n')[0].strip()
                 if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
 
-                # C) Precios exactos: #product-price-por y #product-price-de (visto en captura image_bb64db.png)
                 por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
                 de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
 
@@ -2207,14 +2166,9 @@ def motor_natura(
 
                 if p_o == 0.0 or p_o > limite: continue
 
-                # D) Imagen HD del Producto (visto en captura image_bb6846.png)
-                img_url = ""
                 img_el = card.find('img')
-                if img_el:
-                    img_url = img_el.get('src') or img_el.get('data-src') or ""
-                    if not img_url and img_el.get('srcset'):
-                        img_url = img_el.get('srcset').split(' ')[0]
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
+                img_url = img_el.get('src') or img_el.get('data-src') or "" if img_el else ""
+                if img_url.startswith('//'): img_url = 'https:' + img_url
 
                 vistos.add(ident)
                 productos.append({
@@ -2230,6 +2184,56 @@ def motor_natura(
             except Exception:
                 continue
 
+        # ESTRATEGIA 2: Fallback desde JSON __NEXT_DATA__ si la consulta DOM arrojó 0 resultados
+        if page_items == 0:
+            next_script = soup.find('script', id='__NEXT_DATA__')
+            if next_script and next_script.string:
+                _log("⚡ Fallback: Leyendo objeto JSON __NEXT_DATA__...")
+                try:
+                    next_json = json.loads(next_script.string)
+                    def _find_prods(d):
+                        res = []
+                        if isinstance(d, dict):
+                            if ("productName" in d or "name" in d) and ("linkText" in d or "slug" in d or "url" in d):
+                                res.append(d)
+                            for v in d.values(): res.extend(_find_prods(v))
+                        elif isinstance(d, list):
+                            for x in d: res.extend(_find_prods(x))
+                        return res
+
+                    for prod in _find_prods(next_json):
+                        if len(productos) >= max_items: break
+                        try:
+                            nombre = (prod.get("productName") or prod.get("name") or "").strip()
+                            if not nombre or len(nombre) < 3: continue
+
+                            link_txt = prod.get("linkText") or prod.get("slug") or prod.get("url") or ""
+                            link_final = urljoin(base_url, f"{link_txt}/p" if not link_txt.startswith('/') else link_txt)
+
+                            ident = _normalize_identifier(link_final)
+                            if ident in vistos: continue
+
+                            p_o = _safe_parse_price(prod.get("price") or prod.get("Price"))
+                            p_r = _safe_parse_price(prod.get("listPrice") or prod.get("ListPrice") or p_o)
+
+                            if p_o == 0.0 or p_o > limite: continue
+
+                            vistos.add(ident)
+                            productos.append({
+                                "identificador": ident,
+                                "nombre": f"NATURA - {nombre.upper()}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": "",
+                                "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                            page_items += 1
+                        except Exception:
+                            continue
+                except Exception as e_json:
+                    _log(f"⚠️ Error parseando __NEXT_DATA__: {e_json}", "warning")
+
         _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
 
@@ -2239,7 +2243,7 @@ def motor_natura(
 
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
-    # Guardar trazabilidad para Diagnóstico en app.py
+    # Trazabilidad para el diagnóstico
     try:
         os.makedirs("ml_debug", exist_ok=True)
         debug_path = "ml_debug/combined_debug.json"
@@ -2254,7 +2258,7 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_dom_native_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_hybrid_resilient_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
