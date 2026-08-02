@@ -2018,14 +2018,15 @@ def motor_natura(
     step=48,
     session=None,
     max_items=500,
-    use_playwright_fallback=False,
+    use_playwright_fallback=True,
     headers_override=None,
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Master (Deep JSON Recursive Extractor + Enlace /p/ Obligatorio).
-    Elimina falsos positivos (filtros de precio como 'HASTA S/80') y garantiza
-    que todos los perfumes indexados tengan su enlace directo individual /p/.
+    Motor Natura Perú Definitivo (Hybrid HTTP + Playwright Headless Engine).
+    Si el servidor devuelve un cascarón CSR (0 productos en HTML estático),
+    acciona automáticamente un navegador Chromium headless vía Playwright para
+    ejecutar el JavaScript, renderizar la parrilla y extraer los perfumes.
     """
     import os, time, re, json, html, requests
     from urllib.parse import urlparse, urljoin
@@ -2101,6 +2102,75 @@ def motor_natura(
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
+    def _extract_from_html_soup(soup_obj, target_base_url):
+        extracted = []
+        cards = soup_obj.find_all('article') or soup_obj.select('[data-testid*="product-card"]')
+        
+        if not cards:
+            a_tags = soup_obj.find_all('a', href=re.compile(r'/p/'))
+            seen = set()
+            for a in a_tags:
+                parent = a
+                for _ in range(4):
+                    if parent.parent and parent.parent.name not in ['body', 'html']:
+                        parent = parent.parent
+                if parent not in seen:
+                    seen.add(parent)
+                    cards.append(parent)
+
+        for card in cards:
+            try:
+                a_tag = card.find('a', href=re.compile(r'/p/')) or (card if card.name == 'a' else None)
+                if not a_tag or not a_tag.get('href'): continue
+
+                href = a_tag.get('href', '')
+                if '/p/' not in href: continue
+
+                link_final = urljoin(target_base_url, href.split('?')[0])
+                ident = _normalize_identifier(link_final)
+
+                nombre = a_tag.get('aria-label') or a_tag.get_text().strip() or card.get_text().strip()
+                nombre = re.sub(r'\s+', ' ', nombre)
+                if len(nombre) > 120: nombre = nombre.split('\n')[0].strip()
+
+                if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper() or "HASTA S/" in nombre.upper():
+                    continue
+
+                por_el = card.find(id=re.compile(r'product-price-por')) or card.select_one('[id*="product-price-por"]')
+                de_el = card.find(id=re.compile(r'product-price-de')) or card.select_one('[id*="product-price-de"]')
+
+                p_o = _safe_parse_price(por_el.get_text() if por_el else "")
+                p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
+
+                if p_o == 0.0:
+                    prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', card.get_text())
+                    if prices_found:
+                        parsed_prices = [_safe_parse_price(p) for p in prices_found if _safe_parse_price(p) > 0]
+                        if parsed_prices:
+                            p_o = min(parsed_prices)
+                            p_r = max(parsed_prices)
+
+                if p_o == 0.0: continue
+
+                img_el = card.find('img')
+                img_url = ""
+                if img_el:
+                    img_url = img_el.get('src') or img_el.get('data-src') or ""
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+
+                extracted.append({
+                    "identificador": ident,
+                    "nombre": f"NATURA - {nombre.upper()}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+            except Exception:
+                continue
+        return extracted
+
     productos, vistos = [], set()
     page_count = 0
 
@@ -2130,201 +2200,78 @@ def motor_natura(
 
         html_content = None
 
+        # -----------------------------------------------------------------
+        # INTENTO 1: PETICIÓN HTTP ESTÁTICA DIRECTA
+        # -----------------------------------------------------------------
         try:
             resp = sess.get(target_url, headers=headers_base, timeout=10, verify=False)
             _log(f"📡 Respuesta Directa HTTP: {resp.status_code}")
             if resp.status_code == 200 and resp.text:
                 html_content = resp.text
         except Exception as e:
-            _log(f"⚠️ Error directo ({e}).", "warning")
+            _log(f"⚠️ Error directo HTTP ({e}).", "warning")
 
-        if not html_content:
-            _log(f"ℹ️ Sin respuesta de la página {page}.")
-            break
-
-        # Desescapado profundo
-        clean_text = html.unescape(html_content)
-        clean_text = re.sub(r'\\u002[fF]', '/', clean_text)
-        clean_text = re.sub(r'\\u002[dD]', '-', clean_text)
-        clean_text = re.sub(r'\\u0022', '"', clean_text)
-        clean_text = clean_text.replace(r'\"', '"').replace(r'\/', '/').replace(r'\\', '\\')
-
-        soup = BeautifulSoup(html_content, "html.parser")
-
-        # -----------------------------------------------------------------
-        # ESTRATEGIA 1: PARSEO RECURSIVO DE __NEXT_DATA__ (JSON Estructurado)
-        # -----------------------------------------------------------------
-        next_script = soup.find('script', id='__NEXT_DATA__')
-        if next_script and next_script.string:
-            try:
-                next_json = json.loads(next_script.string)
-
-                def _extract_products_recursive(d):
-                    found = []
-                    if isinstance(d, dict):
-                        is_prod = ("productName" in d or "name" in d) and ("linkText" in d or "slug" in d or "url" in d or "productId" in d)
-                        if is_prod:
-                            found.append(d)
-                        else:
-                            for v in d.values():
-                                found.extend(_extract_products_recursive(v))
-                    elif isinstance(d, list):
-                        for item in d:
-                            found.extend(_extract_products_recursive(item))
-                    return found
-
-                raw_prods = _extract_products_recursive(next_json)
-                _log(f"🔍 Productos detectados en __NEXT_DATA__: {len(raw_prods)}")
-
-                for prod in raw_prods:
-                    if len(productos) >= max_items: break
-                    try:
-                        nombre = (prod.get("productName") or prod.get("name") or "").strip()
-                        
-                        # Bloquear marcas/filtros de navegación
-                        if not nombre or len(nombre) < 3 or "HASTA S/" in nombre.upper() or "AGREGAR" in nombre.upper():
-                            continue
-
-                        link_text = prod.get("linkText") or prod.get("slug") or prod.get("url") or ""
-                        
-                        # REGLE ESTRICTA: Debe ser un enlace de producto individual
-                        if not link_text or ("/" in link_text and not link_text.startswith("/") and "/p/" not in link_text):
-                            if not re.search(r'NATPER-\d+|\d+', link_text):
-                                continue
-
-                        if link_text.startswith("http"):
-                            link_final = link_text
-                        elif link_text.startswith("/"):
-                            link_final = urljoin(base_url, link_text)
-                        else:
-                            link_final = f"{base_url}/{link_text}/p"
-
-                        if "/p/" not in link_final and "NATPER-" not in link_final:
-                            continue
-
-                        prod_id = prod.get("productId") or prod.get("id")
-                        ident = _normalize_identifier(link_final, fallback=str(prod_id) if prod_id else None)
-                        if ident in vistos: continue
-
-                        p_o, p_r, img_url = 0.0, 0.0, ""
-
-                        items_list = prod.get("items") or []
-                        if items_list and isinstance(items_list, list):
-                            first_item = items_list[0]
-                            sellers = first_item.get("sellers") or []
-                            if sellers:
-                                comm = sellers[0].get("commertialOffer") or {}
-                                p_o = _safe_parse_price(comm.get("Price") or comm.get("spotPrice"))
-                                p_r = _safe_parse_price(comm.get("ListPrice") or p_o)
-                            imgs = first_item.get("images") or []
-                            if imgs and isinstance(imgs, list):
-                                first_img = imgs[0]
-                                img_url = first_img.get("imageUrl") if isinstance(first_img, dict) else str(first_img)
-
-                        if p_o == 0.0:
-                            p_o = _safe_parse_price(prod.get("price") or prod.get("Price") or prod.get("spotPrice"))
-                            p_r = _safe_parse_price(prod.get("listPrice") or prod.get("ListPrice") or p_o)
-
-                        if p_o == 0.0 or p_o > limite: continue
-
-                        vistos.add(ident)
-                        productos.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre.upper()}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url,
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                        page_items += 1
-                    except Exception:
-                        continue
-            except Exception as e_next:
-                _log(f"⚠️ Error procesando __NEXT_DATA__: {e_next}", "warning")
-
-        # -----------------------------------------------------------------
-        # ESTRATEGIA 2: ESCANEO POR RUTAS /p/ O SKUs NATPER- EN EL TEXTO
-        # -----------------------------------------------------------------
-        if page_items == 0:
-            p_urls = list(set(re.findall(r'(/p/[a-zA-Z0-9\-]+(?:/NATPER-\d+|\d+)?)', clean_text, re.I)))
-            _log(f"⚡ Rutas directas /p/ localizadas en el buffer: {len(p_urls)}")
-
-            for rel_link in p_urls:
+        if html_content:
+            soup = BeautifulSoup(html_content, "html.parser")
+            parsed_items = _extract_from_html_soup(soup, base_url)
+            for item in parsed_items:
                 if len(productos) >= max_items: break
-                try:
-                    link_final = urljoin(base_url, rel_link)
-                    
-                    # Validar obligatoriamente enlace individual
-                    if "/p/" not in link_final: continue
-
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
-
-                    idx = clean_text.find(rel_link)
-                    if idx == -1: continue
-                    snippet = clean_text[max(0, idx - 450):min(len(clean_text), idx + 550)]
-
-                    # Nombre
-                    nombre = ""
-                    m_aria = re.search(r'aria-label=["\']([^"\']+)["\']', snippet, re.I)
-                    if m_aria and "descuento" not in m_aria.group(1).lower() and "agregar" not in m_aria.group(1).lower() and "hasta" not in m_aria.group(1).lower():
-                        nombre = m_aria.group(1).strip()
-
-                    if not nombre:
-                        m_title = re.search(r'"(?:productName|name|displayName)"\s*:\s*"([^"]+)"', snippet, re.I)
-                        if m_title and "HASTA" not in m_title.group(1).upper():
-                            nombre = m_title.group(1).strip()
-
-                    if not nombre:
-                        slug_part = rel_link.split('/p/')[-1].split('/')[0].replace('-', ' ')
-                        nombre = slug_part.title()
-
-                    if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper() or "HASTA S/" in nombre.upper():
-                        continue
-
-                    # Precios
-                    prices_found = []
-                    m_por = re.search(r'product-price-por[^>]*>\s*(?:S/|S/&nbsp;)?\s*(\d+[\.,]?\d*)', snippet, re.I)
-                    if m_por: prices_found.append(_safe_parse_price(m_por.group(1)))
-
-                    m_de = re.search(r'product-price-de[^>]*>\s*(?:S/|S/&nbsp;)?\s*(\d+[\.,]?\d*)', snippet, re.I)
-                    if m_de: prices_found.append(_safe_parse_price(m_de.group(1)))
-
-                    num_prices = re.findall(r'"(?:price|spotPrice|sellingPrice|listPrice|value)"\s*:\s*(\d+(?:\.\d+)?)', snippet)
-                    for np in num_prices:
-                        val = _safe_parse_price(np)
-                        if val > 0: prices_found.append(val)
-
-                    txt_prices = re.findall(r'S/\s*(\d+[\.,]?\d*)', snippet)
-                    for tp in txt_prices:
-                        val = _safe_parse_price(tp)
-                        if val > 0: prices_found.append(val)
-
-                    if not prices_found: continue
-
-                    p_o = min(prices_found)
-                    p_r = max(prices_found)
-
-                    if p_o == 0.0 or p_o > limite: continue
-
-                    img_url = ""
-                    m_img = re.search(r'"(https://[^\s"]*(?:vtexassets|natura\.com)[^\s"]*\.(?:jpg|png|webp)[^"]*)"', snippet, re.I)
-                    if m_img: img_url = m_img.group(1)
-
-                    vistos.add(ident)
-                    productos.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
+                if item["identificador"] not in vistos and item["precio"] <= limite:
+                    vistos.add(item["identificador"])
+                    productos.append(item)
                     page_items += 1
-                except Exception:
-                    continue
+
+        # -----------------------------------------------------------------
+        # INTENTO 2: PLAYWRIGHT HEADLESS RENDERER (Si HTTP estático da 0 productos)
+        # -----------------------------------------------------------------
+        if page_items == 0 and use_playwright_fallback:
+            _log("🚀 HTTP estático devolvió 0 productos. Ejecutando Playwright Headless Browser...", "info")
+            try:
+                from playwright.sync_api import sync_playwright
+
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        headless=True,
+                        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"]
+                    )
+                    context = browser.new_context(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        viewport={"width": 1366, "height": 768}
+                    )
+                    page_pw = context.new_page()
+                    
+                    _log(f"🌐 Navegando vía Playwright a: {target_url}")
+                    page_pw.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+
+                    # Esperar renderizado dinámico del DOM
+                    try:
+                        page_pw.wait_for_selector('a[href*="/p/"]', timeout=8000)
+                    except Exception:
+                        pass
+
+                    # Scroll suave para activar la carga asíncrona de tarjetas
+                    page_pw.evaluate("window.scrollBy(0, 600);")
+                    time.sleep(1.5)
+
+                    rendered_html = page_pw.content()
+                    browser.close()
+
+                    if rendered_html:
+                        soup_pw = BeautifulSoup(rendered_html, "html.parser")
+                        parsed_items_pw = _extract_from_html_soup(soup_pw, base_url)
+                        _log(f"🔍 Productos capturados por Playwright: {len(parsed_items_pw)}")
+
+                        for item in parsed_items_pw:
+                            if len(productos) >= max_items: break
+                            if item["identificador"] not in vistos and item["precio"] <= limite:
+                                vistos.add(item["identificador"])
+                                productos.append(item)
+                                page_items += 1
+
+            except ImportError:
+                _log("⚠️ Playwright no está instalado en el entorno (`pip install playwright`).", "warning")
+            except Exception as e_pw:
+                _log(f"❌ Error ejecutando Playwright: {e_pw}", "error")
 
         _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
@@ -2349,12 +2296,11 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_strict_product_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_playwright_hybrid_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
