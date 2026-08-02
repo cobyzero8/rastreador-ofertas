@@ -343,51 +343,38 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     botonera_independiente()
     st.write("---")
 
-    col_run, col_status = st.columns([3, 2])
-    with col_run:
-        start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
-    with col_status:
-        if st.session_state.get("scraper_running", False):
-            st.warning("🟡 El patrullaje está en curso...")
-        else:
-            st.info("🔵 Listo para iniciar patrullaje manual.")
+    start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
 
-    def _worker(target):
-        try:
-            result_msg = revisar_ofertas(target)
-            st.session_state.scraper_result = {"resumen": result_msg, "target": target, "status": "ok"}
-        except Exception as e:
-            st.session_state.scraper_result = {"error": str(e), "target": target, "status": "error"}
-        finally:
-            st.session_state.scraper_running = False
-
-    if start_btn and not st.session_state.get("scraper_running", False):
-        st.session_state.scraper_running = True
-        st.session_state.scraper_result = None  # Limpiar resultado anterior
+    # 🚀 EJECUCIÓN DIRECTA EN 1 SOLO CLIC
+    if start_btn:
         target = st.session_state.get("filtro_activo", "TODOS")
+        
+        with st.status(f"🕵️‍♂️ Patrullando objetivo: '{target}'...", expanded=True) as status:
+            st.write(f"🔎 Iniciando enrutamiento y escaneo de tienda...")
+            try:
+                # Ejecutar directamente el motor
+                result_msg = revisar_ofertas(target)
+                st.session_state.scraper_result = {"resumen": result_msg, "target": target, "status": "ok"}
+                status.update(label="✅ ¡Patrullaje completado con éxito!", state="complete", expanded=False)
+            except Exception as e:
+                st.session_state.scraper_result = {"error": str(e), "target": target, "status": "error"}
+                status.update(label=f"❌ Error durante el patrullaje: {e}", state="error", expanded=True)
 
-        thread = threading.Thread(target=_worker, args=(target,), daemon=True)
-        add_script_run_ctx(thread)
-        thread.start()
-        st.rerun()
-
-    # 📌 MOSTRAR RESULTADO O ERRORES DE FORMA PERMANENTE EN PANTALLA
+    # 📊 REPORTE DE RESULTADOS DE LA ÚLTIMA EJECUCIÓN
     raw_res = st.session_state.get("scraper_result", None)
-
     if raw_res:
         st.write("---")
-        if raw_res.get("status") == "error" or "error" in raw_res:
-            st.error(f"❌ **ERROR EN EL PATRULLAJE:** {raw_res.get('error')}")
+        if raw_res.get("status") == "error":
+            st.error(f"❌ **Falló el escaneo:** {raw_res.get('error')}")
         else:
-            st.success(f"✅ **RESULTADO DEL ESCANEO:** {raw_res.get('resumen')}")
+            st.success(f"📋 **Resumen:** {raw_res.get('resumen')}")
 
-    # 📊 REPORTE DE OFERTAS EN VIVO
+    # 📊 TABLA / TARJETAS DE OFERTAS EN VIVO
     st.write("---")
-    st.subheader("📊 Reporte de Ofertas del Escaneo")
+    st.subheader("📊 Reporte de Ofertas Registradas")
 
     target_escaneado = st.session_state.get("filtro_activo", "TODOS")
 
-    # Consulta a Supabase
     try:
         q = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
         if target_escaneado and target_escaneado != "TODOS":
@@ -469,7 +456,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     except Exception as err_rep:
         st.error(f"Error cargando catálogo: {err_rep}")
 
-    # 📄 DIAGNÓSTICO Y LOGS FIJOS EN PANTALLA
+    # 📄 AUDITORÍA Y REGISTRO EN DISCO
     debug_path = "ml_debug/combined_debug.json"
     if os.path.exists(debug_path):
         try:
@@ -477,10 +464,8 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                 data_debug = json.load(fh)
                 
                 st.write("---")
-                st.subheader("🛠️ Diagnóstico del Último Escaneo")
-                
-                # Desplegable EXPANDIDO por defecto si hay un resultado recien generado
-                with st.expander("📄 Ver Detalle de Diagnóstico y Logs del Motor", expanded=True):
+                st.subheader("🛠️ Diagnóstico del Patrullaje")
+                with st.expander("📄 Ver Registro JSON Guardado", expanded=False):
                     st.json(data_debug)
         except Exception:
             pass
