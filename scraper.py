@@ -2012,107 +2012,142 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 
 
-def motor_natura(url, limite=9999, headers_override=None):
+def motor_natura(url, limite=9999, max_items=500):
     """
-    Motor Natura Perú Definitivo (Direct VTEX API Engine).
-    Accede directamente a la API REST del catálogo VTEX de Natura.
-    Evita bloqueos HTTP 403/Cloudflare, no consume créditos de proxy y no requiere Playwright.
+    Motor Natura Perú Definitivo (VTEX IO Intelligent Search API + Cloudflare Bypass).
+    Accede directamente a la API moderna de VTEX IO que utiliza Natura Perú.
+    Utiliza TLS Impersonation (Chrome 120) para evitar respuestas HTTP 403 de Cloudflare.
     """
-    import requests
-    import re
+    import re, json, requests
     from urllib.parse import urlparse, urljoin
-
-    productos = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "es-PE,es;q=0.9",
-        "Referer": "https://www.natura.com.pe/"
-    }
-    if headers_override and isinstance(headers_override, dict):
-        headers.update(headers_override)
+    from datetime import datetime, timezone
 
     try:
-        parsed = urlparse(url)
-        path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
-        category_slug = path_segments[-1] if path_segments else "perfumeria-para-quien"
+        from curl_cffi import requests as curl_requests
+        USE_CURL = True
+    except Exception:
+        import requests as curl_requests  # type: ignore
+        USE_CURL = False
 
-        # 1. Endpoint directo de la API VTEX de Natura
-        api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{category_slug}"
-        params = {
-            "O": "OrderByPriceASC",
-            "_from": "0",
-            "_to": "49"
-        }
+    productos, vistos = [], set()
 
-        safe_log(f"📡 [Natura API] Consultando catálogo VTEX directo para '{category_slug}'...", "info")
-        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+    parsed = urlparse(url)
+    path_clean = parsed.path.rstrip('/')
+    
+    # Extraer slug o categoría (ej. perfumeria-para-quien o perfumeria)
+    category_slug = path_clean.split('/')[-1] if path_clean else "perfumeria"
+    if category_slug == "c": category_slug = "perfumeria"
 
-        data = []
-        if resp.status_code in [200, 206]:
-            data = resp.json()
-        else:
-            # Fallback a búsqueda abierta si el slug de la categoría cambia
-            safe_log(f"⚠️ [Natura API] Categoría no mapeada (HTTP {resp.status_code}). Intentando búsqueda por término...", "warning")
-            search_api = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
-            resp = requests.get(search_api, headers=headers, params={"ft": "perfume", "O": "OrderByPriceASC", "_from": "0", "_to": "49"}, timeout=15, verify=False)
-            if resp.status_code in [200, 206]:
-                data = resp.json()
+    safe_log(f"🌿 [Natura API] Conectando con VTEX IO Intelligent Search para '{category_slug}'...", "info")
 
-        if not data or not isinstance(data, list):
-            safe_log(f"🛑 [Natura API] No se obtuvieron resultados de la API.", "error")
-            return []
+    # Sesión con huella TLS idéntica a Chrome real
+    sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
 
-        safe_log(f"🔍 [Natura API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "es-PE,es;q=0.9,en;q=0.8",
+        "referer": "https://www.natura.com.pe/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin"
+    }
 
-        vistos = set()
-        for p in data:
-            try:
-                nombre_prod = p.get("productName", "").strip().upper()
-                if not nombre_prod or len(nombre_prod) < 3: continue
+    # Endpoints de consulta inteligente VTEX IO
+    endpoints_a_probar = [
+        # 1. Búsqueda por categoría directa en Intelligent Search
+        (f"https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search{path_clean}", {
+            "page": "1",
+            "count": "48",
+            "sort": "price:asc"
+        }),
+        # 2. Búsqueda por faceta de categoría
+        (f"https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search/{category_slug}", {
+            "page": "1",
+            "count": "48",
+            "sort": "price:asc"
+        }),
+        # 3. Fallback por término de búsqueda (Perfumería)
+        ("https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search", {
+            "query": "perfume",
+            "page": "1",
+            "count": "48",
+            "sort": "price:asc"
+        })
+    ]
 
-                link_rel = p.get("link", "")
-                link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else url
+    data_products = []
 
-                items = p.get("items", [])
-                if not items: continue
+    for api_url, params in endpoints_a_probar:
+        try:
+            resp = sess.get(api_url, headers=headers, params=params, timeout=12, verify=False)
+            safe_log(f"📡 [Natura API] HTTP Status: {resp.status_code} desde {api_url.split('/')[-1]}", "info")
+            
+            if resp.status_code == 200:
+                json_res = resp.json()
+                data_products = json_res.get("products", [])
+                if data_products:
+                    safe_log(f"🔍 [Natura API] ¡Conexión exitosa! {len(data_products)} productos recibidos.", "info")
+                    break
+        except Exception as e:
+            continue
 
-                first_item = items[0]
-                images = first_item.get("images", [])
-                img_final = images[0].get("imageUrl", "") if images else ""
-                if img_final.startswith('//'): img_final = 'https:' + img_final
+    if not data_products:
+        safe_log("🛑 [Natura API] No se pudo obtener la lista de productos.", "error")
+        return []
 
-                sellers = first_item.get("sellers", [])
-                if not sellers: continue
+    for p in data_products:
+        if len(productos) >= max_items: break
+        try:
+            nombre_prod = str(p.get("productName") or p.get("name") or "").strip().upper()
+            if not nombre_prod or len(nombre_prod) < 3: continue
 
-                offer = sellers[0].get("commertialOffer", {})
-                if offer.get("AvailableQuantity", 0) <= 0: continue  # Omitir sin stock
+            link_rel = p.get("link") or p.get("url") or ""
+            link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else url
 
-                p_o = float(offer.get("Price", 0.0))
-                p_r = float(offer.get("ListPrice", p_o))
+            items = p.get("items", [])
+            if not items: continue
 
-                if 0 < p_o <= limite:
-                    if link_final in vistos: continue
-                    vistos.add(link_final)
+            first_item = items[0]
+            images = first_item.get("images", [])
+            img_final = images[0].get("imageUrl", "") if images else ""
+            if img_final.startswith('//'): img_final = 'https:' + img_final
 
-                    productos.append({
-                        "identificador": f"NATURA-{p.get('productId', abs(hash(link_final)))}",
-                        "nombre": f"NATURA - {nombre_prod}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_final
-                    })
-            except Exception:
-                continue
+            sellers = first_item.get("sellers", [])
+            if not sellers: continue
 
-        if productos:
-            safe_log(f"✅ [Natura API] ¡Éxito! Se indexaron {len(productos)} ofertas válidas.", "success")
-        else:
-            safe_log(f"⚠️ [Natura API] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
+            offer = sellers[0].get("commertialOffer", {})
+            
+            # Verificar stock disponible
+            if offer.get("AvailableQuantity", 1) <= 0: continue
 
-    except Exception as e:
-        safe_log(f"🛑 [Natura API] Error crítico de conexión: {e}", "error")
+            p_o = float(offer.get("Price", 0.0))
+            p_r = float(offer.get("ListPrice", p_o))
+
+            if 0 < p_o <= limite:
+                ident = f"NATURA-{p.get('productId', abs(hash(link_final)))}"
+                if ident in vistos: continue
+                vistos.add(ident)
+
+                productos.append({
+                    "identificador": ident,
+                    "nombre": f"NATURA - {nombre_prod}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_final,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+        except Exception:
+            continue
+
+    if productos:
+        safe_log(f"✅ [Natura API] ¡Éxito! Se indexaron {len(productos)} perfumes válidos.", "success")
+    else:
+        safe_log(f"⚠️ [Natura API] Ningún perfume cumple el límite de S/. {limite:.2f}", "warning")
 
     return productos
 
