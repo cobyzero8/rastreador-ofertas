@@ -2024,9 +2024,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (Brand-Targeted RSC Extractor).
-    - Escanea los 109 KB de transmisión RSC buscando líneas oficiales de perfumes Natura.
-    - Imprime una muestra de inspección en vivo para depuración visual.
+    Motor Natura Perú Definitivo (FastStore GraphQL + VTEX Search API).
+    Consulta los endpoints backend oficiales de Natura Perú para extraer
+    productos reales, precios exactos, imágenes y slugs válidos (sin errores 404).
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2086,102 +2086,6 @@ def motor_natura(
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
-    def _unpack_next_rsc_stream(html_text):
-        """Desempaqueta los bloques self.__next_f.push([1, "..."]) de Next.js App Router"""
-        chunks = []
-        matches = re.findall(r'self\.__next_f\.push\((.*?)\);?</script>', html_text, re.DOTALL)
-        if not matches:
-            matches = re.findall(r'self\.__next_f\.push\((.*?)\);?', html_text, re.DOTALL)
-
-        for match in matches:
-            match = match.strip()
-            try:
-                arr = json.loads(match)
-                if isinstance(arr, list) and len(arr) >= 2 and isinstance(arr[1], str):
-                    chunks.append(arr[1])
-            except Exception:
-                str_match = re.search(r'^\s*\[\s*\d+\s*,\s*"(.*)"\s*\]\s*$', match, re.DOTALL)
-                if str_match:
-                    raw_str = str_match.group(1)
-                    cleaned = raw_str.replace('\\"', '"').replace('\\\\', '\\').replace('\\n', '\n')
-                    chunks.append(cleaned)
-
-        return "\n".join(chunks)
-
-    def _extract_natura_perfumes(full_stream, base_url, limite, max_items):
-        prods = []
-        vistos = set()
-
-        # Limpiar secuencias escapadas
-        clean_text = full_stream.replace('\\"', '"').replace('\\\\', '\\')
-
-        # Marcadores de marcas de perfumería Natura
-        marcas_natura = r'(?:LUNA|KAIAK|HUMOR|UNA|ESSENCIAL|EKOS|BIOGRAFIA|ILIA|HOMEM|URBANO|AGUAS)'
-
-        # 1. Buscar coincidencias de perfumes
-        pattern = re.compile(
-            r'("([^"]*?' + marcas_natura + r'[^"]*?)")', 
-            re.IGNORECASE
-        )
-
-        matches = list(pattern.finditer(clean_text))
-
-        for m in matches:
-            if len(prods) >= max_items: break
-            name = m.group(2).strip()
-
-            if len(name) < 5 or len(name) > 100: continue
-            if any(bad in name.lower() for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'banner', 'sobre natura', 'favoritos']):
-                continue
-
-            # Crear ventana alrededor del hallazgo (600 caracteres antes y 1000 después)
-            start_pos = max(0, m.start() - 600)
-            end_pos = min(len(clean_text), m.end() + 1000)
-            window = clean_text[start_pos:end_pos]
-
-            # Buscar slug o URL
-            m_slug = re.search(r'"([^"]{5,120}\/p|/[a-z0-9\-]{10,100})"', window)
-            slug = m_slug.group(1) if m_slug else ""
-
-            if not slug or any(b in slug.lower() for b in ['/c/', 'ayuda', 'blog', 'favoritos', 'encuentra-natura']):
-                # Generar enlace sintáctico si no hay slug explícito
-                slug_sintactico = re.sub(r'[^a-zA-Z0-9\-]', '-', name.lower()).strip('-')
-                link_final = f"{base_url}/{slug_sintactico}/p"
-            else:
-                link_final = urljoin(base_url, slug.split('?')[0])
-
-            ident = _normalize_identifier(link_final)
-            if ident in vistos: continue
-
-            # Extraer montos numéricos de precios dentro de la ventana
-            prices = re.findall(r'\b(\d{2,4}\.\d{1,2})\b', window)
-            parsed_prices = [_safe_parse_price(p) for p in prices if 25.0 <= _safe_parse_price(p) <= 1500.0]
-
-            if not parsed_prices: continue
-
-            p_o = min(parsed_prices)
-            p_r = max(parsed_prices)
-
-            if p_o <= 0.0 or p_o > limite: continue
-
-            vistos.add(ident)
-
-            # Buscar URL de imagen en la ventana
-            m_img = re.search(r'"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', window, re.I)
-            img_url = m_img.group(1) if m_img else ""
-
-            prods.append({
-                "identificador": ident,
-                "nombre": f"NATURA - {name.upper()}",
-                "precio": p_o,
-                "precio_regular": max(p_r, p_o),
-                "link": link_final,
-                "img": img_url,
-                "fecha": datetime.now(timezone.utc).isoformat()
-            })
-
-        return prods
-
     productos, vistos = [], set()
     page_count = 0
 
@@ -2190,69 +2094,159 @@ def motor_natura(
     category_slug = path_segments[-1] if path_segments else "perfumeria"
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú (Brand Extractor) | Categoría: '{category_slug}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (FastStore API Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
-    headers_base = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    headers_api = {
+        "accept": "application/json, text/plain, */*",
         "accept-language": "es-PE,es;q=0.9",
+        "content-type": "application/json",
+        "origin": "https://www.natura.com.pe",
+        "referer": "https://www.natura.com.pe/",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
-    if headers_override and isinstance(headers_override, dict):
-        headers_base.update(headers_override)
+
+    query_term = "perfume" if "perfum" in category_slug else category_slug.replace("-", " ")
 
     for page in range(1, max_pages + 1):
         page_count += 1
-        target_page_url = f"{url}&page={page}" if "?" in url and page > 1 else f"{url}?page={page}" if page > 1 else url
-        _log(f"🔗 [Pág. {page}] Consultando URL: {target_page_url}")
+        page_items = 0
+        _log(f"🔗 [Pág. {page}] Consultando API backend de Natura para '{query_term}'...")
 
-        html_content = None
+        # --- ESTRATEGIA 1: FastStore GraphQL API ---
+        graphql_endpoint = "https://www.natura.com.pe/api/graphql"
+        gql_payload = {
+            "query": """
+            query ProductSearch($query: String, $from: Int, $to: Int) {
+              products(query: $query, from: $from, to: $to) {
+                productId
+                productName
+                linkText
+                brand
+                items {
+                  itemId
+                  images { imageUrl }
+                  sellers {
+                    commertialOffer {
+                      Price
+                      ListPrice
+                      AvailableQuantity
+                    }
+                  }
+                }
+              }
+            }
+            """,
+            "variables": {
+                "query": query_term,
+                "from": (page - 1) * step,
+                "to": page * step - 1
+            }
+        }
+
+        raw_products = []
         try:
-            resp = sess.get(target_page_url, headers=headers_base, timeout=12, verify=False)
-            if resp.status_code == 200 and resp.text:
-                html_content = resp.text
+            resp_gql = sess.post(graphql_endpoint, headers=headers_api, json=gql_payload, timeout=12)
+            if resp_gql.status_code == 200:
+                res_data = resp_gql.json()
+                raw_products = res_data.get('data', {}).get('products', [])
+                if raw_products:
+                    _log(f"📡 [GraphQL API] ¡Conexión exitosa! {len(raw_products)} productos recibidos.")
         except Exception as e:
-            _log(f"⚠️ Error directo ({e}).", "warning")
+            _log(f"⚠️ Error en consulta GraphQL: {e}", "warning")
 
-        if not html_content:
-            _log(f"ℹ️ Sin respuesta de la página {page}.")
-            break
+        # --- ESTRATEGIA 2: VTEX Intelligent Search REST API (Fallback) ---
+        if not raw_products:
+            search_endpoint = "https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search"
+            params = {
+                "query": query_term,
+                "page": page,
+                "count": step,
+                "sort": "price:asc"
+            }
+            try:
+                resp_rest = sess.get(search_endpoint, headers=headers_api, params=params, timeout=12)
+                if resp_rest.status_code == 200:
+                    res_data = resp_rest.json()
+                    raw_products = res_data.get('products', [])
+                    if raw_products:
+                        _log(f"📡 [Intelligent Search API] ¡Éxito! {len(raw_products)} productos recibidos.")
+            except Exception as e:
+                _log(f"⚠️ Error en Intelligent Search REST: {e}", "warning")
 
-        _log(f"📄 HTML recibido: {len(html_content)} bytes. Desempaquetando transmisión RSC...")
+        # --- FASE DE PROCESAMIENTO DE PRODUCTOS OFICIALES ---
+        for p in raw_products:
+            if len(productos) >= max_items: break
+            try:
+                nombre = str(p.get('productName') or p.get('name') or '').strip().upper()
+                if not nombre or len(nombre) < 3: continue
 
-        full_stream = _unpack_next_rsc_stream(html_content)
-        _log(f"📜 Transmisión RSC desempaquetada: {len(full_stream)} caracteres de texto plano.")
+                # Obtener slug auténtico del catálogo de VTEX
+                slug = p.get('linkText') or p.get('slug') or p.get('link') or p.get('url') or ''
+                if not slug: continue
 
-        # --- INSPECCIÓN EN VIVO PARA LOGS ---
-        idx_sample = full_stream.upper().find("LUNA")
-        if idx_sample != -1:
-            sample_text = full_stream[max(0, idx_sample - 50):min(len(full_stream), idx_sample + 250)]
-            _log(f"🔬 [MUESTRA REAL EN TEXTO]: {sample_text}")
-        else:
-            _log("🔬 [MUESTRA REAL EN TEXTO]: No se encontró 'LUNA' en el stream.")
+                # Formatear la URL real (/p)
+                if not slug.startswith('http'):
+                    slug_clean = slug.strip('/')
+                    if not slug_clean.endswith('/p'):
+                        slug_clean = f"{slug_clean}/p"
+                    link_final = f"{base_url}/{slug_clean}"
+                else:
+                    link_final = slug.split('?')[0]
 
-        page_products = _extract_natura_perfumes(full_stream, base_url, limite, max_items - len(productos))
-        page_items = len(page_products)
+                ident = _normalize_identifier(link_final, fallback=str(p.get('productId', '')))
+                if ident in vistos: continue
 
-        for p in page_products:
-            if p["identificador"] not in vistos:
-                vistos.add(p["identificador"])
-                productos.append(p)
+                # Extraer precios e imágenes
+                p_o, p_r, img_url = 0.0, 0.0, ""
+                items = p.get('items', [])
+                if items and isinstance(items, list):
+                    first_item = items[0]
+                    sellers = first_item.get('sellers', [])
+                    if sellers:
+                        offer = sellers[0].get('commertialOffer', {})
+                        if offer.get('AvailableQuantity', 1) > 0 or 'AvailableQuantity' not in offer:
+                            p_o = _safe_parse_price(offer.get('Price'))
+                            p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
 
-        _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
+                    imgs = first_item.get('images', [])
+                    if imgs and isinstance(imgs, list):
+                        img_url = imgs[0].get('imageUrl', '') if isinstance(imgs[0], dict) else str(imgs[0])
+
+                if p_o == 0.0:
+                    p_o = _safe_parse_price(p.get('price') or p.get('spotPrice'))
+                    p_r = _safe_parse_price(p.get('listPrice') or p_o)
+
+                if p_o <= 0.0 or p_o > limite: continue
+
+                vistos.add(ident)
+                productos.append({
+                    "identificador": ident,
+                    "nombre": f"NATURA - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+                page_items += 1
+
+            except Exception:
+                continue
+
+        _log(f"✅ Se indexaron {page_items} ofertas reales en la página {page}.", "success")
         if page_items == 0 or len(productos) >= max_items:
             break
         time.sleep(0.3)
 
-    _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
+    _log(f"✅ Patrullaje completado. Total ofertas válidas: {len(productos)}", "success")
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_brand_rsc_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_faststore_api_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
