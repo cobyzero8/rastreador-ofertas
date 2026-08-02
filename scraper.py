@@ -2022,9 +2022,11 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (VTEX IO State Parser).
-    Acceso directo HTTP 200 + Extracción nativa de window.__STATE__.
-    Captura imágenes HD, precios de oferta y la totalidad de catálogo por página.
+    Motor Natura Perú Definitivo (DOM Precision Extractor + JSON Fallback).
+    Basado en inspección real de DOM:
+    - Precios: #product-price-por y #product-price-de
+    - Nombres: aria-label en tags <a>
+    - Imágenes: src/data-src/srcset en tags <img>
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2162,136 +2164,90 @@ def motor_natura(
             break
 
         # -----------------------------------------------------------------
-        # PARSER ESPECIALIZADO VTEX IO __STATE__
+        # PARSER DOM DE ALTA PRECISIÓN (Basado en Inspector de Elementos)
         # -----------------------------------------------------------------
+        soup = BeautifulSoup(html_content, "html.parser")
         page_items = 0
-        state_match = re.search(r'__STATE__\s*=\s*({.+?})\s*;</script>', html_content, re.DOTALL)
-        if not state_match:
-            state_match = re.search(r'__STATE__\s*=\s*({.+?})\s*<', html_content, re.DOTALL)
 
-        if state_match:
+        # Buscar enlaces de producto /p/
+        a_tags = soup.find_all('a', href=re.compile(r'/p/'))
+
+        for a_tag in a_tags:
+            if len(productos) >= max_items: break
             try:
-                raw_json = state_match.group(1).strip()
-                if raw_json.endswith(';'): raw_json = raw_json[:-1]
-                vtex_state = json.loads(raw_json)
+                href = a_tag.get('href', '')
+                if not href or '/p/' not in href: continue
 
-                # Iterar nodos del grafo VTEX
-                for k_node, node in vtex_state.items():
-                    if not isinstance(node, dict): continue
-                    typename = node.get("__typename")
+                link_final = urljoin(base_url, href.split('?')[0])
+                ident = _normalize_identifier(link_final)
+                if ident in vistos: continue
+
+                # Subir en la jerarquía del DOM para encontrar el contenedor de la tarjeta
+                card = a_tag
+                for _ in range(5):
+                    if card.parent and card.parent.name not in ['body', 'html']:
+                        card = card.parent
+                        if card.find(id="product-price-por") or card.find(id="product-price-de") or (card.get('id') and 'NATPER-' in str(card.get('id'))):
+                            break
+
+                # A) Nombre del Producto
+                nombre = ""
+                aria_lbl = a_tag.get('aria-label', '')
+                if aria_lbl and "descuento" not in aria_lbl.lower() and "pricefromto" not in aria_lbl.lower():
+                    nombre = aria_lbl.strip()
+
+                if not nombre:
+                    for other_a in card.find_all('a'):
+                        al = other_a.get('aria-label', '')
+                        if al and "descuento" not in al.lower() and "pricefromto" not in al.lower():
+                            nombre = al.strip()
+                            break
+
+                if not nombre:
+                    nombre = a_tag.get_text().strip()
+
+                nombre = re.sub(r'\s+', ' ', nombre)
+                if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+
+                # B) Precios de Oferta y Regular (#product-price-por y #product-price-de)
+                por_el = card.find(id="product-price-por") or card.find(id=re.compile(r'product-price-por'))
+                de_el = card.find(id="product-price-de") or card.find(id=re.compile(r'product-price-de'))
+
+                p_o = _safe_parse_price(por_el.get_text() if por_el else "")
+                p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
+
+                if p_o == 0.0:
+                    p_o = _safe_parse_price(card.get_text())
+                    p_r = p_o
+
+                if p_o == 0.0 or p_o > limite: continue
+
+                # C) Extraer Imagen HD
+                img_url = ""
+                img_el = card.find('img')
+                if img_el:
+                    img_url = img_el.get('src') or img_el.get('data-src') or ""
+                    if not img_url and img_el.get('srcset'):
+                        img_url = img_el.get('srcset').split(' ')[0]
                     
-                    if typename == "Product" or k_node.startswith("Product:"):
-                        try:
-                            nombre = node.get("productName") or node.get("name")
-                            if not nombre: continue
+                    if img_url.startswith('//'):
+                        img_url = 'https:' + img_url
+                    elif img_url.startswith('/'):
+                        img_url = urljoin(base_url, img_url)
 
-                            link_text = node.get("linkText") or ""
-                            link_final = f"{base_url}/{link_text}/p" if link_text else url
-
-                            prod_id = node.get("productId")
-                            ident = _normalize_identifier(link_final, fallback=str(prod_id) if prod_id else None)
-                            if ident in vistos: continue
-
-                            p_o, p_r, img_url = 0.0, 0.0, ""
-
-                            # Buscar Items / Ofertas / Imágenes asociadas en el Grafo
-                            items_ref = node.get("items") or []
-                            for item_ref in items_ref:
-                                item_obj = None
-                                if isinstance(item_ref, dict):
-                                    ref_id = item_ref.get("id") or item_ref.get("__ref")
-                                    item_obj = vtex_state.get(ref_id, item_ref) if ref_id else item_ref
-
-                                if not isinstance(item_obj, dict): continue
-
-                                # Extraer Imagen
-                                images_ref = item_obj.get("images") or []
-                                for img in images_ref:
-                                    if isinstance(img, dict):
-                                        img_id = img.get("id") or img.get("__ref")
-                                        img_data = vtex_state.get(img_id, img) if img_id else img
-                                        u = img_data.get("imageUrl") or img_data.get("src")
-                                        if u:
-                                            img_url = u if u.startswith("http") else f"https:{u}"
-                                            break
-                                    if img_url: break
-
-                                # Extraer Precio y Oferta
-                                sellers_ref = item_obj.get("sellers") or []
-                                for sel in sellers_ref:
-                                    sel_id = sel.get("id") or sel.get("__ref") if isinstance(sel, dict) else None
-                                    sel_obj = vtex_state.get(sel_id, sel) if sel_id else sel
-                                    if not isinstance(sel_obj, dict): continue
-
-                                    comm_ref = sel_obj.get("commertialOffer")
-                                    comm_id = comm_ref.get("id") or comm_ref.get("__ref") if isinstance(comm_ref, dict) else None
-                                    comm_obj = vtex_state.get(comm_id, comm_ref) if comm_id else comm_ref
-
-                                    if isinstance(comm_obj, dict):
-                                        p_o = _safe_parse_price(comm_obj.get("Price"))
-                                        p_r = _safe_parse_price(comm_obj.get("ListPrice") or p_o)
-                                        if p_o > 0: break
-                                if p_o > 0: break
-
-                            if p_o == 0.0 or p_o > limite: continue
-
-                            vistos.add(ident)
-                            productos.append({
-                                "identificador": ident,
-                                "nombre": f"NATURA - {nombre.upper()}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url,
-                                "fecha": datetime.now(timezone.utc).isoformat()
-                            })
-                            page_items += 1
-                        except Exception:
-                            continue
-            except Exception as e_state:
-                _log(f"⚠️ Error parseando __STATE__: {e_state}", "warning")
-
-        # Fallback a JSON-LD si __STATE__ no devolvió nada
-        if page_items == 0:
-            soup = BeautifulSoup(html_content, "html.parser")
-            ld_scripts = soup.find_all('script', type='application/ld+json')
-            for script in ld_scripts:
-                if not script.string: continue
-                try:
-                    data_ld = json.loads(script.string)
-                    items_ld = data_ld.get("itemListElement", []) if isinstance(data_ld, dict) else []
-                    for item in items_ld:
-                        prod_obj = item.get("item", item) if isinstance(item, dict) else {}
-                        nombre = (prod_obj.get("name") or "").strip()
-                        if not nombre: continue
-
-                        link_final = prod_obj.get("url") or url
-                        offers = prod_obj.get("offers", {})
-                        p_o = _safe_parse_price(offers.get("price") if isinstance(offers, dict) else 0.0)
-                        p_r = _safe_parse_price(offers.get("highPrice") if isinstance(offers, dict) else p_o) or p_o
-
-                        if p_o == 0.0 or p_o > limite: continue
-
-                        # Imagen en JSON-LD
-                        img_raw = prod_obj.get("image", "")
-                        img_url = img_raw[0] if isinstance(img_raw, list) and img_raw else (img_raw if isinstance(img_raw, str) else "")
-
-                        ident = _normalize_identifier(link_final)
-                        if ident in vistos: continue
-
-                        vistos.add(ident)
-                        productos.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre.upper()}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url,
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                        page_items += 1
-                except Exception:
-                    continue
+                vistos.add(ident)
+                productos.append({
+                    "identificador": ident,
+                    "nombre": f"NATURA - {nombre.upper()}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url,
+                    "fecha": datetime.now(timezone.utc).isoformat()
+                })
+                page_items += 1
+            except Exception:
+                continue
 
         _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
         _log(f"📦 Ofertas acumuladas: {len(productos)}")
@@ -2317,11 +2273,30 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_vtex_state_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_dom_precision_parser", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # =======================================================
 # ENRUTADOR AISLADO
