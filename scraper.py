@@ -2012,344 +2012,67 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 
 
-def motor_natura(
-    url,
-    limite=9999,
-    max_pages=10,
-    step=48,
-    session=None,
-    max_items=500,
-    use_playwright_fallback=False,
-    headers_override=None,
-    return_as_dict=False
-):
+def motor_natura(url, limite=9999, max_pages=1, **kwargs):
     """
-    Motor Natura Perú Definitivo.
-    - Navegación recursiva profunda en esquemas VTEX/Next.js (dehydratedState).
-    - Selector de títulos DOM resistente a etiquetas de descuento y ofertas.
+    Script de Diagnóstico Quirúrgico para Natura Perú.
+    Muestra en los logs la estructura real del HTML y los scripts embebidos.
     """
-    import os, time, re, json, requests
-    from urllib.parse import urlparse, urljoin
-    from datetime import datetime, timezone
+    import json, re, requests
     from bs4 import BeautifulSoup
-    import urllib3
-
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
     try:
         from curl_cffi import requests as curl_requests
-        USE_CURL = True
+        sess = curl_requests.Session(impersonate="chrome120")
     except Exception:
-        import requests as curl_requests  # type: ignore
-        USE_CURL = False
+        sess = requests.Session()
 
-    try:
-        import streamlit as st
-    except Exception:
-        st = None
-
-    logs_list = []
-
-    def _log(msg, level="info"):
-        ts = datetime.now(timezone.utc).isoformat()
-        entry = f"[{level.upper()}] {ts} - {msg}"
-        logs_list.append(entry)
-        if st:
-            try:
-                from streamlit.runtime.scriptrunner import get_script_run_ctx
-                if get_script_run_ctx():
-                    if level == "error": st.error(msg)
-                    elif level == "warning": st.warning(msg)
-                    elif level == "success": st.success(msg)
-                    else: st.write(msg)
-            except Exception:
-                print(entry)
-        else:
-            print(entry)
-
-    def _safe_parse_price(val):
-        if val is None: return 0.0
-        try:
-            s = re.sub(r'[^\d\.,]', '', str(val)).strip()
-            if not s: return 0.0
-            if s.count('.') > 1: s = s.replace('.', '')
-            s = s.replace(',', '.')
-            m = re.search(r'\d+\.?\d*', s)
-            return float(m.group(0)) if m else 0.0
-        except Exception:
-            return 0.0
-
-    def _normalize_identifier(link, fallback=None):
-        try:
-            token = link.split('?')[0].rstrip('/').split('/')[-1]
-            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or (fallback or str(abs(hash(link))))
-            return f"NATURA-{token.upper()}"
-        except Exception:
-            return f"NATURA-{abs(hash(link))}"
-
-    def _is_blacklisted_url(href):
-        blacklist = [
-            'encuentra-natura', 'mis-datos', 'favoritos', 'quiero-ser',
-            'aplicativo', 'sobre-natura', 'ayuda', 'blog', 'revista',
-            'tiendas', 'login', 'cart', 'checkout', 'politicas',
-            'terminos', 'mi-cuenta', 'pedidos', 'cupones'
-        ]
-        href_lower = str(href).lower()
-        if href_lower.startswith('/c/'): return True
-        return any(b in href_lower for b in blacklist)
-
-    def _extract_vtex_products(obj, visited_ids=None):
-        """Busca nodos reales de producto VTEX sin detener la recursión en los nodos padres"""
-        if visited_ids is None: visited_ids = set()
-        prods = []
-        if isinstance(obj, dict):
-            p_id = obj.get('productId') or obj.get('id')
-            p_name = obj.get('productName') or obj.get('name')
-
-            # Un producto válido de VTEX requiere nombre y atributos de catálogo/oferta
-            has_product_structure = any(k in obj for k in ['items', 'sellers', 'priceRange', 'linkText', 'slug'])
-
-            if p_name and has_product_structure:
-                name_str = str(p_name).strip()
-                if len(name_str) > 3 and not name_str.lower().startswith(('perfumer', 'categor', 'banner')):
-                    if p_id and p_id not in visited_ids:
-                        visited_ids.add(p_id)
-                        prods.append(obj)
-                    elif not p_id:
-                        prods.append(obj)
-
-            for k, v in obj.items():
-                if k not in ['sellers', 'commertialOffer']:
-                    prods.extend(_extract_vtex_products(v, visited_ids))
-
-        elif isinstance(obj, list):
-            for item in obj:
-                prods.extend(_extract_vtex_products(item, visited_ids))
-        return prods
-
-    def _extract_price_from_json_node(node):
-        p_o, p_r = 0.0, 0.0
-        
-        items = node.get('items') or []
-        if isinstance(items, list) and items:
-            first_item = items[0]
-            sellers = first_item.get('sellers') or []
-            if isinstance(sellers, list) and sellers:
-                offer = sellers[0].get('commertialOffer', {})
-                p_o = _safe_parse_price(offer.get('Price') or offer.get('spotPrice'))
-                p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
-
-        if p_o == 0.0:
-            sellers = node.get('sellers') or []
-            if isinstance(sellers, list) and sellers:
-                offer = sellers[0].get('commertialOffer', {})
-                p_o = _safe_parse_price(offer.get('Price') or offer.get('spotPrice'))
-                p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
-
-        if p_o == 0.0 and isinstance(node.get('priceRange'), dict):
-            pr = node['priceRange']
-            p_o = _safe_parse_price(pr.get('minPrice', {}).get('price'))
-            p_r = _safe_parse_price(pr.get('maxPrice', {}).get('price')) or p_o
-
-        if p_o == 0.0:
-            p_o = _safe_parse_price(node.get('spotPrice') or node.get('price'))
-            p_r = _safe_parse_price(node.get('listPrice') or node.get('list_price')) or p_o
-
-        return p_o, max(p_r, p_o)
-
-    productos, vistos = [], set()
-    page_count = 0
-
-    parsed = urlparse(url)
-    path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
-    category_slug = path_segments[-1] if path_segments else "perfumeria"
-    base_url = f"{parsed.scheme}://{parsed.netloc}"
-
-    _log(f"🌿 Iniciando Natura Perú | Categoría: '{category_slug}' | Límite: S/. {limite}")
-
-    sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
-    headers_base = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     }
-    if headers_override and isinstance(headers_override, dict):
-        headers_base.update(headers_override)
 
-    for page in range(1, max_pages + 1):
-        page_count += 1
-        target_page_url = f"{url}&page={page}" if "?" in url and page > 1 else f"{url}?page={page}" if page > 1 else url
-        _log(f"🔗 [Pág. {page}] Consultando URL: {target_page_url}")
+    st.info("🔬 [DIAGNÓSTICO] Solicitando página a Natura...")
+    resp = sess.get(url, headers=headers, timeout=12, verify=False)
+    
+    st.write(f"📊 **Estado HTTP:** {resp.status_code} | **Tamaño:** {len(resp.text)} bytes")
 
-        html_content = None
+    soup = BeautifulSoup(resp.text, 'html.parser')
+
+    # 1. Inspeccionar scripts con JSON embebido
+    scripts = soup.find_all('script')
+    st.write(f"📜 **Total de etiquetas `<script>` encontradas:** {len(scripts)}")
+    
+    script_ids = [s.get('id') for s in scripts if s.get('id')]
+    st.write(f"🏷️ **IDs de Scripts con datos:** `{script_ids}`")
+
+    # 2. Inspeccionar __NEXT_DATA__
+    next_script = soup.find('script', id='__NEXT_DATA__')
+    if next_script and next_script.string:
         try:
-            resp = sess.get(target_page_url, headers=headers_base, timeout=12, verify=False)
-            if resp.status_code == 200 and resp.text:
-                html_content = resp.text
+            data = json.loads(next_script.string)
+            page_props = data.get('props', {}).get('pageProps', {})
+            st.success("✅ Script __NEXT_DATA__ localizado.")
+            st.json({"pageProps_keys": list(page_props.keys())})
         except Exception as e:
-            _log(f"⚠️ Error directo ({e}).", "warning")
+            st.error(f"Error al parsear __NEXT_DATA__: {e}")
+    else:
+        st.warning("⚠️ No se encontró el script __NEXT_DATA__ con contenido.")
 
-        if not html_content:
-            _log(f"ℹ️ Sin respuesta de la página {page}.")
-            break
+    # 3. Muestra de los primeros 5 enlaces del HTML
+    anchors = soup.find_all('a', href=True)[:5]
+    st.write("🔗 **Muestra de primeros 5 enlaces `<a>` en el HTML crudo:**")
+    for a in anchors:
+        st.code(f"href: {a['href']} | Texto: {a.get_text().strip()[:50]}")
 
-        soup = BeautifulSoup(html_content, "html.parser")
-        title_tag = soup.title.string.strip() if soup.title and soup.title.string else "SIN TÍTULO"
-        _log(f"📄 [DIAGNÓSTICO] Título HTML: '{title_tag}' | Tamaño: {len(html_content)} bytes")
+    return []
 
-        page_items = 0
 
-        # --- FASE 1: Extracción en __NEXT_DATA__ ---
-        next_data_script = soup.find('script', id='__NEXT_DATA__')
-        if next_data_script and next_data_script.string:
-            try:
-                data_json = json.loads(next_data_script.string)
-                nodes = _extract_vtex_products(data_json.get('props', {}))
 
-                for node in nodes:
-                    if len(productos) >= max_items: break
-                    try:
-                        nombre = str(node.get('productName') or node.get('name') or '').strip()
-                        if not nombre or len(nombre) < 3: continue
 
-                        slug = node.get('linkText') or node.get('slug') or node.get('link') or node.get('url') or ''
-                        if not slug or _is_blacklisted_url(slug): continue
 
-                        link_final = urljoin(base_url, slug.split('?')[0])
-                        ident = _normalize_identifier(link_final)
-                        if ident in vistos: continue
 
-                        p_o, p_r = _extract_price_from_json_node(node)
-                        if p_o <= 0.0 or p_o > limite: continue
 
-                        vistos.add(ident)
-                        img_url = ""
-                        items = node.get('items') or []
-                        if isinstance(items, list) and items:
-                            images = items[0].get('images') or []
-                            if images and isinstance(images, list):
-                                img_url = images[0].get('imageUrl') or images[0].get('src') or ""
 
-                        if not img_url and 'image' in node:
-                            img_obj = node['image']
-                            if isinstance(img_obj, list) and img_obj: img_obj = img_obj[0]
-                            if isinstance(img_obj, dict): img_url = img_obj.get('url', '')
-                            elif isinstance(img_obj, str): img_url = img_obj
 
-                        productos.append({
-                            "identificador": ident,
-                            "nombre": f"NATURA - {nombre.upper()}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": str(img_url),
-                            "fecha": datetime.now(timezone.utc).isoformat()
-                        })
-                        page_items += 1
-                    except Exception:
-                        continue
-
-                if page_items > 0:
-                    _log(f"🧩 [NEXT_DATA] Extraídos {page_items} productos válidos.")
-            except Exception as e:
-                _log(f"⚠️ Error procesando JSON de Next.js: {e}", "warning")
-
-        # --- FASE 2: Extracción DOM Inteligente (Fallback) ---
-        if page_items == 0:
-            all_a = soup.find_all('a', href=True)
-            product_anchors = []
-
-            for a in all_a:
-                href = a.get('href', '')
-                if not href or _is_blacklisted_url(href): continue
-                if href.startswith('/') and len(href) > 12:
-                    product_anchors.append(a)
-
-            _log(f"🧩 [DIAGNÓSTICO DOM] Enlaces candidatos filtrados: {len(product_anchors)}")
-
-            for a_tag in product_anchors:
-                if len(productos) >= max_items: break
-                try:
-                    href = a_tag['href']
-                    link_final = urljoin(base_url, href.split('?')[0])
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
-
-                    card = a_tag
-                    for _ in range(4):
-                        if card.parent and card.parent.name not in ['body', 'html', 'main', 'section', 'header', 'nav']:
-                            card = card.parent
-
-                    raw_txt = card.get_text(separator='\n')
-                    clean_txt = re.sub(r'\s+', ' ', raw_txt)
-
-                    price_matches = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', clean_txt, re.IGNORECASE)
-                    parsed_prices = [_safe_parse_price(p) for p in price_matches if 15.0 <= _safe_parse_price(p) <= 2000.0]
-
-                    if not parsed_prices: continue
-
-                    p_o = min(parsed_prices)
-                    p_r = max(parsed_prices)
-
-                    if p_o <= 0.0 or p_o > limite: continue
-
-                    # Extracción inteligente del título
-                    nombre_raw = ""
-                    title_el = card.select_one('[class*="name" i], [class*="title" i], [data-testid*="name" i], h2, h3, h4')
-                    if title_el:
-                        nombre_raw = title_el.get_text().strip()
-
-                    if not nombre_raw or len(nombre_raw) < 3:
-                        nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
-
-                    if not nombre_raw or len(nombre_raw) < 3:
-                        lines = [l.strip() for l in raw_txt.split('\n') if l.strip()]
-                        clean_lines = []
-                        for l in lines:
-                            l_up = l.upper()
-                            if any(bad in l_up for bad in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS', 'HORAS', 'FAVORITOS', 'HASTA', 'OFF', 'RATING']):
-                                continue
-                            if len(l) >= 3 and not re.match(r'^\d+[\.,]?\d*$', l):
-                                clean_lines.append(l)
-                        if clean_lines:
-                            nombre_raw = " ".join(clean_lines[:2])
-
-                    nombre_limpio = re.sub(r'\s+', ' ', nombre_raw).strip().upper()
-                    if not nombre_limpio or len(nombre_limpio) < 3: continue
-
-                    img_el = card.find('img')
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get('src') or img_el.get('data-src') or ""
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                    vistos.add(ident)
-                    productos.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {nombre_limpio}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                    page_items += 1
-                except Exception:
-                    continue
-
-        _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
-        if page_items == 0 or len(productos) >= max_items:
-            break
-        time.sleep(0.3)
-
-    _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
-
-    summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_diagnostic_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-    if return_as_dict:
-        return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
-    return productos
 
 
 
