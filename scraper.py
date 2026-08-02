@@ -2094,7 +2094,7 @@ def motor_natura(
     productos = []
     vistos = set()
 
-    # 🔑 Obtención Segura de API Key
+  # 🔑 Obtención Segura de API Key
     api_key_scraper = None
     try:
         if st and "SCRAPERAPI_KEY" in st.secrets:
@@ -2102,7 +2102,7 @@ def motor_natura(
     except Exception:
         pass
     if not api_key_scraper:
-        api_key_scraper = os.environ.get("SCRAPERAPI_KEY")
+        api_key_scraper = os.environ.get("SCRAPERAPI_KEY", "4cd72a5cadb77297cd9f41f11dc632c0") # Key por defecto
 
     # Configuración de Túnel Proxy
     scraper_proxies = None
