@@ -2025,8 +2025,8 @@ def motor_natura(
 ):
     """
     Motor Natura Perú Definitivo.
-    Extracción precisa de ofertas mediante regex estricta de moneda (S/)
-    y selector inteligente de títulos para evitar descartes por nombres vacíos.
+    Soporta extracción profunda de precios en esquemas JSON de VTEX (items -> sellers -> commertialOffer)
+    y normaliza textos DOM para evitar fallos por saltos de línea entre 'S/' y el monto.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2098,14 +2098,45 @@ def motor_natura(
         if href_lower.startswith('/c/'): return True
         return any(b in href_lower for b in blacklist)
 
+    def _extract_price_from_json_node(node):
+        """Extrae el precio de oferta y regular explorando todas las capas de VTEX/Next.js"""
+        p_o, p_r = 0.0, 0.0
+        
+        # 1. Caso VTEX IO (items -> sellers -> commertialOffer)
+        if 'items' in node and isinstance(node['items'], list) and node['items']:
+            first_item = node['items'][0]
+            if 'sellers' in first_item and isinstance(first_item['sellers'], list) and first_item['sellers']:
+                offer = first_item['sellers'][0].get('commertialOffer', {})
+                p_o = _safe_parse_price(offer.get('Price'))
+                p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
+
+        # 2. Caso direct sellers
+        if p_o == 0.0 and 'sellers' in node and isinstance(node['sellers'], list) and node['sellers']:
+            offer = node['sellers'][0].get('commertialOffer', {})
+            p_o = _safe_parse_price(offer.get('Price'))
+            p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
+
+        # 3. Caso FastStore / priceRange
+        if p_o == 0.0 and 'priceRange' in node and isinstance(node['priceRange'], dict):
+            p_o = _safe_parse_price(node['priceRange'].get('minPrice', {}).get('price'))
+            p_r = _safe_parse_price(node['priceRange'].get('maxPrice', {}).get('price')) or p_o
+
+        # 4. Caso direct offers / spotPrice / price
+        if p_o == 0.0 and 'offers' in node and isinstance(node['offers'], dict):
+            p_o = _safe_parse_price(node['offers'].get('lowPrice') or node['offers'].get('price'))
+            p_r = _safe_parse_price(node['offers'].get('highPrice') or node['offers'].get('listPrice')) or p_o
+
+        if p_o == 0.0:
+            p_o = _safe_parse_price(node.get('spotPrice') or node.get('price'))
+            p_r = _safe_parse_price(node.get('listPrice') or node.get('list_price')) or p_o
+
+        return p_o, max(p_r, p_o)
+
     def _extract_products_from_json(obj):
         items = []
         if isinstance(obj, dict):
             name = obj.get('name') or obj.get('productName') or obj.get('title')
-            has_price = any(k in obj for k in ['priceRange', 'offers', 'spotPrice', 'sellers', 'price', 'listPrice'])
-            has_link = any(k in obj for k in ['slug', 'link', 'url', 'sku', 'productId', 'id'])
-
-            if name and (has_price or has_link):
+            if name and any(k in obj for k in ['slug', 'link', 'url', 'sku', 'productId', 'id', 'items', 'sellers', 'price']):
                 items.append(obj)
             else:
                 for v in obj.values():
@@ -2157,7 +2188,7 @@ def motor_natura(
 
         page_items = 0
 
-        # --- FASE 1: Extracción desde __NEXT_DATA__ ---
+        # --- FASE 1: Extracción JSON (__NEXT_DATA__) ---
         next_data_script = soup.find('script', id='__NEXT_DATA__')
         if next_data_script and next_data_script.string:
             try:
@@ -2177,20 +2208,7 @@ def motor_natura(
                         ident = _normalize_identifier(link_final)
                         if ident in vistos: continue
 
-                        p_o, p_r = 0.0, 0.0
-                        if 'priceRange' in node and isinstance(node['priceRange'], dict):
-                            p_o = _safe_parse_price(node['priceRange'].get('minPrice', {}).get('price'))
-                            p_r = _safe_parse_price(node['priceRange'].get('maxPrice', {}).get('price')) or p_o
-                        elif 'offers' in node and isinstance(node['offers'], dict):
-                            p_o = _safe_parse_price(node['offers'].get('lowPrice') or node['offers'].get('price'))
-                            p_r = _safe_parse_price(node['offers'].get('highPrice') or node['offers'].get('listPrice')) or p_o
-                        elif 'spotPrice' in node or 'price' in node:
-                            p_o = _safe_parse_price(node.get('spotPrice') or node.get('price'))
-                            p_r = _safe_parse_price(node.get('listPrice') or node.get('list_price')) or p_o
-                        elif 'sellers' in node and node['sellers']:
-                            offer = node['sellers'][0].get('commertialOffer', {})
-                            p_o = _safe_parse_price(offer.get('Price'))
-                            p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
+                        p_o, p_r = _extract_price_from_json_node(node)
 
                         if p_o <= 0.0 or p_o > limite: continue
 
@@ -2201,6 +2219,9 @@ def motor_natura(
                             if isinstance(img_obj, list) and img_obj: img_obj = img_obj[0]
                             if isinstance(img_obj, dict): img_url = img_obj.get('url', '')
                             elif isinstance(img_obj, str): img_url = img_obj
+                        elif 'items' in node and node['items']:
+                            images = node['items'][0].get('images', [])
+                            if images: img_url = images[0].get('imageUrl', '')
 
                         productos.append({
                             "identificador": ident,
@@ -2220,7 +2241,7 @@ def motor_natura(
             except Exception as e:
                 _log(f"⚠️ Error procesando JSON de Next.js: {e}", "warning")
 
-        # --- FASE 2: Extracción DOM Inteligente (Fallback) ---
+        # --- FASE 2: Extracción DOM Normalizada (Fallback) ---
         if page_items == 0:
             all_a = soup.find_all('a', href=True)
             product_anchors = []
@@ -2241,16 +2262,18 @@ def motor_natura(
                     ident = _normalize_identifier(link_final)
                     if ident in vistos: continue
 
-                    # Subir hasta el contenedor de la tarjeta
+                    # Subir 3 a 4 niveles en el DOM
                     card = a_tag
-                    for _ in range(3):
+                    for _ in range(4):
                         if card.parent and card.parent.name not in ['body', 'html', 'main', 'section', 'header', 'nav']:
                             card = card.parent
 
-                    txt = card.get_text(separator='\n')
+                    # Normalizar espacios en el texto para resolver 'S/\n97.30'
+                    raw_txt = card.get_text(separator=' ')
+                    clean_txt = re.sub(r'\s+', ' ', raw_txt)
 
-                    # Extraer únicamente números precedidos por S/ o S/.
-                    price_matches = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', txt, re.IGNORECASE)
+                    # Regex para capturar precios en soles
+                    price_matches = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', clean_txt, re.IGNORECASE)
                     parsed_prices = [_safe_parse_price(p) for p in price_matches if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
                     if not parsed_prices: continue
@@ -2260,24 +2283,17 @@ def motor_natura(
 
                     if p_o <= 0.0 or p_o > limite: continue
 
-                    # Obtención limpia del nombre del producto
+                    # Obtener nombre
                     nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
-
                     if not nombre_raw or len(nombre_raw) < 3:
-                        # Buscar la línea de texto descriptiva más larga excluyendo precios y botones
-                        lines = [line.strip() for line in txt.split('\n') if line.strip()]
-                        valid_lines = []
-                        for l in lines:
-                            l_upper = l.upper()
-                            if any(k in l_upper for k in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS HORAS', 'FAVORITOS', 'HASTA']):
-                                continue
-                            if len(l) >= 4:
-                                valid_lines.append(l)
+                        title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'])
+                        if title_el: nombre_raw = title_el.get_text().strip()
 
-                        if valid_lines:
-                            nombre_raw = max(valid_lines, key=len)
-
-                    nombre_limpio = re.sub(r'\s+', ' ', nombre_raw).strip().upper()
+                    nombre_limpio = re.sub(r'(?i)agregar\s+a\s+mi\s+bolsa', '', nombre_raw)
+                    nombre_limpio = re.sub(r'(?i)últimas\s+horas', '', nombre_limpio)
+                    nombre_limpio = re.sub(r'S/\s*\.?\s*\d+(?:[\.,]\d+)?', '', nombre_limpio)
+                    nombre_limpio = re.sub(r'-\d+%', '', nombre_limpio)
+                    nombre_limpio = re.sub(r'\s+', ' ', nombre_limpio).strip().upper()
 
                     if not nombre_limpio or len(nombre_limpio) < 3: continue
 
@@ -2314,7 +2330,6 @@ def motor_natura(
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
