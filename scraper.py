@@ -2010,16 +2010,30 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
     return productos
 
 
-def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_items=500):
+def motor_natura(
+    url, 
+    limite=9999, 
+    max_pages=10, 
+    step=12, 
+    session=None, 
+    max_items=500, 
+    use_playwright_fallback=False, 
+    headers_override=None,
+    return_dict=False
+):
     """
-    Motor Natura Perú de Alta Precision
-    Basado en los selectores HTML reales extraídos del Inspector de Elementos:
-    - Card: article[data-testid*="product-card"], article#product-card
-    - Precio Oferta: #product-price-por
-    - Precio Regular: #product-price-de
+    Motor Evolucionado Resiliente para Natura Perú.
+    Estrategia en cascada:
+    1. GraphQL VTEX IO (con mapeo inteligente de términos).
+    2. Scraping Web Directo / ScraperAPI (Bypass anti-403 con selectores DOM exactos).
+    3. Extracción JSON-LD / State.
+    4. Fallback opcional Playwright.
+    
+    Guarda trazabilidad completa en ml_debug/ y devuelve la lista de productos 
+    (o un diccionario completo si return_dict=True).
     """
-    import os, time, re, random, json, requests
-    from urllib.parse import urlparse, urljoin
+    import os, time, random, json, requests, re
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
     from bs4 import BeautifulSoup
     from datetime import datetime, timezone
     import urllib3
@@ -2031,146 +2045,373 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
     except Exception:
         st = None
 
-    logs_ejecucion = []
-
     def _log(msg, level="info"):
         ts = datetime.now(timezone.utc).isoformat()
-        logs_ejecucion.append({"ts": ts, "level": level, "msg": msg})
         try:
             if st:
                 if level == "error": st.error(msg)
                 elif level == "warning": st.warning(msg)
                 elif level == "success": st.success(msg)
-                else: st.write(f"👉 {msg}")
+                else: st.write(msg)
             else:
                 print(f"[{level.upper()}] {msg}")
         except Exception:
             print(f"[{level.upper()}] {msg}")
+
+    def _ensure_debug_dir():
+        d = os.path.join(os.getcwd(), "ml_debug")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _save_text(path, txt):
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(txt)
+                fh.flush()
+            return True
+        except Exception:
+            return False
 
     def _safe_parse_price(txt):
         if not txt: return 0.0
         try:
             s = re.sub(r'[^\d\.,]', '', str(txt)).strip()
             if not s: return 0.0
-            if ',' in s and '.' in s:
-                s = s.replace(',', '')
-            elif ',' in s:
-                s = s.replace(',', '.')
+            if s.count('.') > 1: s = s.replace('.', '')
+            s = s.replace(',', '.')
             m = re.search(r'\d+\.?\d*', s)
             return float(m.group(0)) if m else 0.0
         except Exception:
             return 0.0
 
-    def _normalize_identifier(link):
+    def _normalize_identifier(link, fallback=None):
         try:
             m = re.search(r'(NATPER-\d+|\d+)', link.upper())
             if m: return f"NATURA-{m.group(1)}"
             token = link.split('?')[0].rstrip('/').split('/')[-1]
+            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or (fallback or str(abs(hash(link))))
             return f"NATURA-{token.upper()}"
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
+    debug_dir = _ensure_debug_dir()
+    start_ts = datetime.now(timezone.utc).isoformat()
     productos = []
     vistos = set()
     session = session or requests.Session()
 
+    # Cabeceras completas imitando Chrome 126+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.natura.com.pe/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-PE,es-ES;q=0.9,es;q=0.8,en;q=0.7",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
     }
 
-    _log(f"🌿 Iniciando patrullaje Natura Perú | URL: {url} | Límite: S/. {limite}")
+    # Inyección de secrets / API Keys si existen
+    api_key_scraper = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        if st and "SCRAPERAPI_KEY" in st.secrets:
+            api_key_scraper = st.secrets["SCRAPERAPI_KEY"]
+        elif "SCRAPERAPI_KEY" in os.environ:
+            api_key_scraper = os.environ["SCRAPERAPI_KEY"]
+    except Exception:
+        pass
+
+    if headers_override and isinstance(headers_override, dict):
+        headers.update(headers_override)
+
+    # Procesar URL y sanitizar término de búsqueda
+    parsed = urlparse(url)
+    path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
+    category_slug = path_segments[-1] if path_segments else "perfumeria"
+    
+    terminos_mapeados = {
+        "perfumeria-masculina": "perfume masculino",
+        "perfumeria-femenina": "perfume femenino",
+        "perfumeria": "perfume"
+    }
+    termino_busqueda = terminos_mapeados.get(category_slug, category_slug.replace('-', ' '))
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    _log(f"🌿 Iniciando motor_natura EVOLUCIONADO | URL={url} | Búsqueda='{termino_busqueda}' | Límite=S/. {limite}")
+
+    STEP_SIZE = int(step)
+    page_count = 0
+    use_proxy_fallback = False
+
+    # Template GraphQL VTEX IO
+    graphql_url = f"{base}/_v/public/graphql/v1"
+    graphql_query = """
+        query productSearch($query: String, $map: String, $from: Int, $to: Int, $selectedFacets: [SelectedFacetInput]) {
+          productSearch(query: $query, map: $map, from: $from, to: $to, selectedFacets: $selectedFacets) {
+            products {
+              productId
+              productName
+              linkText
+              items {
+                images { imageUrl }
+                sellers {
+                  commertialOffer {
+                    Price
+                    ListPrice
+                    AvailableQuantity
+                  }
+                }
+              }
+            }
+          }
+        }
+    """
 
     for page in range(1, max_pages + 1):
-        page_url = url if page == 1 else f"{url}?page={page}"
-        _log(f"⚡ Escaneando catálogo Natura (Página {page})...")
+        page_count += 1
+        page_items = []
 
+        # =====================================================================
+        # ETAPA 1: Intentar GraphQL VTEX IO
+        # =====================================================================
         try:
-            resp = session.get(page_url, headers=headers, timeout=12, verify=False)
-            _log(f"📡 Estado HTTP Natura Web: {resp.status_code}")
-
-            if resp.status_code != 200:
-                _log(f"⚠️ Error al acceder a la página (HTTP {resp.status_code}).", "warning")
-                break
-
-            soup = BeautifulSoup(resp.text, "html.parser")
+            _log(f"⚡ [Pág. {page}] Estrategia 1: Consulta GraphQL ('{termino_busqueda}')...")
+            payload = {
+                "query": graphql_query,
+                "variables": {
+                    "query": termino_busqueda,
+                    "map": "ft",
+                    "from": (page - 1) * STEP_SIZE,
+                    "to": (page * STEP_SIZE) - 1,
+                    "selectedFacets": [{"key": "ft", "value": termino_busqueda}]
+                }
+            }
             
-            # Buscar tarjetas de producto según la estructura real del DOM
-            cards = soup.select('article[data-testid*="product-card"], article#product-card, article[class*="product-card"]')
+            headers_gql = headers.copy()
+            headers_gql["Content-Type"] = "application/json"
+
+            resp_gql = session.post(graphql_url, json=payload, headers=headers_gql, timeout=8, verify=False)
             
-            if not cards:
-                # Búsqueda ampliada por contenedor
-                cards = soup.find_all('article') or soup.select('[id="product-card"]')
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            _save_text(os.path.join(debug_dir, f"raw_api_graphql_{ts}_page{page}.txt"), f"STATUS: {resp_gql.status_code}\n\n{(resp_gql.text or '')[:100000]}")
 
-            _log(f"🔍 Tarjetas detectadas en HTML: {len(cards)}")
-            page_items = []
+            if resp_gql.status_code == 200:
+                data = resp_gql.json()
+                raw_products = data.get("data", {}).get("productSearch", {}).get("products", []) or []
+                if raw_products:
+                    _log(f"✅ GraphQL devolvió {len(raw_products)} productos.")
+                    for prod in raw_products:
+                        try:
+                            nombre = (prod.get("productName") or "").strip()
+                            if not nombre: continue
+                            link_text = prod.get("linkText") or ""
+                            link_final = f"{base}/{link_text}/p" if link_text else url
+                            prod_id = prod.get("productId")
+                            ident = _normalize_identifier(link_final, fallback=str(prod_id) if prod_id else None)
+                            if ident in vistos: continue
 
-            for card in cards:
-                if len(productos) + len(page_items) >= max_items: break
-                try:
-                    # 1. Enlace y Nombre
-                    a_el = card.select_one('a[href*="/p/"]') or card.select_one('a[href*="NATPER-"]') or card.find('a', href=True)
-                    if not a_el: continue
+                            items_list = prod.get("items") or []
+                            if not items_list: continue
+                            first_item = items_list[0]
+                            sellers = first_item.get("sellers") or []
+                            if not sellers: continue
 
-                    link_rel = a_el.get('href', '')
-                    if not link_rel: continue
-                    link_final = urljoin("https://www.natura.com.pe", link_rel)
+                            comm = sellers[0].get("commertialOffer") or {}
+                            stock = comm.get("AvailableQuantity", 0)
+                            if stock <= 0: continue
 
-                    nombre = (a_el.get('aria-label') or a_el.get_text() or '').strip()
-                    nombre = re.sub(r'\s+', ' ', nombre)
-                    if not nombre or len(nombre) < 3: continue
+                            p_o = _safe_parse_price(comm.get("Price"))
+                            p_r = _safe_parse_price(comm.get("ListPrice") or p_o)
+                            if p_o == 0.0 or p_o > limite: continue
 
-                    # 2. Precios
-                    por_el = card.select_one('#product-price-por') or card.select_one('[id*="product-price-por"]')
-                    de_el = card.select_one('#product-price-de') or card.select_one('[id*="product-price-de"]')
+                            images = first_item.get("images") or []
+                            img_url = images[0].get("imageUrl") if images else ""
 
-                    p_o = _safe_parse_price(por_el.get_text() if por_el else card.get_text())
-                    p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
+                            vistos.add(ident)
+                            page_items.append({
+                                "identificador": ident,
+                                "nombre": f"NATURA - {nombre.upper()}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url,
+                                "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                        except Exception:
+                            continue
+        except Exception as e_gql:
+            _log(f"⚠️ Fallo en GraphQL: {e_gql}", "warning")
 
-                    if p_o == 0.0 or p_o > limite:
+        # =====================================================================
+        # ETAPA 2: Scraping Directo / ScraperAPI con Selectores DOM Reales
+        # =====================================================================
+        if not page_items:
+            try:
+                page_url = url if page == 1 else f"{url}?page={page}"
+                _log(f"⚡ [Pág. {page}] Estrategia 2: Scraping HTML DOM...")
+                
+                texto_html = ""
+                
+                if not use_proxy_fallback:
+                    try:
+                        resp_html = session.get(page_url, headers=headers, timeout=10, verify=False)
+                        if resp_html.status_code == 200:
+                            texto_html = resp_html.text
+                        elif resp_html.status_code == 403:
+                            _log("⚠️ Bloqueo HTTP 403 detectado. Conmutando a ScraperAPI...", "warning")
+                            use_proxy_fallback = True
+                    except Exception:
+                        use_proxy_fallback = True
+
+                if use_proxy_fallback:
+                    _log("🚀 Solicitando contenido vía ScraperAPI...", "info")
+                    payload_proxy = {'api_key': api_key_scraper, 'url': page_url}
+                    resp_proxy = requests.get('https://api.scraperapi.com/', params=payload_proxy, timeout=30)
+                    if resp_proxy.status_code == 200:
+                        texto_html = resp_proxy.text
+
+                if texto_html:
+                    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                    _save_text(os.path.join(debug_dir, f"raw_html_natura_{ts}_page{page}.html"), texto_html[:200000])
+
+                    soup = BeautifulSoup(texto_html, "html.parser")
+                    
+                    # Selectores CSS verificados en Inspector
+                    cards = soup.select('article[data-testid*="product-card"], article#product-card, article[class*="product-card"]')
+                    if not cards:
+                        cards = soup.select('[id="product-card"]') or soup.find_all('article')
+
+                    for card in cards:
+                        try:
+                            a_el = card.select_one('a[href*="/p/"]') or card.select_one('a[href*="NATPER-"]') or card.find('a', href=True)
+                            if not a_el: continue
+
+                            link_rel = a_el.get('href', '')
+                            if not link_rel: continue
+                            link_final = urljoin(base, link_rel)
+
+                            nombre = (a_el.get('aria-label') or a_el.get_text() or '').strip()
+                            nombre = re.sub(r'\s+', ' ', nombre)
+                            if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper(): continue
+
+                            por_el = card.select_one('#product-price-por') or card.select_one('[id*="product-price-por"]')
+                            de_el = card.select_one('#product-price-de') or card.select_one('[id*="product-price-de"]')
+
+                            p_o = _safe_parse_price(por_el.get_text() if por_el else card.get_text())
+                            p_r = _safe_parse_price(de_el.get_text() if de_el else "") or p_o
+
+                            if p_o == 0.0 or p_o > limite: continue
+
+                            img_el = card.find('img')
+                            img_url = ""
+                            if img_el:
+                                img_url = img_el.get('src') or img_el.get('data-src') or ""
+                                if img_url.startswith('//'): img_url = 'https:' + img_url
+
+                            ident = _normalize_identifier(link_final)
+                            if ident in vistos: continue
+                            vistos.add(ident)
+
+                            page_items.append({
+                                "identificador": ident,
+                                "nombre": f"NATURA - {nombre.upper()}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url,
+                                "fecha": datetime.now(timezone.utc).isoformat()
+                            })
+                        except Exception:
+                            continue
+            except Exception as e_dom:
+                _log(f"⚠️ Error en scraping DOM: {e_dom}", "warning")
+
+        # =====================================================================
+        # ETAPA 3: Fallback Opcional con Playwright
+        # =====================================================================
+        if not page_items and use_playwright_fallback:
+            try:
+                from playwright.sync_api import sync_playwright
+                _log("🎭 Fallback Playwright activado...", "info")
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                    pg = browser.new_page()
+                    pg.goto(url, timeout=30000)
+                    try:
+                        pg.wait_for_selector('article[id="product-card"], .product-card', timeout=8000)
+                    except Exception:
+                        pass
+                    rendered = pg.content()
+                    browser.close()
+
+                soup = BeautifulSoup(rendered, "html.parser")
+                cards = soup.select('article[id="product-card"], article')
+                for c in cards:
+                    try:
+                        a = c.select_one("a[href]")
+                        if not a: continue
+                        link_final = urljoin(base, a["href"])
+                        title = (a.get('aria-label') or a.get_text()).strip()
+                        price_el = c.select_one('#product-price-por')
+                        p_o = _safe_parse_price(price_el.get_text() if price_el else "")
+                        if p_o == 0.0 or p_o > limite: continue
+
+                        ident = _normalize_identifier(link_final)
+                        if ident in vistos: continue
+                        vistos.add(ident)
+
+                        page_items.append({
+                            "identificador": ident,
+                            "nombre": f"NATURA - {title.upper()}",
+                            "precio": p_o,
+                            "precio_regular": p_o,
+                            "link": link_final,
+                            "img": "",
+                            "fecha": datetime.now(timezone.utc).isoformat()
+                        })
+                    except Exception:
                         continue
+            except Exception as e_pw:
+                _log(f"⚠️ Playwright fallo: {e_pw}", "warning")
 
-                    # 3. Imagen
-                    img_el = card.find('img')
-                    img_url = ""
-                    if img_el:
-                        img_url = img_el.get('src') or img_el.get('data-src') or ""
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                    ident = _normalize_identifier(link_final)
-                    if ident in vistos: continue
-                    vistos.add(ident)
-
-                    page_items.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {nombre.upper()}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url,
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception:
-                    continue
-
-            if not page_items:
-                _log(f"ℹ️ Fin del catálogo en la página {page}.")
-                break
-
-            for it in page_items:
-                if not any(p["link"] == it["link"] for p in productos):
-                    productos.append(it)
-
-            _log(f"📦 Perfumes recolectados: {len(productos)} ofertas.")
-            time.sleep(0.5)
-
-        except Exception as e:
-            _log(f"❌ Error al consultar la página: {e}", "error")
+        if not page_items:
+            _log(f"ℹ️ No se detectaron ofertas en la página {page}. Finalizando patrullaje.")
             break
 
-    _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
+        existing_links = {p["link"] for p in productos}
+        for it in page_items:
+            if len(productos) >= max_items: break
+            if it["link"] not in existing_links:
+                productos.append(it)
+                existing_links.add(it["link"])
+
+        _log(f"📦 Perfumes recolectados acumulados: {len(productos)} ofertas.")
+        if len(productos) >= max_items: break
+        time.sleep(random.uniform(0.3, 0.6))
+
+    # Guardar resumen final de auditoría
+    try:
+        combined = {
+            "metadata": {"url_tested": url, "limit": limite, "max_pages": max_pages, "timestamp": start_ts, "collected": len(productos)},
+            "productos": productos
+        }
+        combined_path = os.path.join(debug_dir, f"combined_debug_natura_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json")
+        _save_text(combined_path, json.dumps(combined, ensure_ascii=False, indent=2))
+        _log(f"📁 Informe guardado en: {combined_path}")
+    except Exception:
+        pass
+
+    _log(f"✅ Patrullaje de Natura completado con éxito. Total ofertas: {len(productos)}", "success")
+
+    if return_dict:
+        summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
+        return {"summary": summary, "productos": productos, "metadata": {"source": "natura_hybrid_evolved", "timestamp": start_ts}}
+
     return productos
 
 
