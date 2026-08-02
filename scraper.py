@@ -2012,15 +2012,13 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_items=500):
     """
-    Motor Natura Perú Definitivo (Anti-403 + Cookie Segment VTEX).
-    Resuelve TLS JA3 mediante curl_cffi e inicializa cookies de segmento VTEX.
+    Motor Natura Perú Ultra-Rápido.
+    Acceso directo a GraphQL con TLS de Chrome (curl_cffi) eliminando bloqueos de interfaz.
     """
-    import os, time, random, json, re
-    from urllib.parse import urlparse, urljoin
-    from bs4 import BeautifulSoup
+    import time, re, json
+    from urllib.parse import urlparse
     from datetime import datetime, timezone
 
-    # Intentar importar curl_cffi para bypass TLS nativo de Chrome
     try:
         from curl_cffi import requests as curl_requests
         USE_CURL_CFFI = True
@@ -2034,7 +2032,6 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
         st = None
 
     def _log(msg, level="info"):
-        ts = datetime.now(timezone.utc).isoformat()
         try:
             if st:
                 if level == "error": st.error(msg)
@@ -2042,7 +2039,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 elif level == "success": st.success(msg)
                 else: st.write(msg)
             else:
-                print(f"[{level.UPPER()}] {msg}")
+                print(f"[{level.upper()}] {msg}")
         except Exception:
             print(f"[{level.upper()}] {msg}")
 
@@ -2071,7 +2068,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
     productos = []
     vistos = set()
 
-    # Sanitizar término de búsqueda
+    # Sanitizar categoría a término de búsqueda
     parsed = urlparse(url)
     path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
     category_slug = path_segments[-1] if path_segments else "perfumeria"
@@ -2086,31 +2083,22 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
 
     _log(f"🌿 Iniciando Natura Perú | Búsqueda: '{termino_busqueda}' | Límite: S/. {limite}")
 
-    # 1. Crear sesión de navegador (Impersonando Chrome 120+)
+    # Inicializar cliente curl_cffi con TLS de Chrome
     if USE_CURL_CFFI:
         sess = curl_requests.Session(impersonate="chrome120")
-        _log("🛡️ Motor TLS impersonated Chrome activado (curl_cffi).")
     else:
         import requests
         sess = requests.Session()
-        _log("⚠️ curl_cffi no instalado. Usando fallback requests.", "warning")
 
-    headers_common = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    headers = {
+        "accept": "*/*",
         "accept-language": "es-PE,es-ES;q=0.9,es;q=0.8",
-        "referer": "https://www.natura.com.pe/",
+        "content-type": "application/json",
+        "origin": "https://www.natura.com.pe",
+        "referer": url,
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    # 2. Preflight GET: Inicializar Cookies de Segmento VTEX
-    try:
-        _log("🔑 Solicitando cookies de segmento a Natura Perú...")
-        preflight = sess.get(url, headers=headers_common, timeout=12)
-        _log(f"📡 Respuesta Preflight HTTP {preflight.status_code}")
-    except Exception as e_pre:
-        _log(f"⚠️ Error en preflight: {e_pre}", "warning")
-
-    # 3. Consulta GraphQL VTEX IO
     graphql_url = f"{base_url}/_v/public/graphql/v1"
     graphql_query = """
         query productSearch($query: String, $map: String, $from: Int, $to: Int, $selectedFacets: [SelectedFacetInput]) {
@@ -2135,7 +2123,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
     """
 
     for page in range(1, max_pages + 1):
-        _log(f"⚡ Consultando catálogo Natura - Página {page}...")
+        _log(f"⚡ Consultando GraphQL Natura (Página {page})...")
 
         from_idx = (page - 1) * step
         to_idx = (page * step) - 1
@@ -2151,14 +2139,9 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
             }
         }
 
-        headers_gql = headers_common.copy()
-        headers_gql["content-type"] = "application/json"
-        headers_gql["accept"] = "*/*"
-
-        page_items = []
-
         try:
-            resp = sess.post(graphql_url, json=payload, headers=headers_gql, timeout=10)
+            # Petición ultra-rápida (Timeout 5 segundos máximo)
+            resp = sess.post(graphql_url, json=payload, headers=headers, timeout=5)
             _log(f"📡 Respuesta GraphQL HTTP {resp.status_code}")
 
             if resp.status_code == 200:
@@ -2166,7 +2149,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                 raw_products = data.get("data", {}).get("productSearch", {}).get("products", []) or []
 
                 if raw_products:
-                    _log(f"✅ Se obtuvieron {len(raw_products)} ofertas en la página {page}.")
+                    _log(f"✅ Se obtuvieron {len(raw_products)} ofertas en la página {page}.", "success")
                     for prod in raw_products:
                         try:
                             nombre = (prod.get("productName") or "").strip()
@@ -2199,7 +2182,7 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                             img_url = images[0].get("imageUrl") if images else ""
 
                             vistos.add(ident)
-                            page_items.append({
+                            productos.append({
                                 "identificador": ident,
                                 "nombre": f"NATURA - {nombre.upper()}",
                                 "precio": p_o,
@@ -2210,24 +2193,20 @@ def motor_natura(url, limite=9999, max_pages=10, step=12, session=None, max_item
                             })
                         except Exception:
                             continue
+                else:
+                    _log(f"ℹ️ Fin del catálogo en página {page}.")
+                    break
             else:
-                _log(f"⚠️ Error HTTP en consulta GraphQL ({resp.status_code}).", "warning")
+                _log(f"⚠️ Error HTTP GraphQL ({resp.status_code}).", "warning")
+                break
 
         except Exception as e_gql:
-            _log(f"❌ Excepción durante GraphQL: {e_gql}", "error")
+            _log(f"❌ Error al consultar GraphQL: {e_gql}", "error")
             break
 
-        if not page_items:
-            _log(f"ℹ️ Sin más productos encontrados en la página {page}. Finalizando.")
-            break
-
-        for it in page_items:
-            if not any(p["link"] == it["link"] for p in productos):
-                productos.append(it)
-
-        _log(f"📦 Ofertas acumuladas hasta ahora: {len(productos)}")
+        _log(f"📦 Ofertas acumuladas: {len(productos)}")
         if len(productos) >= max_items: break
-        time.sleep(0.4)
+        time.sleep(0.2)
 
     _log(f"✅ Patrullaje de Natura completado. Total ofertas: {len(productos)}", "success")
     return productos
