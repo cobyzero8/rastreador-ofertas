@@ -2012,122 +2012,107 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 
 
-def motor_natura(url, limite=9999, max_items=500):
+def motor_natura(url, limite=9999, headers_override=None):
     """
-    Motor Natura Perú Ligero (ScraperAPI Cloud Renderer).
-    Procesa la página con ScraperAPI (render=true) para renderizar JavaScript
-    sin consumir la memoria de Streamlit Cloud ni requerir Playwright.
+    Motor Natura Perú Definitivo (Direct VTEX API Engine).
+    Accede directamente a la API REST del catálogo VTEX de Natura.
+    Evita bloqueos HTTP 403/Cloudflare, no consume créditos de proxy y no requiere Playwright.
     """
-    import os, time, re, json, requests
+    import requests
+    import re
     from urllib.parse import urlparse, urljoin
-    from datetime import datetime, timezone
-    from bs4 import BeautifulSoup
 
-    productos, vistos = [], set()
-    parsed = urlparse(url)
-    category_slug = parsed.path.rstrip('/').split('/')[-1] if parsed.path else "perfumeria"
-    base_url = f"{parsed.scheme}://{parsed.netloc}"
-
-    safe_log(f"🌿 [Natura] Iniciando extracción vía ScraperAPI Cloud | Categoría: '{category_slug}' | Límite: S/. {limite:.2f}", "info")
-
-    # Obtener clave de ScraperAPI (usando la misma de Adidas)
-    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
-    try:
-        if "SCRAPERAPI_KEY" in st.secrets:
-            api_key = st.secrets["SCRAPERAPI_KEY"]
-    except Exception:
-        pass
-
-    payload = {
-        'api_key': api_key,
-        'url': url,
-        'render': 'true'  # Renderiza el JavaScript de Natura en los servidores de ScraperAPI
+    productos = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "es-PE,es;q=0.9",
+        "Referer": "https://www.natura.com.pe/"
     }
+    if headers_override and isinstance(headers_override, dict):
+        headers.update(headers_override)
 
     try:
-        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=50)
-        if resp.status_code != 200 or len(resp.text) < 3000:
-            safe_log(f"🛑 [Natura] ScraperAPI devolvió estado HTTP {resp.status_code}.", "error")
+        parsed = urlparse(url)
+        path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
+        category_slug = path_segments[-1] if path_segments else "perfumeria-para-quien"
+
+        # 1. Endpoint directo de la API VTEX de Natura
+        api_url = f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{category_slug}"
+        params = {
+            "O": "OrderByPriceASC",
+            "_from": "0",
+            "_to": "49"
+        }
+
+        safe_log(f"📡 [Natura API] Consultando catálogo VTEX directo para '{category_slug}'...", "info")
+        resp = requests.get(api_url, headers=headers, params=params, timeout=15, verify=False)
+
+        data = []
+        if resp.status_code in [200, 206]:
+            data = resp.json()
+        else:
+            # Fallback a búsqueda abierta si el slug de la categoría cambia
+            safe_log(f"⚠️ [Natura API] Categoría no mapeada (HTTP {resp.status_code}). Intentando búsqueda por término...", "warning")
+            search_api = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
+            resp = requests.get(search_api, headers=headers, params={"ft": "perfume", "O": "OrderByPriceASC", "_from": "0", "_to": "49"}, timeout=15, verify=False)
+            if resp.status_code in [200, 206]:
+                data = resp.json()
+
+        if not data or not isinstance(data, list):
+            safe_log(f"🛑 [Natura API] No se obtuvieron resultados de la API.", "error")
             return []
 
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        safe_log(f"🔍 [Natura API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
 
-        # Buscar tarjetas de productos y enlaces /p/
-        cards = soup.select('[data-testid*="product-card"]') or soup.find_all('article')
-        if not cards:
-            a_tags = soup.find_all('a', href=re.compile(r'/p/'))
-            seen = set()
-            for a in a_tags:
-                parent = a
-                for _ in range(4):
-                    if parent.parent and parent.parent.name not in ['body', 'html']:
-                        parent = parent.parent
-                if parent not in seen:
-                    seen.add(parent)
-                    cards.append(parent)
-
-        safe_log(f"🔍 [Natura] Tarjetas/Bloques detectados: {len(cards)}", "info")
-
-        for card in cards:
-            if len(productos) >= max_items: break
+        vistos = set()
+        for p in data:
             try:
-                a_tag = card.find('a', href=re.compile(r'/p/')) or (card if card.name == 'a' else None)
-                if not a_tag or not a_tag.get('href'): continue
+                nombre_prod = p.get("productName", "").strip().upper()
+                if not nombre_prod or len(nombre_prod) < 3: continue
 
-                href = a_tag.get('href', '')
-                if '/p/' not in href: continue
+                link_rel = p.get("link", "")
+                link_final = urljoin("https://www.natura.com.pe", link_rel) if link_rel else url
 
-                link_final = urljoin(base_url, href.split('?')[0])
-                ident = f"NATURA-{abs(hash(link_final))}"
-                if ident in vistos: continue
+                items = p.get("items", [])
+                if not items: continue
 
-                # Título del producto
-                nombre = a_tag.get('aria-label') or a_tag.get_text().strip() or card.get_text().strip()
-                nombre = re.sub(r'\s+', ' ', nombre)
-                if len(nombre) > 100: nombre = nombre.split('\n')[0].strip()
+                first_item = items[0]
+                images = first_item.get("images", [])
+                img_final = images[0].get("imageUrl", "") if images else ""
+                if img_final.startswith('//'): img_final = 'https:' + img_final
 
-                if not nombre or len(nombre) < 3 or "AGREGAR" in nombre.upper() or "HASTA S/" in nombre.upper():
-                    continue
+                sellers = first_item.get("sellers", [])
+                if not sellers: continue
 
-                # Precios
-                prices_found = re.findall(r'S/\s*(\d+[\.,]?\d*)', card.get_text())
-                parsed_prices = []
-                for p in prices_found:
-                    fval = safe_float(p)
-                    if 0 < fval < 2000:
-                        parsed_prices.append(fval)
+                offer = sellers[0].get("commertialOffer", {})
+                if offer.get("AvailableQuantity", 0) <= 0: continue  # Omitir sin stock
 
-                if not parsed_prices: continue
+                p_o = float(offer.get("Price", 0.0))
+                p_r = float(offer.get("ListPrice", p_o))
 
-                p_o = min(parsed_prices)
-                p_r = max(parsed_prices)
+                if 0 < p_o <= limite:
+                    if link_final in vistos: continue
+                    vistos.add(link_final)
 
-                if p_o == 0.0 or p_o > limite: continue
-
-                # Imagen
-                img_el = card.find('img')
-                img_url = ""
-                if img_el:
-                    img_url = img_el.get('src') or img_el.get('data-src') or ""
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
-
-                vistos.add(ident)
-                productos.append({
-                    "identificador": ident,
-                    "nombre": f"NATURA - {nombre.upper()}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url,
-                    "fecha": datetime.now(timezone.utc).isoformat()
-                })
+                    productos.append({
+                        "identificador": f"NATURA-{p.get('productId', abs(hash(link_final)))}",
+                        "nombre": f"NATURA - {nombre_prod}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_final
+                    })
             except Exception:
                 continue
 
-        safe_log(f"✅ [Natura] ¡Éxito! Se indexaron {len(productos)} ofertas válidas.", "success")
+        if productos:
+            safe_log(f"✅ [Natura API] ¡Éxito! Se indexaron {len(productos)} ofertas válidas.", "success")
+        else:
+            safe_log(f"⚠️ [Natura API] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
     except Exception as e:
-        safe_log(f"🛑 [Natura] Error crítico al conectar con ScraperAPI: {e}", "error")
+        safe_log(f"🛑 [Natura API] Error crítico de conexión: {e}", "error")
 
     return productos
 
