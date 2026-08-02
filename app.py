@@ -348,77 +348,44 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
     with col_status:
         if st.session_state.get("scraper_running", False):
-            st.warning("🟡 El patrullaje está en curso. Espera a que termine...")
+            st.warning("🟡 El patrullaje está en curso...")
         else:
             st.info("🔵 Listo para iniciar patrullaje manual.")
 
     def _worker(target):
         try:
             result_msg = revisar_ofertas(target)
-            st.session_state.scraper_result = {"resumen": result_msg, "target": target}
-
-            # 🛠️ PRESERVAR LOGS EXISTENTES
-            os.makedirs("ml_debug", exist_ok=True)
-            debug_path = "ml_debug/combined_debug.json"
-            existing_logs = []
-            if os.path.exists(debug_path):
-                try:
-                    with open(debug_path, "r", encoding="utf-8") as fh:
-                        existing_data = json.load(fh)
-                        existing_logs = existing_data.get("logs", [])
-                except Exception:
-                    pass
-
-            combined = {
-                "metadata": {"target": target, "timestamp": datetime.now(timezone.utc).isoformat()},
-                "result": result_msg,
-                "logs": existing_logs
-            }
-            with open(debug_path, "w", encoding="utf-8") as fh:
-                json.dump(combined, fh, ensure_ascii=False, indent=2)
+            st.session_state.scraper_result = {"resumen": result_msg, "target": target, "status": "ok"}
         except Exception as e:
-            st.session_state.scraper_result = {"error": str(e), "target": target}
+            st.session_state.scraper_result = {"error": str(e), "target": target, "status": "error"}
         finally:
             st.session_state.scraper_running = False
 
     if start_btn and not st.session_state.get("scraper_running", False):
         st.session_state.scraper_running = True
+        st.session_state.scraper_result = None  # Limpiar resultado anterior
         target = st.session_state.get("filtro_activo", "TODOS")
-        st.toast(f"🕵️‍♂️ Buscando {target}...")
 
         thread = threading.Thread(target=_worker, args=(target,), daemon=True)
         add_script_run_ctx(thread)
         thread.start()
-        st.success("Patrullaje iniciado en segundo plano.")
         st.rerun()
 
-    # 🔄 AUTO-REFRESCO MIENTRAS SE EJECUTA EN SEGUNDO PLANO
-    if st.session_state.get("scraper_running", False):
-        time.sleep(2)
-        st.rerun()
+    # 📌 MOSTRAR RESULTADO O ERRORES DE FORMA PERMANENTE EN PANTALLA
+    raw_res = st.session_state.get("scraper_result", None)
+
+    if raw_res:
+        st.write("---")
+        if raw_res.get("status") == "error" or "error" in raw_res:
+            st.error(f"❌ **ERROR EN EL PATRULLAJE:** {raw_res.get('error')}")
+        else:
+            st.success(f"✅ **RESULTADO DEL ESCANEO:** {raw_res.get('resumen')}")
 
     # 📊 REPORTE DE OFERTAS EN VIVO
     st.write("---")
     st.subheader("📊 Reporte de Ofertas del Escaneo")
 
-    raw_res = st.session_state.get("scraper_result", None)
-
-    if raw_res:
-        if isinstance(raw_res, dict):
-            resumen_txt = raw_res.get("resumen", raw_res.get("error", str(raw_res)))
-            target_escaneado = raw_res.get("target", st.session_state.get("filtro_activo", "TODOS"))
-        elif isinstance(raw_res, str):
-            resumen_txt = raw_res
-            target_escaneado = st.session_state.get("filtro_activo", "TODOS")
-        else:
-            resumen_txt = str(raw_res)
-            target_escaneado = st.session_state.get("filtro_activo", "TODOS")
-
-        if resumen_txt:
-            st.success(f"**Resumen:** {resumen_txt}")
-    else:
-        target_escaneado = st.session_state.get("filtro_activo", "TODOS")
-        st.info("📌 Consulta las ofertas almacenadas abajo o presiona **INICIAR BARRIDO QUIRÚRGICO** para actualizar.")
+    target_escaneado = st.session_state.get("filtro_activo", "TODOS")
 
     # Consulta a Supabase
     try:
@@ -502,32 +469,18 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     except Exception as err_rep:
         st.error(f"Error cargando catálogo: {err_rep}")
 
-    # 📄 DIAGNÓSTICO Y LOGS EN PANTALLA
+    # 📄 DIAGNÓSTICO Y LOGS FIJOS EN PANTALLA
     debug_path = "ml_debug/combined_debug.json"
     if os.path.exists(debug_path):
         try:
             with open(debug_path, "r", encoding="utf-8") as fh:
                 data_debug = json.load(fh)
-                logs_list = data_debug.get("logs", [])
                 
                 st.write("---")
-                st.subheader("🛠️ Diagnóstico del Patrullaje")
-                col_view, col_btn = st.columns([4, 1])
+                st.subheader("🛠️ Diagnóstico del Último Escaneo")
                 
-                with col_view:
-                    if logs_list:
-                        with st.expander("📄 Ver Logs de Diagnóstico del Motor (Paso a Paso)", expanded=False):
-                            st.code("\n".join(logs_list), language="text")
-                    else:
-                        st.caption("ℹ️ Sin logs detallados para esta ejecución.")
-                
-                with col_btn:
-                    with open(debug_path, "rb") as fh_download:
-                        st.download_button(
-                            "📥 Reporte JSON", 
-                            fh_download, 
-                            file_name="combined_debug.json", 
-                            use_container_width=True
-                        )
+                # Desplegable EXPANDIDO por defecto si hay un resultado recien generado
+                with st.expander("📄 Ver Detalle de Diagnóstico y Logs del Motor", expanded=True):
+                    st.json(data_debug)
         except Exception:
             pass
