@@ -12,12 +12,6 @@ from supabase import create_client, Client
 import urllib3
 import streamlit as st
 
-try:
-    # Instala el binario de Chromium para Playwright
-    subprocess.run(["playwright", "install", "chromium"], check=False)
-except Exception:
-    pass
-    
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =======================================================
