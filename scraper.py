@@ -2025,9 +2025,7 @@ def motor_natura(
 ):
     """
     Motor Natura Perú Definitivo.
-    1. Escanea el árbol GraphQL de Next.js (dehydratedState / apolloState).
-    2. Fallback por escaneo directo de patrones JSON en HTML crudo.
-    3. Fallback DOM ultra-flexible en enlaces <a>.
+    Incluye lista negra de rutas de menú/cuenta y filtro estricto de productos (/p).
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2088,26 +2086,33 @@ def motor_natura(
         except Exception:
             return f"NATURA-{abs(hash(link))}"
 
-    def _find_graphql_products(obj):
-        """Navega recursivamente el JSON en busca de nodos de producto VTEX/FastStore"""
+    def _is_blacklisted_url(href):
+        """Filtra páginas de sistema, cuentas, tiendas y menús de navegación"""
+        blacklist = [
+            'encuentra-natura', 'mis-datos', 'favoritos', 'quiero-ser',
+            'aplicativo', 'sobre-natura', 'ayuda', 'blog', 'revista',
+            'tiendas', 'login', 'cart', 'checkout', 'politicas',
+            'terminos', '/c/', 'mi-cuenta', 'pedidos', 'cupones'
+        ]
+        href_lower = href.lower()
+        return any(b in href_lower for b in blacklist)
+
+    def _extract_products_from_json(obj):
+        """Busca recursivamente nodos de producto dentro del JSON de Next.js / FastStore"""
         items = []
         if isinstance(obj, dict):
-            # Formato FastStore / GraphQL Node
-            is_product = False
             name = obj.get('name') or obj.get('productName') or obj.get('title')
-            
-            # Verificar si el objeto tiene estructura de producto
-            if name and any(k in obj for k in ['slug', 'link', 'sellers', 'offers', 'priceRange', 'spotPrice']):
-                is_product = True
+            has_price_info = any(k in obj for k in ['priceRange', 'offers', 'spotPrice', 'sellers', 'price'])
+            has_product_link = any(k in obj for k in ['slug', 'link', 'url', 'sku', 'productId'])
 
-            if is_product:
+            if name and (has_price_info or has_product_link):
                 items.append(obj)
             else:
                 for v in obj.values():
-                    items.extend(_find_graphql_products(v))
+                    items.extend(_extract_products_from_json(v))
         elif isinstance(obj, list):
             for elem in obj:
-                items.extend(_find_graphql_products(elem))
+                items.extend(_extract_products_from_json(elem))
         return items
 
     productos, vistos = [], set()
@@ -2152,30 +2157,27 @@ def motor_natura(
 
         page_items = 0
 
-        # --- FASE 1: Análisis de script __NEXT_DATA__ ---
+        # --- FASE 1: Extracción desde __NEXT_DATA__ ---
         next_data_script = soup.find('script', id='__NEXT_DATA__')
         if next_data_script and next_data_script.string:
             try:
                 data_json = json.loads(next_data_script.string)
-                nodes = _find_graphql_products(data_json.get('props', {}))
-                
+                nodes = _extract_products_from_json(data_json.get('props', {}))
+
                 for node in nodes:
                     if len(productos) >= max_items: break
                     try:
                         nombre = str(node.get('name') or node.get('productName') or '').strip()
-                        if not nombre or len(nombre) < 3: continue
+                        if not nombre or len(nombre) < 3 or _is_blacklisted_url(nombre): continue
 
                         slug = node.get('slug') or node.get('link') or node.get('url') or ''
-                        if not slug: continue
-                        
+                        if not slug or _is_blacklisted_url(slug): continue
+
                         link_final = urljoin(base_url, slug.split('?')[0])
                         ident = _normalize_identifier(link_final)
                         if ident in vistos: continue
 
-                        # Obtención de precios
                         p_o, p_r = 0.0, 0.0
-                        
-                        # Caso 1: FastStore priceRange / offers
                         if 'priceRange' in node and isinstance(node['priceRange'], dict):
                             p_o = _safe_parse_price(node['priceRange'].get('minPrice', {}).get('price'))
                             p_r = _safe_parse_price(node['priceRange'].get('maxPrice', {}).get('price')) or p_o
@@ -2193,8 +2195,6 @@ def motor_natura(
                         if p_o <= 0.0 or p_o > limite: continue
 
                         vistos.add(ident)
-                        
-                        # Imagen
                         img_url = ""
                         if 'image' in node:
                             img_obj = node['image']
@@ -2214,44 +2214,42 @@ def motor_natura(
                         page_items += 1
                     except Exception:
                         continue
-                
+
                 if page_items > 0:
-                    _log(f"🧩 [NEXT_DATA] Extraídos {page_items} productos desde GraphQL State.")
+                    _log(f"🧩 [NEXT_DATA] Extraídos {page_items} productos válidos.")
             except Exception as e:
                 _log(f"⚠️ Error procesando JSON de Next.js: {e}", "warning")
 
-        # --- FASE 2: Extracción DOM Flexible (Revisión de todas las tarjetas e hipervínculos) ---
+        # --- FASE 2: Extracción DOM Filtrada (Solo enlaces de productos reales /p) ---
         if page_items == 0:
-            # Capturar cualquier hipervínculo que contenga atributos de producto o rutas relativas
-            all_a = soup.find_all('a', href=True)
-            candidate_cards = []
+            # Buscar únicamente enlaces <a> que apunten a fichas de producto /p
+            product_anchors = soup.find_all('a', href=re.compile(r'/p(?:/|\?|$)|\-p(?:/|\?|$)'))
+            
+            # Si no hay enlaces /p strict, buscar enlaces con slugs largos excluyendo la blacklist
+            if not product_anchors:
+                all_a = soup.find_all('a', href=True)
+                product_anchors = [a for a in all_a if a['href'].startswith('/') and not _is_blacklisted_url(a['href']) and len(a['href']) > 15]
 
-            for a in all_a:
-                href = a['href']
-                # Filtrar enlaces del menú, ayuda o footer
-                if any(x in href for x in ['/c/', 'ayuda', 'blog', 'revista', 'politicas', 'cart']):
-                    continue
-                if href.startswith('/') and len(href) > 5:
-                    candidate_cards.append(a)
+            _log(f"🧩 [DIAGNÓSTICO DOM] Enlaces de productos filtrados: {len(product_anchors)}")
 
-            _log(f"🧩 [DIAGNÓSTICO DOM] Candidatos de productos detectados: {len(candidate_cards)}")
-
-            for a_tag in candidate_cards:
+            for a_tag in product_anchors:
                 if len(productos) >= max_items: break
                 try:
-                    link_final = urljoin(base_url, a_tag['href'].split('?')[0])
+                    href = a_tag.get('href', '')
+                    if not href or _is_blacklisted_url(href): continue
+
+                    link_final = urljoin(base_url, href.split('?')[0])
                     ident = _normalize_identifier(link_final)
                     if ident in vistos: continue
 
-                    # Subir contenedores
+                    # Buscar la tarjeta más cercana sin subir hasta el header o body
                     card = a_tag
-                    for _ in range(4):
-                        if card.parent and card.parent.name not in ['body', 'html', 'main', 'section']:
+                    for _ in range(3):
+                        if card.parent and card.parent.name not in ['body', 'html', 'main', 'section', 'header', 'nav']:
                             card = card.parent
 
                     txt = card.get_text(separator=' ')
 
-                    # Buscar valores numéricos de precio S/
                     prices = re.findall(r'S/\s*(\d+(?:[\.,]\d+)?)', txt)
                     parsed_prices = [_safe_parse_price(p) for p in prices if 10.0 <= _safe_parse_price(p) <= 2000.0]
 
@@ -2262,11 +2260,12 @@ def motor_natura(
 
                     if p_o <= 0.0 or p_o > limite: continue
 
-                    # Extraer título
                     nombre_raw = a_tag.get('aria-label') or a_tag.get('title') or ""
                     if not nombre_raw or len(nombre_raw) < 3:
                         title_el = card.find(['h1', 'h2', 'h3', 'h4', 'span', 'p'])
                         if title_el: nombre_raw = title_el.get_text().strip()
+
+                    if _is_blacklisted_url(nombre_raw): continue
 
                     nombre_limpio = re.sub(r'(?i)agregar\s+a\s+mi\s+bolsa', '', nombre_raw)
                     nombre_limpio = re.sub(r'(?i)últimas\s+horas', '', nombre_limpio)
@@ -2309,7 +2308,6 @@ def motor_natura(
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
