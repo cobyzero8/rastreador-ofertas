@@ -2024,9 +2024,9 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (Next.js App Router RSC Stream Unpacker).
-    Desempaqueta las cadenas de streaming 'self.__next_f.push' de React 18,
-    reconstruye el JSON plano y segmenta el catálogo sin fallos de escape.
+    Motor Natura Perú Definitivo (RSC Stream Window Extractor).
+    Desempaqueta el streaming de React 18 (self.__next_f) y extrae las ofertas
+    mediante análisis por ventana contextual sobre los 109 KB de JSON plano.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse, urljoin
@@ -2108,35 +2108,46 @@ def motor_natura(
 
         return "\n".join(chunks)
 
-    def _extract_from_rsc_stream(full_stream, base_url, limite, max_items):
+    def _extract_via_context_window(full_stream, base_url, limite, max_items):
+        """Escanea el texto JSON plano usando ventanas contextuales alrededor de cada producto"""
         prods = []
         vistos = set()
 
-        # Segmentar la transmisión por cada inicio de objeto con producto
-        blocks = re.split(r'(?=\{(?:"id"|"__typename"|"productName"|"name"):)', full_stream)
+        # Limpiar comillas escapadas residuales
+        clean_text = full_stream.replace('\\"', '"').replace('\\\\', '\\')
 
-        for block in blocks:
+        # Buscar apariciones de productName o name
+        name_matches = list(re.finditer(r'"(?:productName|name)"\s*:\s*"([^"]{3,120})"', clean_text))
+
+        for match in name_matches:
             if len(prods) >= max_items: break
-            if len(block) < 20: continue
+            name = match.group(1).strip()
 
-            # 1. Nombre del producto
-            m_name = re.search(r'"(?:productName|name)"\s*:\s*"([^"]{3,120})"', block)
-            if not m_name: continue
-            name = m_name.group(1).strip()
-
-            if any(bad in name.lower() for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'sobre natura', 'favoritos', 'tiendas']):
+            # Filtrar términos del sistema o menú
+            name_lower = name.lower()
+            if any(bad in name_lower for bad in ['perfumería', 'categoría', 'filtrar', 'ordenar', 'sobre natura', 'favoritos', 'tiendas', 'carrito', 'banner']):
                 continue
 
-            # 2. Enlace / Slug
-            m_slug = re.search(r'"(?:slug|linkText|url|link)"\s*:\s*"([^"]+)"', block)
+            # Crear ventana de inspección (600 caracteres antes y 1000 después del nombre)
+            start_pos = max(0, match.start() - 600)
+            end_pos = min(len(clean_text), match.end() + 1000)
+            window = clean_text[start_pos:end_pos]
+
+            # 1. Extraer enlace / slug
+            m_slug = re.search(r'"(?:slug|linkText|url|link)"\s*:\s*"([^"]+)"', window)
             if not m_slug: continue
             slug = m_slug.group(1).strip()
 
             if any(bad in slug.lower() for bad in ['/c/', 'ayuda', 'blog', 'favoritos', 'encuentra-natura', 'politicas']):
                 continue
 
-            # 3. Extraer precios
-            prices = re.findall(r'"(?:price|spotPrice|lowPrice|Price|value|listPrice|ListPrice|highPrice)"\s*:\s*(\d+(?:[\.,]\d+)?)', block)
+            link_final = urljoin(base_url, slug.split('?')[0])
+            ident = _normalize_identifier(link_final)
+
+            if ident in vistos: continue
+
+            # 2. Extraer precios dentro de la ventana
+            prices = re.findall(r'"(?:price|spotPrice|lowPrice|Price|value|listPrice|ListPrice|highPrice)"\s*:\s*(\d+(?:[\.,]\d+)?)', window)
             parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
             if not parsed_prices: continue
@@ -2146,14 +2157,10 @@ def motor_natura(
 
             if p_o <= 0.0 or p_o > limite: continue
 
-            link_final = urljoin(base_url, slug.split('?')[0])
-            ident = _normalize_identifier(link_final)
-
-            if ident in vistos: continue
             vistos.add(ident)
 
-            # 4. Imagen del producto
-            m_img = re.search(r'"(?:imageUrl|image|url)"\s*:\s*"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block, re.I)
+            # 3. Extraer imagen si existe en la ventana
+            m_img = re.search(r'"(?:imageUrl|image|url)"\s*:\s*"(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', window, re.I)
             img_url = m_img.group(1) if m_img else ""
 
             prods.append({
@@ -2176,7 +2183,7 @@ def motor_natura(
     category_slug = path_segments[-1] if path_segments else "perfumeria"
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú (RSC Unpacker Engine) | Categoría: '{category_slug}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (RSC Window Extractor) | Categoría: '{category_slug}' | Límite: S/. {limite}")
 
     sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
     headers_base = {
@@ -2206,11 +2213,10 @@ def motor_natura(
 
         _log(f"📄 HTML recibido: {len(html_content)} bytes. Desempaquetando transmisión RSC...")
 
-        # FASE 1: Desempaquetado del payload Next.js RSC
         full_stream = _unpack_next_rsc_stream(html_content)
         _log(f"📜 Transmisión RSC desempaquetada: {len(full_stream)} caracteres de JSON plano.")
 
-        page_products = _extract_from_rsc_stream(full_stream, base_url, limite, max_items - len(productos))
+        page_products = _extract_via_context_window(full_stream, base_url, limite, max_items - len(productos))
         page_items = len(page_products)
 
         for p in page_products:
@@ -2226,12 +2232,11 @@ def motor_natura(
     _log(f"✅ Patrullaje completado. Total ofertas: {len(productos)}", "success")
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_rsc_unpacker_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_rsc_window_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
