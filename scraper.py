@@ -2022,9 +2022,10 @@ def motor_natura(
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Ultra-Rápido y Definitivo.
-    Pide los datos JSON directamente a la API de VTEX a través de ScraperAPI (sin renderizado HTML pesado).
-    Tiempo de respuesta: ~2 a 4 segundos por página.
+    Motor Natura Perú Definitivo (VTEX IO Intelligent Search + Universal ScraperAPI Fallback).
+    - Usa la API nativa VTEX IO Intelligent Search (/_v/api/intelligent-search/product_search/).
+    - Conmuta a ScraperAPI ante cualquier HTTP status != 200 (404, 403, 500).
+    - Tiempo de respuesta: ~2 a 4 segundos por página.
     """
     import os, time, re, json, requests
     from urllib.parse import urlparse
@@ -2127,35 +2128,38 @@ def motor_natura(
 
     for page in range(1, max_pages + 1):
         page_count += 1
-        from_idx = (page - 1) * step
-        to_idx = (page * step) - 1
 
-        # Construir URL de API de Búsqueda de VTEX Catalog / Intelligent Search
-        target_api_url = f"{base_url}/api/catalog_system/pub/products/search?ft={termino_busqueda}&_from={from_idx}&_to={to_idx}"
+        # 🎯 Endpoint VTEX IO Intelligent Search
+        target_api_url = f"{base_url}/_v/api/intelligent-search/product_search/?query={termino_busqueda}&page={page}&count={step}"
 
         raw_products = []
 
         # -----------------------------------------------------------------
-        # INTENTO 1: Directo a la API Catalog de VTEX
+        # INTENTO 1: Directo a VTEX IO Intelligent Search API
         # -----------------------------------------------------------------
         if not use_proxy:
             try:
-                _log(f"⚡ [Pág. {page}] Consultando API de Catálogo VTEX Directa...")
+                _log(f"⚡ [Pág. {page}] Consultando API VTEX IO Intelligent Search...")
                 resp = sess.get(target_api_url, headers=headers_base, timeout=6, verify=False)
                 status_code = getattr(resp, "status_code", None)
                 _log(f"📡 Respuesta Directa API: HTTP {status_code}")
 
                 if status_code == 200:
-                    raw_products = resp.json()
-                elif status_code == 403:
-                    _log("⚠️ Bloqueo HTTP 403 detectado. Activando ScraperAPI Fast JSON...", "warning")
+                    data_json = resp.json()
+                    # VTEX IO Intelligent Search envuelve los productos en "products"
+                    if isinstance(data_json, dict):
+                        raw_products = data_json.get("products", [])
+                    elif isinstance(data_json, list):
+                        raw_products = data_json
+                else:
+                    _log(f"⚠️ HTTP {status_code} detectado. Activando ScraperAPI Fast JSON...", "warning")
                     use_proxy = True
             except Exception as e:
                 _log(f"⚠️ Error directo ({e}). Activando ScraperAPI Fast JSON...", "warning")
                 use_proxy = True
 
         # -----------------------------------------------------------------
-        # INTENTO 2: ScraperAPI Fast JSON (Sin renderizado pesado, super rápido)
+        # INTENTO 2: ScraperAPI Fast JSON (Sólido ante cualquier bloqueo/404)
         # -----------------------------------------------------------------
         if use_proxy:
             _log(f"🚀 [Pág. {page}] Solicitando API JSON vía ScraperAPI Fast Mode...", "info")
@@ -2165,12 +2169,16 @@ def motor_natura(
                 "url": target_api_url
             }
             try:
-                resp = requests.get(scraper_endpoint, params=params, timeout=12)
+                resp = requests.get(scraper_endpoint, params=params, timeout=15)
                 status_code = getattr(resp, "status_code", None)
                 _log(f"📡 Respuesta ScraperAPI Fast JSON: HTTP {status_code}")
 
                 if status_code == 200 and resp.text:
-                    raw_products = resp.json()
+                    data_json = resp.json()
+                    if isinstance(data_json, dict):
+                        raw_products = data_json.get("products", [])
+                    elif isinstance(data_json, list):
+                        raw_products = data_json
                 else:
                     _log(f"🛑 Error de respuesta ScraperAPI (HTTP {status_code}). Interrumpiendo.", "error")
                     break
@@ -2179,7 +2187,7 @@ def motor_natura(
                 break
 
         # -----------------------------------------------------------------
-        # PROCESAR RESULTADOS JSON DE VTEX
+        # PROCESAR RESULTADOS JSON DE VTEX IO
         # -----------------------------------------------------------------
         if not raw_products or not isinstance(raw_products, list):
             _log(f"ℹ️ Sin más ofertas encontradas en la página {page}.")
@@ -2253,12 +2261,11 @@ def motor_natura(
         pass
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_vtex_api", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_vtex_io", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 
 
