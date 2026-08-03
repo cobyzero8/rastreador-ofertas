@@ -1,4 +1,5 @@
-import os, subprocess
+import os
+import subprocess
 import json
 import requests
 import httpx
@@ -6,19 +7,19 @@ from bs4 import BeautifulSoup
 import re
 import time
 import random
+import hashlib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse, parse_qs, quote
+from urllib.parse import urljoin, urlparse, parse_qs, quote, urlunparse, urlencode, unquote
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
-
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =======================================================
 # 🛡️ CONFIGURACIÓN DE ENTORNO BLINDADA
 # =======================================================
-SUPABASE_URL = "https://uxornuepdxqlhzizjnhr.supabase.co"
+SUPABASE_URL = "[https://uxornuepdxqlhzizjnhr.supabase.co](https://uxornuepdxqlhzizjnhr.supabase.co)"
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -83,7 +84,7 @@ def safe_float(val):
 def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return False
     mensaje_html = f"{mensaje}\n\n👉 <a href='{link_producto}'><b>¡COMPRAR AQUÍ!</b></a>"
-    url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto" if url_imagen else f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url_api = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_TOKEN}/sendPhoto" if url_imagen else f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "parse_mode": "HTML"}
     if url_imagen: 
         payload["photo"], payload["caption"] = url_imagen, mensaje_html
@@ -165,7 +166,7 @@ def motor_thn(url, limite):
             try:
                 a_el = t.find('a', href=True)
                 if not a_el: continue
-                link_final = urljoin("https://www.thn.pe", a_el['href'])
+                link_final = urljoin("[https://www.thn.pe](https://www.thn.pe)", a_el['href'])
                 
                 tit_el = t.find(['h2', 'h3', 'span', 'div'], class_=re.compile(r'(name|title|brand|description)', re.I))
                 nombre = tit_el.text.strip().upper() if tit_el else ""
@@ -317,13 +318,13 @@ def motor_falabella(url, limite, headers):
                     
                     if 0 < p_o <= limite:
                         link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
-                        link_final = urljoin("https://www.falabella.com.pe", link_rel)
+                        link_final = urljoin("[https://www.falabella.com.pe](https://www.falabella.com.pe)", link_rel)
                         img = encontrar_foto_fala(prod)
                         
                         if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
                             url_limpia = link_final.split('?')[0].split('#')[0]
                             match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id: img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+                            if match_id: img = f"[https://media.falabella.com/falabellaPE/](https://media.falabella.com/falabellaPE/){match_id[-1]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'): img = 'https:' + str(img)
                         img = str(img).split(' ')[0].strip().rstrip(',')
@@ -367,7 +368,7 @@ def motor_falabella(url, limite, headers):
                         if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
                             url_limpia = link_final.split('?')[0].split('#')[0]
                             match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id: img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+                            if match_id: img = f"[https://media.falabella.com/falabellaPE/](https://media.falabella.com/falabellaPE/){match_id[-1]}_01/w=800,h=800,fit=pad"
                         
                         if str(img).startswith('//'): img = 'https:' + str(img)
                         img = str(img).split(' ')[0].strip().rstrip(',')
@@ -384,19 +385,11 @@ def motor_falabella(url, limite, headers):
     except Exception: pass
     return productos
 
-
-# =======================================================
-# 👟 MOTOR ADIDAS OPTIMIZADO Y CORREGIDO
-# =======================================================
 def motor_adidas(url, limite):
-    # Helper interno para sanitizar precios de Adidas (Soporta miles: 1,299.00)
     def limpiar_precio_adidas(texto):
-        if not texto:
-            return 0.0
+        if not texto: return 0.0
         texto = str(texto)
-        # Elimina porcentajes de descuento (ej. -30%)
         texto = re.sub(r'-?\s*\d+\s*%', '', texto)
-        # Extrae patrones numéricos
         match = re.search(r'\d+(?:[.,]\d+)*', texto)
         if match:
             raw_num = match.group(0)
@@ -406,25 +399,16 @@ def motor_adidas(url, limite):
                 raw_num = raw_num.replace(',', '.')
             else:
                 raw_num = raw_num.replace(',', '')
-            try:
-                return float(raw_num)
-            except ValueError:
-                return 0.0
+            try: return float(raw_num)
+            except ValueError: return 0.0
         return 0.0
 
-    # Helper interno para extraer URL limpia de imagen
     def extraer_url_imagen(nodo):
-        if isinstance(nodo, str) and nodo.startswith('http'):
-            return nodo
-        elif isinstance(nodo, dict):
-            return nodo.get('src') or nodo.get('url') or nodo.get('desktop') or ''
-        elif isinstance(nodo, list) and len(nodo) > 0:
-            return extraer_url_imagen(nodo[0])
+        if isinstance(nodo, str) and nodo.startswith('http'): return nodo
+        elif isinstance(nodo, dict): return nodo.get('src') or nodo.get('url') or nodo.get('desktop') or ''
+        elif isinstance(nodo, list) and len(nodo) > 0: return extraer_url_imagen(nodo[0])
         return ''
 
-    # =======================================================
-    # ⏱️ CONTROL DE FRECUENCIA INDIVIDUAL (12 HORAS POR URL)
-    # =======================================================
     FRECUENCIA_MINUTOS = 720 
     
     try:
@@ -451,15 +435,11 @@ def motor_adidas(url, limite):
     productos_map = {}
     texto_html = ""
 
-    # =======================================================
-    # 🔑 ROTACIÓN AUTOMÁTICA DE CLAVES
-    # =======================================================
     lista_keys = []
     try:
         if "SCRAPERAPI_KEY" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY"])
         if "SCRAPERAPI_KEY_2" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY_2"])
-    except Exception:
-        pass
+    except Exception: pass
     
     if not lista_keys:
         lista_keys.append("4cd72a5cadb77297cd9f41f11dc632c0")
@@ -469,7 +449,7 @@ def motor_adidas(url, limite):
     for api_key in lista_keys:
         payload = {'api_key': api_key, 'url': url}
         try:
-            resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
+            resp = requests.get('[https://api.scraperapi.com/](https://api.scraperapi.com/)', params=payload, timeout=40)
             status_code = resp.status_code
             
             if status_code == 200 and len(resp.text) > 5000:
@@ -491,7 +471,6 @@ def motor_adidas(url, limite):
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # Estrategia 1: JSON __NEXT_DATA__
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -525,7 +504,7 @@ def motor_adidas(url, limite):
 
                         if 0 < p_o <= limite:
                             link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
-                            link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
+                            link_final = urljoin("[https://www.adidas.pe](https://www.adidas.pe)", link_rel) if link_rel else url
                             img_url = extraer_url_imagen(prod_j.get('image'))
 
                             productos_map[link_final] = {
@@ -535,12 +514,9 @@ def motor_adidas(url, limite):
                                 "link": link_final,
                                 "img": img_url
                             }
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+                    except Exception: continue
+        except Exception: pass
 
-    # Estrategia 2: Selectores HTML Fallback
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
@@ -562,7 +538,7 @@ def motor_adidas(url, limite):
                     precio_regular = limpiar_precio_adidas(regular_el.text) if regular_el else precio_oferta
 
                     if 0 < precio_oferta <= limite:
-                        link_final = urljoin("https://www.adidas.pe", enlace_el['href']) if enlace_el else url
+                        link_final = urljoin("[https://www.adidas.pe](https://www.adidas.pe)", enlace_el['href']) if enlace_el else url
                         img_url = img_el.get('src', '') if img_el else ''
 
                         productos_map[link_final] = {
@@ -572,8 +548,7 @@ def motor_adidas(url, limite):
                             "link": link_final,
                             "img": img_url
                         }
-            except Exception:
-                continue
+            except Exception: continue
 
     productos_list = list(productos_map.values())
     if productos_list:
@@ -582,8 +557,6 @@ def motor_adidas(url, limite):
         safe_log(f"⚠️ [Adidas] No hay ofertas por debajo del presupuesto S/. {limite:.2f}", "warning")
 
     return productos_list
-
-
 
 def motor_platanitos(url, limite):
     productos = []
@@ -603,7 +576,7 @@ def motor_platanitos(url, limite):
             try:
                 a_el = t.find('a', href=re.compile(r'/producto/', re.I)) or (t if t.name == 'a' and '/producto/' in t.get('href', '').lower() else None)
                 if not a_el: continue
-                link_final = urljoin("https://platanitos.com", a_el['href'])
+                link_final = urljoin("[https://platanitos.com](https://platanitos.com)", a_el['href'])
                 tit_el = t.find(['h3', 'h2', 'span', 'p', 'div'], class_=re.compile(r'(title|name|nombre|description)', re.I))
                 nombre = tit_el.text.strip() if tit_el else ""
                 if not nombre and a_el.has_attr('title'): nombre = a_el['title'].strip()
@@ -656,7 +629,7 @@ def motor_hiraoka(url, limite):
                 tit_el = t.select_one('.product-item-link') or t.select_one('.product-item-name a') or t.select_one('.product-name a')
                 if not tit_el: continue
                 nombre = tit_el.text.strip().upper()
-                link_final = urljoin("https://hiraoka.com.pe", tit_el['href'])
+                link_final = urljoin("[https://hiraoka.com.pe](https://hiraoka.com.pe)", tit_el['href'])
                 
                 o_el = t.select_one('[data-price-type="finalPrice"] .price') or t.select_one('.special-price .price') or t.select_one('.price-box .price')
                 r_el = t.select_one('[data-price-type="oldPrice"] .price') or t.select_one('.old-price .price')
@@ -687,8 +660,7 @@ def motor_hiraoka(url, limite):
                         "link": link_final,
                         "img": img_url
                     })
-            except Exception:
-                continue
+            except Exception: continue
                 
     except Exception as e:
         print(f"Error en motor Hiraoka: {e}")
@@ -700,7 +672,7 @@ def motor_carsa(url, limite):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Referer": "https://www.google.com/",
+        "Referer": "[https://www.google.com/](https://www.google.com/)",
         "Connection": "keep-alive"
     }
     
@@ -732,12 +704,6 @@ def motor_carsa(url, limite):
     return productos
 
 def motor_oechsle(url, limite):
-    import json
-    import re
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, urljoin
-    
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
@@ -756,12 +722,12 @@ def motor_oechsle(url, limite):
         has_category_filter = 'fq=C:' in raw_query or 'fq=C%3A' in raw_query
         
         if has_category_filter:
-            api_url = f"https://www.oechsle.pe/api/catalog_system/pub/products/search?{raw_query}"
+            api_url = f"[https://www.oechsle.pe/api/catalog_system/pub/products/search](https://www.oechsle.pe/api/catalog_system/pub/products/search)?{raw_query}"
         else:
             category_path = parsed_url.path.rstrip('/')
             if category_path and not category_path.startswith('/'):
                 category_path = '/' + category_path
-            api_url = f"https://www.oechsle.pe/api/catalog_system/pub/products/search{category_path}?{raw_query}"
+            api_url = f"[https://www.oechsle.pe/api/catalog_system/pub/products/search](https://www.oechsle.pe/api/catalog_system/pub/products/search){category_path}?{raw_query}"
             
         if '_from=' not in api_url:
             api_url += "&_from=0&_to=49"
@@ -801,8 +767,7 @@ def motor_oechsle(url, limite):
                             "link": link_final,
                             "img": img_url
                         })
-                except Exception:
-                    continue
+                except Exception: continue
         else:
             safe_log(f"⚠️ [Oechsle API] Código {resp.status_code} recibido. Activando contingencia de rescate...", "warning")
             
@@ -831,8 +796,7 @@ def motor_oechsle(url, limite):
                                     json_ld_prods.append(prod)
                         elif isinstance(data, dict) and data.get('@type') == 'Product':
                             json_ld_prods.append(data)
-                    except Exception:
-                        continue
+                    except Exception: continue
                         
                 if json_ld_prods:
                     vistos_links = set()
@@ -841,7 +805,7 @@ def motor_oechsle(url, limite):
                             nombre = prod.get('name', '').upper()
                             link_final = prod.get('url', '')
                             if not link_final: continue
-                            link_final = urljoin("https://www.oechsle.pe", link_final)
+                            link_final = urljoin("[https://www.oechsle.pe](https://www.oechsle.pe)", link_final)
                             
                             if link_final in vistos_links: continue
                             
@@ -865,8 +829,7 @@ def motor_oechsle(url, limite):
                                     "link": link_final,
                                     "img": img_url
                                 })
-                        except Exception:
-                            continue
+                        except Exception: continue
         except Exception as he:
             safe_log(f"🛑 [Oechsle HTML] Error en contingencia: {he}", "error")
             
@@ -878,16 +841,12 @@ def motor_oechsle(url, limite):
     return productos
 
 def motor_plazavea(url, limite, headers=None):
-    import requests
-    from urllib.parse import urlparse, parse_qs, urljoin
-
     productos = []
-    
     if not headers:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
             "Accept": "application/json",
-            "Referer": "https://www.plazavea.com.pe/"
+            "Referer": "[https://www.plazavea.com.pe/](https://www.plazavea.com.pe/)"
         }
 
     try:
@@ -897,9 +856,9 @@ def motor_plazavea(url, limite, headers=None):
             category_path = '/' + category_path
 
         if "busca" in category_path:
-            api_url = "https://www.plazavea.com.pe/api/catalog_system/pub/products/search"
+            api_url = "[https://www.plazavea.com.pe/api/catalog_system/pub/products/search](https://www.plazavea.com.pe/api/catalog_system/pub/products/search)"
         else:
-            api_url = f"https://www.plazavea.com.pe/api/catalog_system/pub/products/search{category_path}"
+            api_url = f"[https://www.plazavea.com.pe/api/catalog_system/pub/products/search](https://www.plazavea.com.pe/api/catalog_system/pub/products/search){category_path}"
 
         query_params = parse_qs(parsed_url.query)
         params = {
@@ -935,7 +894,6 @@ def motor_plazavea(url, limite, headers=None):
                     if not sellers: continue
                         
                     offer = sellers[0].get("commertialOffer", {})
-                    
                     stock = offer.get("AvailableQuantity", 0)
                     if stock <= 0: continue  
                         
@@ -955,8 +913,7 @@ def motor_plazavea(url, limite, headers=None):
                             "link": link_final,
                             "img": img_final
                         })
-                except Exception:
-                    continue
+                except Exception: continue
         else:
             safe_log(f"🛑 [Plaza Vea API] Error de conexión con VTEX. Código HTTP: {resp.status_code}", "error")
 
@@ -971,20 +928,13 @@ def motor_plazavea(url, limite, headers=None):
     return productos
 
 def motor_juntoz(url, limite, headers=None):
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
-    import re
-    import random
-
     productos_map = {}
-    
     if not headers:
         headers = {
             "User-Agent": random.choice(LISTA_USER_AGENTS),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-            "Referer": "https://www.juntoz.com/"
+            "Referer": "[https://www.juntoz.com/](https://www.juntoz.com/)"
         }
 
     try:
@@ -1005,7 +955,7 @@ def motor_juntoz(url, limite, headers=None):
         for a_el in enlaces_productos:
             try:
                 href_rel = a_el['href']
-                link_final = urljoin("https://juntoz.com", href_rel)
+                link_final = urljoin("[https://juntoz.com](https://juntoz.com)", href_rel)
                 
                 contenedor_tarjeta = None
                 ancestro_actual = a_el.parent
@@ -1055,7 +1005,7 @@ def motor_juntoz(url, limite, headers=None):
                     img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or img_el.get('data-original') or ""
                 
                 if img_url.startswith('//'): img_url = 'https:' + img_url
-                elif img_url and not img_url.startswith('http'): img_url = urljoin("https://juntoz.com", img_url)
+                elif img_url and not img_url.startswith('http'): img_url = urljoin("[https://juntoz.com](https://juntoz.com)", img_url)
 
                 if 'data:image' in img_url.lower() or 'pixel' in img_url.lower(): img_url = ""
 
@@ -1078,8 +1028,7 @@ def motor_juntoz(url, limite, headers=None):
                             "link": link_final,
                             "img": img_url
                         }
-            except Exception:
-                continue
+            except Exception: continue
 
     except Exception as e:
         safe_log(f"🛑 [Juntoz] Error crítico inesperado: {e}", "error")
@@ -1093,12 +1042,6 @@ def motor_juntoz(url, limite, headers=None):
     return productos_finales
 
 def motor_triathlon(url, limite, headers=None):
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, urlunparse, parse_qs, urlencode, urljoin
-    import re
-    import time
-
     productos_map = {}
     vistos_links = set()
     
@@ -1107,7 +1050,7 @@ def motor_triathlon(url, limite, headers=None):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9;image/webp,*/*;q=0.8",
             "Accept-Language": "es-PE,es;q=0.9",
-            "Referer": "https://www.triathlon.com.pe/"
+            "Referer": "[https://www.triathlon.com.pe/](https://www.triathlon.com.pe/)"
         }
 
     try:
@@ -1133,7 +1076,7 @@ def motor_triathlon(url, limite, headers=None):
                     for a in t.find_all('a', href=True):
                         href = a['href'].lower()
                         if '/p' in href and not any(x in href for x in ['/account', '/checkout', '/cart', '/busca', '/login']):
-                            link_final = urljoin("https://www.triathlon.com.pe", a['href'])
+                            link_final = urljoin("[https://www.triathlon.com.pe](https://www.triathlon.com.pe)", a['href'])
                             break
                     
                     if not link_final: continue
@@ -1199,66 +1142,48 @@ def motor_triathlon(url, limite, headers=None):
 
     return productos_finales
 
-
-
 def motor_ripley(url, limite, headers=None):
     safe_log("⏸️ [Ripley] Motor pausado temporalmente.", "caption")
     return []
 
-
-
-
-
 def motor_footloose(url, limite):
-    import requests
-    from urllib.parse import urlparse, parse_qs, urljoin
-    import re
-    import random
-
     productos_map = {}
     headers = {
         "User-Agent": random.choice(LISTA_USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "es-PE,es;q=0.9",
-        "Referer": "https://www.footloose.pe/"
+        "Referer": "[https://www.footloose.pe/](https://www.footloose.pe/)"
     }
 
     try:
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
         
-        # 1. Extraer la ruta raw de la consulta
         raw_path = parsed_url.path.rstrip('/')
         if 'query' in query_params:
             q_val = query_params['query'][0]
             if q_val.startswith('/'):
                 raw_path = q_val.rstrip('/')
 
-        # 2. Sanitizar segmentos descartando tallas numéricas que rompen VTEX (ej. "9-5")
         segmentos = [s for s in raw_path.split('/') if s and not re.match(r'^\d+[\-_.]\d+$', s)]
         path_limpio = '/' + '/'.join(segmentos) if segmentos else "/calzados"
         path_base = '/' + '/'.join(segmentos[:2]) if len(segmentos) >= 2 else path_limpio
 
-        # 3. Construcción del plan de peticiones secuenciales
         urls_a_probar = []
 
-        # Plan A: Path limpio omitiendo mapas de talla incompatibles
         if "map" in query_params:
             maps = query_params["map"][0].split(',')
             maps_validos = [m for m in maps if m in ['c', 'category-1', 'category-2', 'category-3', 'brand', 'b']]
             if maps_validos and len(maps_validos) == len(segmentos):
-                urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49", "map": ",".join(maps_validos)}))
+                urls_a_probar.append((f"[https://www.footloose.pe/api/catalog_system/pub/products/search](https://www.footloose.pe/api/catalog_system/pub/products/search){path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49", "map": ",".join(maps_validos)}))
 
-        # Plan B: Path limpio directo sin parámetro map
-        urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
+        urls_a_probar.append((f"[https://www.footloose.pe/api/catalog_system/pub/products/search](https://www.footloose.pe/api/catalog_system/pub/products/search){path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
         
-        # Plan C: Desescalado a categoría raíz (/calzados/hombres)
         if path_base != path_limpio:
-            urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_base}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
+            urls_a_probar.append((f"[https://www.footloose.pe/api/catalog_system/pub/products/search](https://www.footloose.pe/api/catalog_system/pub/products/search){path_base}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
 
         safe_log(f"📡 [Footloose API] Iniciando escaneo multinivel sobre `{path_limpio}`...", "info")
 
-        # 4. Ejecución del escaneo con fallback automático
         for api_endpoint, params in urls_a_probar:
             try:
                 resp = requests.get(api_endpoint, headers=headers, params=params, timeout=12, verify=False)
@@ -1270,7 +1195,7 @@ def motor_footloose(url, limite):
                             try:
                                 nombre_prod = p.get("productName", "").strip().upper()
                                 link_rel = p.get("link", "")
-                                link_final = urljoin("https://www.footloose.pe", link_rel) if link_rel else url
+                                link_final = urljoin("[https://www.footloose.pe](https://www.footloose.pe)", link_rel) if link_rel else url
                                 
                                 items = p.get("items", [])
                                 if not items: continue
@@ -1297,11 +1222,8 @@ def motor_footloose(url, limite):
                                     }
                             except Exception: continue
                         
-                        # Si obtuvimos resultados dentro del rango de precio, rompemos el ciclo
-                        if len(productos_map) > 0:
-                            break
-            except Exception:
-                continue
+                        if len(productos_map) > 0: break
+            except Exception: continue
 
     except Exception as e:
         safe_log(f"🛑 [Footloose API] Error de ejecución: {e}", "error")
@@ -1314,55 +1236,41 @@ def motor_footloose(url, limite):
 
     return productos_list
 
-
 def motor_estilos(url, limite):
-    import requests
-    from bs4 import BeautifulSoup
-    from urllib.parse import urlparse, parse_qs, urljoin, unquote
-    import re
-    import random
-    import json
-
     productos_map = {}
     headers = {
         "User-Agent": random.choice(LISTA_USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "es-PE,es;q=0.9",
-        "Referer": "https://www.estilos.com.pe/"
+        "Referer": "[https://www.estilos.com.pe/](https://www.estilos.com.pe/)"
     }
 
     try:
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
-        
         raw_path = unquote(parsed_url.path.rstrip('/'))
         
-        # Descartar tallas o segmentos numéricos incompatibles
         segmentos = [s for s in raw_path.split('/') if s and not re.match(r'^\d+[\-_.]\d+$', s)]
         path_limpio = '/' + '/'.join(segmentos) if segmentos else "/poleras-hombre"
         path_base = '/' + '/'.join(segmentos[-2:]) if len(segmentos) >= 2 else path_limpio
 
-        # Estrategia de peticiones secuenciales para VTEX Estilos
         urls_a_probar = []
 
-        # 1. Búsqueda por término explícito (_q o ft)
         q_term = query_params.get('_q', query_params.get('ft', [None]))[0]
         if q_term:
             urls_a_probar.append((
-                "https://www.estilos.com.pe/api/catalog_system/pub/products/search",
+                "[https://www.estilos.com.pe/api/catalog_system/pub/products/search](https://www.estilos.com.pe/api/catalog_system/pub/products/search)",
                 {"ft": q_term, "O": "OrderByPriceASC", "_from": "0", "_to": "49"}
             ))
 
-        # 2. Búsqueda por categoría / marcas (/puma/quiksilver/m/poleras hombre)
         urls_a_probar.append((
-            f"https://www.estilos.com.pe/api/catalog_system/pub/products/search{path_limpio}",
+            f"[https://www.estilos.com.pe/api/catalog_system/pub/products/search](https://www.estilos.com.pe/api/catalog_system/pub/products/search){path_limpio}",
             {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}
         ))
         
-        # 3. Búsqueda por ruta base reducida
         if path_base != path_limpio:
             urls_a_probar.append((
-                f"https://www.estilos.com.pe/api/catalog_system/pub/products/search{path_base}",
+                f"[https://www.estilos.com.pe/api/catalog_system/pub/products/search](https://www.estilos.com.pe/api/catalog_system/pub/products/search){path_base}",
                 {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}
             ))
 
@@ -1379,7 +1287,7 @@ def motor_estilos(url, limite):
                             try:
                                 nombre_prod = p.get("productName", "").strip().upper()
                                 link_rel = p.get("link", "")
-                                link_final = urljoin("https://www.estilos.com.pe", link_rel) if link_rel else url
+                                link_final = urljoin("[https://www.estilos.com.pe](https://www.estilos.com.pe)", link_rel) if link_rel else url
                                 
                                 items = p.get("items", [])
                                 if not items: continue
@@ -1406,15 +1314,12 @@ def motor_estilos(url, limite):
                                     }
                             except Exception: continue
                         
-                        if len(productos_map) > 0:
-                            break
-            except Exception:
-                continue
+                        if len(productos_map) > 0: break
+            except Exception: continue
 
     except Exception as e:
         safe_log(f"⚠️ [Estilos API] Error de consulta: {e}", "warning")
 
-    # Respaldo HTML por JSON-LD en caso de contingencia
     if not productos_map:
         try:
             safe_log("🛡️ [Estilos HTML] Escaneando estructura de respaldo...", "info")
@@ -1437,7 +1342,7 @@ def motor_estilos(url, limite):
                         for item in items:
                             if not isinstance(item, dict): continue
                             nombre = str(item.get('name', '')).strip().upper()
-                            link_f = urljoin("https://www.estilos.com.pe", item.get('url', ''))
+                            link_f = urljoin("[https://www.estilos.com.pe](https://www.estilos.com.pe)", item.get('url', ''))
                             offers = item.get('offers', {})
                             p_o = 0.0
                             if isinstance(offers, dict): p_o = float(offers.get('price', 0.0))
@@ -1466,37 +1371,25 @@ def motor_estilos(url, limite):
 
     return productos_list
 
-
 def motor_promart(url, limite, headers=None):
-    import requests
-    import re
-    from urllib.parse import urlparse, urljoin, unquote
-
     productos_map = {}
-    
     if not headers:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             "Accept": "application/json",
-            "Referer": "https://www.promart.pe/"
+            "Referer": "[https://www.promart.pe/](https://www.promart.pe/)"
         }
 
     try:
         parsed_url = urlparse(url)
-        
-        # 1. Construcción dinámica según la categoría de la URL enviada
         path = parsed_url.path.rstrip('/')
-        api_base_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{path}"
+        api_base_url = f"[https://www.promart.pe/api/catalog_system/pub/products/search](https://www.promart.pe/api/catalog_system/pub/products/search){path}"
 
-        # 2. Armado manual del Query String sin romper los filtros VTEX
         query_parts = []
         if parsed_url.query:
             for pair in parsed_url.query.split('&'):
-                # Elimina filtros redundantes de categoría que causan el HTTP 400
-                if pair.startswith('fq=C:') or pair.startswith('fq=C%3A'):
-                    continue
-                if pair.startswith('_from=') or pair.startswith('_to='):
-                    continue
+                if pair.startswith('fq=C:') or pair.startswith('fq=C%3A'): continue
+                if pair.startswith('_from=') or pair.startswith('_to='): continue
                 query_parts.append(pair)
         
         if not any(p.startswith('O=') for p in query_parts):
@@ -1515,26 +1408,21 @@ def motor_promart(url, limite, headers=None):
             safe_log(f"🔍 [Promart API] Catálogo recibido ({len(data)} ítems). Procesando...", "info")
 
             url_decodificada = unquote(url).lower()
-            
-            # 3. FILTRO ESPECÍFICO DE TV: Solo se activa si la URL pide explícitamente el rango 50-59
             exigir_50_59_tv = "50-59" in url_decodificada and ("televisor" in path or "tv" in path)
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # Validación estricta de pulgadas SOLO si es búsqueda de TVs 50-59"
                     if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
                             pulgadas = int(match_pulgadas.group(1))
-                            if not (50 <= pulgadas <= 59):
-                                continue
-                        elif not any(k in nombre_prod for k in ["50-59", "50", "55", "58"]):
-                            continue
+                            if not (50 <= pulgadas <= 59): continue
+                        elif not any(k in nombre_prod for k in ["50-59", "50", "55", "58"]): continue
 
                     link_rel = p.get("link", "")
-                    link_final = urljoin("https://www.promart.pe", link_rel) if link_rel else url
+                    link_final = urljoin("[https://www.promart.pe](https://www.promart.pe)", link_rel) if link_rel else url
 
                     items = p.get("items", [])
                     if not items: continue
@@ -1548,14 +1436,11 @@ def motor_promart(url, limite, headers=None):
                     if not sellers: continue
 
                     offer = sellers[0].get("commertialOffer", {})
-                    
-                    if offer.get("AvailableQuantity", 0) <= 0: 
-                        continue
+                    if offer.get("AvailableQuantity", 0) <= 0: continue
 
                     p_o = float(offer.get("Price", 0.0))
                     p_r = float(offer.get("ListPrice", p_o))
                     
-                    # Detección de Tarjeta oh!
                     p_tarjeta = None
                     installment_options = offer.get("PaymentOptions", {}).get("installmentOptions", [])
                     
@@ -1581,8 +1466,7 @@ def motor_promart(url, limite, headers=None):
                             "link": link_final,
                             "img": img_final
                         }
-                except Exception:
-                    continue
+                except Exception: continue
         else:
             safe_log(f"🛑 [Promart API] Código HTTP: {resp.status_code}", "error")
 
@@ -1597,19 +1481,13 @@ def motor_promart(url, limite, headers=None):
 
     return productos_list
 
-
 def motor_coolbox(url, limite, headers=None):
-    import requests
-    import re
-    from urllib.parse import urlparse, parse_qs, urljoin, unquote
-
     productos_map = {}
-    
     if not headers:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             "Accept": "application/json",
-            "Referer": "https://www.coolbox.pe/"
+            "Referer": "[https://www.coolbox.pe/](https://www.coolbox.pe/)"
         }
 
     try:
@@ -1617,40 +1495,28 @@ def motor_coolbox(url, limite, headers=None):
         query_params = parse_qs(parsed_url.query)
         path = parsed_url.path.rstrip('/')
 
-        # 1. DETECCIÓN DE CLUSTERS Y COLECCIONES (Ej. initialQuery=1539)
         initial_map = query_params.get("initialMap", [""])[0]
         initial_query = query_params.get("initialQuery", [""])[0]
 
         query_parts = []
 
         if initial_map == "productClusterIds" and initial_query:
-            # Si es un cluster/colección dinámico, usamos la API base sin la ruta /todo-tv
-            api_base_url = "https://www.coolbox.pe/api/catalog_system/pub/products/search"
+            api_base_url = "[https://www.coolbox.pe/api/catalog_system/pub/products/search](https://www.coolbox.pe/api/catalog_system/pub/products/search)"
             query_parts.append(f"fq=productClusterIds:{initial_query}")
         else:
-            # Si es una categoría normal, mantenemos la ruta
-            api_base_url = f"https://www.coolbox.pe/api/catalog_system/pub/products/search{path}"
+            api_base_url = f"[https://www.coolbox.pe/api/catalog_system/pub/products/search](https://www.coolbox.pe/api/catalog_system/pub/products/search){path}"
 
-        # 2. LIMPIEZA Y TRADUCCIÓN DE PARÁMETROS
         params_ignorar = ['initialmap', 'initialquery', 'map', 'query', 'searchstate', '_from', '_to']
         
         if parsed_url.query:
             for pair in parsed_url.query.split('&'):
-                if not pair or '=' not in pair:
-                    continue
-                
+                if not pair or '=' not in pair: continue
                 key, val = pair.split('=', 1)
                 key_lower = key.lower()
-                
-                if key_lower in params_ignorar:
-                    continue
-                
-                if key_lower in ['order', 'orderby']:
-                    query_parts.append(f"O={val}")
-                else:
-                    query_parts.append(pair)
+                if key_lower in params_ignorar: continue
+                if key_lower in ['order', 'orderby']: query_parts.append(f"O={val}")
+                else: query_parts.append(pair)
         
-        # Paginación y ordenamiento por menor precio
         if not any(p.startswith('O=') for p in query_parts):
             query_parts.append("O=OrderByPriceASC")
         query_parts.append("_from=0")
@@ -1673,42 +1539,33 @@ def motor_coolbox(url, limite, headers=None):
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # Filtro inteligente de pulgadas si se trata de televisores
                     if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
                             pulgadas = int(match_pulgadas.group(1))
-                            if not (50 <= pulgadas <= 59):
-                                continue
-                        elif not any(k in nombre_prod for k in ["50-59", "50", "55", "58"]):
-                            continue
+                            if not (50 <= pulgadas <= 59): continue
+                        elif not any(k in nombre_prod for k in ["50-59", "50", "55", "58"]): continue
 
                     link_rel = p.get("link", "")
-                    link_final = urljoin("https://www.coolbox.pe", link_rel) if link_rel else url
+                    link_final = urljoin("[https://www.coolbox.pe](https://www.coolbox.pe)", link_rel) if link_rel else url
 
                     items = p.get("items", [])
-                    if not items: 
-                        continue
+                    if not items: continue
 
                     first_item = items[0]
                     images = first_item.get("images", [])
                     img_final = images[0].get("imageUrl", "") if images else ""
-                    if img_final.startswith('//'): 
-                        img_final = 'https:' + img_final
+                    if img_final.startswith('//'): img_final = 'https:' + img_final
 
                     sellers = first_item.get("sellers", [])
-                    if not sellers: 
-                        continue
+                    if not sellers: continue
 
                     offer = sellers[0].get("commertialOffer", {})
-                    
-                    if offer.get("AvailableQuantity", 0) <= 0: 
-                        continue
+                    if offer.get("AvailableQuantity", 0) <= 0: continue
 
-                    p_o = float(offer.get("Price", 0.0))          # Precio Web / Oferta
-                    p_r = float(offer.get("ListPrice", p_o))      # Precio Lista tachado
+                    p_o = float(offer.get("Price", 0.0))
+                    p_r = float(offer.get("ListPrice", p_o))
                     
-                    # Detección de Precio Exclusivo con Tarjetas asociadas
                     p_tarjeta = None
                     installment_options = offer.get("PaymentOptions", {}).get("installmentOptions", [])
                     
@@ -1734,8 +1591,7 @@ def motor_coolbox(url, limite, headers=None):
                             "link": link_final,
                             "img": img_final
                         }
-                except Exception:
-                    continue
+                except Exception: continue
         else:
             safe_log(f"🛑 [Coolbox API] Código HTTP: {resp.status_code}", "error")
 
@@ -1749,9 +1605,6 @@ def motor_coolbox(url, limite, headers=None):
         safe_log(f"⚠️ [Coolbox] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
-
-
 
 def motor_tradicional_general(url, limite, headers):
     productos = []
@@ -1779,13 +1632,7 @@ def motor_tradicional_general(url, limite, headers):
     except Exception: pass
     return productos 
 
-
 def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, session=None, step=12, sz=None, max_items=500):
-    import os, time, re, random, json, requests
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
-    from bs4 import BeautifulSoup
-    from datetime import datetime, timezone
-
     logs_ejecucion = []
 
     def _safe_log(msg, level="info"):
@@ -1793,19 +1640,15 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
         log_entry = f"[{timestamp}] [{level.upper()}] {msg}"
         logs_ejecucion.append(log_entry)
         try:
-            if 'safe_log' in globals():
-                safe_log(msg, level)
-            else:
-                print(log_entry)
-        except Exception:
-            print(log_entry)
+            if 'safe_log' in globals(): safe_log(msg, level)
+            else: print(log_entry)
+        except Exception: print(log_entry)
 
     def _save_debug(name, content, mode="w"):
         try:
             os.makedirs("ml_debug", exist_ok=True)
             path = os.path.join("ml_debug", name)
-            with open(path, mode, encoding="utf-8") as fh:
-                fh.write(content)
+            with open(path, mode, encoding="utf-8") as fh: fh.write(content)
             return path
         except Exception as e:
             _safe_log(f"No se pudo guardar debug {name}: {e}", "warning")
@@ -1826,9 +1669,11 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
         try:
             m = re.search(r'([A-Z0-9\-]{4,})', link.split('?')[0].rstrip('/').split('/')[-1])
             if m: return f"NIKE-{m.group(1).upper()}"
-            return f"NIKE-{abs(hash(link))}"
+            hash_md5 = hashlib.md5(link.encode('utf-8')).hexdigest()[:10].upper()
+            return f"NIKE-{hash_md5}"
         except Exception:
-            return f"NIKE-{abs(hash(link))}"
+            hash_md5 = hashlib.md5(link.encode('utf-8')).hexdigest()[:10].upper()
+            return f"NIKE-{hash_md5}"
 
     start_ts = datetime.now(timezone.utc).isoformat()
     productos = []
@@ -1840,7 +1685,7 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.nike.com.pe/"
+        "Referer": "[https://www.nike.com.pe/](https://www.nike.com.pe/)"
     }
     session.headers.update(headers)
 
@@ -1878,11 +1723,9 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP de Nike.", "error")
                 break
 
-            # 🔍 BLOQUE DE DIAGNÓSTICO EN VIVO
             _safe_log(f"📡 [DIAGNÓSTICO NIKE] Status Code recibido: {resp.status_code}")
             _safe_log(f"📡 [DIAGNÓSTICO NIKE] Tamaño del contenido: {len(resp.text)} caracteres")
             
-            # Tomamos una muestra de los primeros 300 caracteres para ver qué respondió exactamente el servidor
             preview_texto = resp.text[:300].replace('\n', ' ').strip()
             _safe_log(f"🔍 [DIAGNÓSTICO NIKE] Preview HTML: {preview_texto}...")
 
@@ -1895,14 +1738,13 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
             text = resp.text
             
-            # Verificación extra por si la respuesta contiene avisos de bloqueo ocultos
             if any(term in text.lower() for term in ["access denied", "cloudflare", "captcha", "security check"]):
                 _safe_log("🚨 [ALERTA] El servidor devolvió una página de seguridad/bloqueo anti-bot de Nike.", "error")
 
             soup = BeautifulSoup(text, "html.parser")
             page_products = []
 
-            # 1️⃣ Capa 1: JSON
+            # Capa 1: JSON
             if '"results"' in text or '"products"' in text or '"searchResults"' in text:
                 try:
                     json_blocks = re.findall(r'(\{(?:[^{}]|(?1))*\})', text[:300000])
@@ -1933,7 +1775,7 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 except Exception as e_json:
                     _safe_log(f"Error procesando JSON: {e_json}", "warning")
 
-            # 2️⃣ Capa 2: DOM HTML
+            # Capa 2: DOM HTML
             if not page_products:
                 cards = soup.select(".product-tile, .product-card, .product-grid li, .product-grid div.product, a[href*='/product/'], a[href*='/productos/']")
                 _safe_log(f"🔍 Tarjetas detectadas en HTML mediante selectores: {len(cards)}")
@@ -1976,11 +1818,9 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                             p_r_val = _safe_parse_price(del_el.text)
                             if p_r_val > 0: p_r = p_r_val
 
-                        if p_o < 30.0:
-                            continue
+                        if p_o < 30.0: continue
 
-                        if not (0 < p_o <= limite):
-                            continue
+                        if not (0 < p_o <= limite): continue
 
                         identificador = _normalize_identifier(link_final)
                         if identificador in vistos: continue
@@ -1997,8 +1837,7 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                             "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final,
                             "img": img_url, "fecha": datetime.now(timezone.utc).isoformat()
                         })
-                    except Exception as e_card:
-                        continue
+                    except Exception: continue
 
             if not page_products:
                 _safe_log(f"🛑 No se encontraron productos válidos en la página start={offset}. Finalizando ciclo.")
@@ -2029,10 +1868,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
     return productos
 
-
-
-
-# =======================================================
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
@@ -2087,7 +1922,6 @@ def escanear_tienda(url, limite, headers=None):
         safe_log(f"💤 [Enrutador] Tienda sin motor específico. Aplicando motor tradicional general.", "info")
         return motor_tradicional_general(url, limite, headers)
 
-
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
 # =======================================================
@@ -2115,7 +1949,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         "CAMA": "🛏️", "OTROS": "📦"
     }
     
-    # 🚀 CONTENEDOR DE DIAGNÓSTICO EN TIEMPO REAL (Aparece PRIMERO arriba)
     status_container = st.status("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", expanded=True)
     
     with status_container:
@@ -2123,7 +1956,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             ident = item['identificador'].upper()
             url_low = item['url'].lower()
             
-            # Categorización del Radar (Incluyendo el parche de Nike en Zapatillas)
+            # Categorización
             if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
             elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
             elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
@@ -2148,7 +1981,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             tienda_actual = ident.replace('_', '-').split('-')[0]
             st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
             
-            # Aquí se ejecuta el motor y los logs de diagnóstico saldrán en vivo dentro de la caja
             prods = escanear_tienda(item['url'], item['precio_max'])
             
             for p in prods:
@@ -2207,8 +2039,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
                         except Exception: pass
 
-                    ahorro = precio_anterior - p_v
-                    if p_v < precio_anterior:
+                        ahorro = precio_anterior - p_v
                         msg_t = (
                             f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
                             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2221,11 +2052,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                             alertas += 1
                             time.sleep(0.3)
+
                 except Exception: continue
 
         st.success("✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**")
 
-    # 📊 REPORTE VISUAL DE PRODUCTOS (Se muestra DESPUÉS del diagnóstico)
+    # Visualización en Streamlit
     if len(lista_html_streamlit) > 0:
         try:
             st.markdown("---")
