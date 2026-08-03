@@ -17,27 +17,30 @@ import streamlit as st
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =======================================================
-# 🛡️ CONFIGURACIÓN DE ENTORNO BLINDADA
+# 🛡️ CONFIGURACIÓN DE ENTORNO BLINDADA (CLI Y STREAMLIT)
 # =======================================================
-SUPABASE_URL = "[https://uxornuepdxqlhzizjnhr.supabase.co](https://uxornuepdxqlhzizjnhr.supabase.co)"
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or "https://uxornuepdxqlhzizjnhr.supabase.co"
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 try:
-    if "SUPABASE_KEY" in st.secrets: 
-        SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    if "TELEGRAM_TOKEN" in st.secrets: 
-        TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
-    if "TELEGRAM_CHAT_ID" in st.secrets: 
-        TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
-except Exception: 
+    if hasattr(st, "secrets"):
+        if "SUPABASE_URL" in st.secrets and st.secrets["SUPABASE_URL"]:
+            SUPABASE_URL = st.secrets["SUPABASE_URL"]
+        if "SUPABASE_KEY" in st.secrets and st.secrets["SUPABASE_KEY"]:
+            SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+        if "TELEGRAM_TOKEN" in st.secrets and st.secrets["TELEGRAM_TOKEN"]:
+            TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
+        if "TELEGRAM_CHAT_ID" in st.secrets and st.secrets["TELEGRAM_CHAT_ID"]:
+            TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+except Exception:
     pass
 
-if SUPABASE_URL and SUPABASE_KEY: 
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-else: 
-    raise ValueError("Error crítico: Falta SUPABASE_KEY.")
+if not SUPABASE_URL or not SUPABASE_KEY or not SUPABASE_URL.startswith("http"):
+    raise ValueError(f"Error crítico: Configuración de Supabase inválida. URL obtenida: '{SUPABASE_URL}'")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 LISTA_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -1949,115 +1952,114 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         "CAMA": "🛏️", "OTROS": "📦"
     }
     
-    status_container = st.status("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", expanded=True)
+    safe_log("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", "info")
     
-    with status_container:
-        for item in res.data:
-            ident = item['identificador'].upper()
-            url_low = item['url'].lower()
-            
-            # Categorización
-            if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
-            elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
-            elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
-            elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
-            elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
-            elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
-            elif "BUZO" in ident or "buzo" in url_low or "pantalon" in url_low: grupo = "BUZOS"
-            elif "AUDIFONO" in ident or "audifono" in url_low: grupo = "AUDIFONOS"
-            elif "TV" in ident or "smart-tv" in url_low: grupo = "TV"
-            elif "PARLANTE" in ident or "speaker" in url_low: grupo = "PARLANTE"
-            elif "BARRA" in ident or "soundbar" in url_low: grupo = "BARRA DE SONIDO"
-            elif "CELULAR" in ident or "phone" in url_low or "celular" in url_low: grupo = "CELULAR"
-            elif "PC" in ident or "laptop" in url_low: grupo = "PC"
-            elif "REFRIGERADORA" in ident or "refrig" in url_low: grupo = "REFRIGERADORA"
-            elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
-            elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
-            elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
-            else: grupo = "OTROS"
+    for item in res.data:
+        ident = item['identificador'].upper()
+        url_low = item['url'].lower()
+        
+        # Categorización
+        if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
+        elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
+        elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
+        elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
+        elif "POLO" in ident or "polo" in url_low: grupo = "POLOS"
+        elif "CASACA" in ident or "casaca" in url_low or "polera" in url_low: grupo = "CASACAS"
+        elif "BUZO" in ident or "buzo" in url_low or "pantalon" in url_low: grupo = "BUZOS"
+        elif "AUDIFONO" in ident or "audifono" in url_low: grupo = "AUDIFONOS"
+        elif "TV" in ident or "smart-tv" in url_low: grupo = "TV"
+        elif "PARLANTE" in ident or "speaker" in url_low: grupo = "PARLANTE"
+        elif "BARRA" in ident or "soundbar" in url_low: grupo = "BARRA DE SONIDO"
+        elif "CELULAR" in ident or "phone" in url_low or "celular" in url_low: grupo = "CELULAR"
+        elif "PC" in ident or "laptop" in url_low: grupo = "PC"
+        elif "REFRIGERADORA" in ident or "refrig" in url_low: grupo = "REFRIGERADORA"
+        elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
+        elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
+        elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
+        else: grupo = "OTROS"
 
-            if target != "TODOS" and target != grupo: continue
+        if target != "TODOS" and target != grupo: continue
+            
+        tienda_actual = ident.replace('_', '-').split('-')[0]
+        safe_log(f"🔄 Patrullando Tienda: {tienda_actual} | Categoría: {grupo}...", "info")
+        
+        prods = escanear_tienda(item['url'], item['precio_max'])
+        
+        for p in prods:
+            try:
+                n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
                 
-            tienda_actual = ident.replace('_', '-').split('-')[0]
-            st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
-            
-            prods = escanear_tienda(item['url'], item['precio_max'])
-            
-            for p in prods:
+                if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
+                    palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA"]
+                    if any(bad in n_u for bad in palabras_prohibidas): continue
+                
+                if n_u in enviados: continue
+                enviados.add(n_u)
+                total += 1
+                p_v = float(p['precio'])
+                p_r = max(float(p.get('precio_regular', p_v)), p_v)
+                p['tienda_origen'] = tienda_actual
+                lista_html_streamlit.append(p)
+                
+                id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
+                id_registro = f"{item['identificador']}-{id_limpio}"[:200]
+                
+                precio_anterior = None
                 try:
-                    n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
-                    
-                    if grupo in ["BARRA DE SONIDO", "PARLANTE", "AUDIFONOS"]:
-                        palabras_prohibidas = ["SABANA", "SÁBANA", "ALMOHADA", "COLCHON", "COLCHÓN", "EDREDON", "EDREDÓN", "CAMA", "FRAZADA", "MANTA"]
-                        if any(bad in n_u for bad in palabras_prohibidas): continue
-                    
-                    if n_u in enviados: continue
-                    enviados.add(n_u)
-                    total += 1
-                    p_v = float(p['precio'])
-                    p_r = max(float(p.get('precio_regular', p_v)), p_v)
-                    p['tienda_origen'] = tienda_actual
-                    lista_html_streamlit.append(p)
-                    
-                    id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
-                    id_registro = f"{item['identificador']}-{id_limpio}"[:200]
-                    
-                    precio_anterior = None
-                    try:
-                        res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
-                        if res_ant.data and len(res_ant.data) > 0:
-                            precio_anterior = float(res_ant.data[0]['precio'])
+                    res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
+                    if res_ant.data and len(res_ant.data) > 0:
+                        precio_anterior = float(res_ant.data[0]['precio'])
+                except Exception: pass
+                
+                datos_guardar = {
+                    "identificador": id_registro, 
+                    "precio": p_v, 
+                    "precio_regular": p_r, 
+                    "link_producto": p['link'], 
+                    "imagen_producto": p.get('img', ''), 
+                    "fecha": fecha_hoy
+                }
+                
+                emoji = mapa_emojis.get(grupo, "🔥")
+
+                if precio_anterior is None:
+                    try: supabase.table("historial_precios").insert(datos_guardar).execute()
                     except Exception: pass
-                    
-                    datos_guardar = {
-                        "identificador": id_registro, 
-                        "precio": p_v, 
-                        "precio_regular": p_r, 
-                        "link_producto": p['link'], 
-                        "imagen_producto": p.get('img', ''), 
-                        "fecha": fecha_hoy
-                    }
-                    
-                    emoji = mapa_emojis.get(grupo, "🔥")
 
-                    if precio_anterior is None:
-                        try: supabase.table("historial_precios").insert(datos_guardar).execute()
-                        except Exception: pass
+                    msg_t = (
+                        f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                        f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
+                    )
+                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                        alertas += 1
+                        time.sleep(0.3)
 
-                        msg_t = (
-                            f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                            f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
-                            f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                            f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
-                        )
-                        if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
-                            alertas += 1
-                            time.sleep(0.3)
+                elif p_v < precio_anterior:
+                    try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
+                    except Exception: pass
 
-                    elif p_v < precio_anterior:
-                        try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
-                        except Exception: pass
+                    ahorro = precio_anterior - p_v
+                    msg_t = (
+                        f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                        f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
+                        f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
+                        f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
+                    )
+                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                        alertas += 1
+                        time.sleep(0.3)
 
-                        ahorro = precio_anterior - p_v
-                        msg_t = (
-                            f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                            f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
-                            f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                            f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
-                            f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
-                            f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
-                        )
-                        if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
-                            alertas += 1
-                            time.sleep(0.3)
+            except Exception: continue
 
-                except Exception: continue
+    safe_log("✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**", "success")
 
-        st.success("✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**")
-
-    # Visualización en Streamlit
+    # Visualización en Streamlit (solo si se ejecuta mediante `streamlit run`)
     if len(lista_html_streamlit) > 0:
         try:
             st.markdown("---")
