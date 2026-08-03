@@ -1986,17 +1986,16 @@ def motor_natura(
     step=48,
     session=None,
     max_items=500,
-    use_playwright_fallback=True,
+    use_playwright_fallback=False,
     headers_override=None,
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo mediante Playwright.
-    Levanta un navegador Chromium headless, espera la hidratación de React / FastStore
-    y extrae los productos y precios directamente del DOM renderizado.
+    Motor Natura Perú Definitivo mediante ScraperAPI (Bypass WAF Anti-Bot).
     """
-    import time, re
+    import time, re, json
     from urllib.parse import urlparse, urljoin
+    from bs4 import BeautifulSoup
     from datetime import datetime, timezone
 
     try:
@@ -2047,114 +2046,124 @@ def motor_natura(
     parsed = urlparse(url)
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú (Playwright Engine) | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (ScraperAPI Proxy Engine) | Límite: S/. {limite}")
+
+    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    try:
+        if st and "SCRAPERAPI_KEY" in st.secrets:
+            api_key = st.secrets["SCRAPERAPI_KEY"]
+        elif os.environ.get("SCRAPERAPI_KEY"):
+            api_key = os.environ.get("SCRAPERAPI_KEY")
+    except Exception:
+        pass
+
+    payload = {
+        'api_key': api_key,
+        'url': url,
+        'render': 'true'  # Renderiza JavaScript en el proxy
+    }
 
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        _log("🛑 Error: Playwright no está instalado. Ejecuta 'pip install playwright && playwright install chromium'", "error")
-        if return_as_dict:
-            return {"summary": "Error de dependencias", "productos": [], "metadata": {}, "logs": logs_list}
-        return []
+        _log("🚀 Solicitando página protegida a través de ScraperAPI...")
+        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=50)
+        
+        if resp.status_code != 200 or len(resp.text) < 2000:
+            _log(f"🛑 ScraperAPI devolvió estado HTTP {resp.status_code} o contenido insuficiente.", "error")
+            if return_as_dict:
+                return {"summary": "Error de conexión", "productos": [], "metadata": {}, "logs": logs_list}
+            return []
 
-    try:
-        with sync_playwright() as p:
-            _log("🌐 Lanzando navegador Chromium headless (Modo Anti-WAF)...")
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-web-security",
-                    "--disable-http2",
-                    "--disable-blink-features=AutomationControlled",
-                ],
-            )
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                ),
-                viewport={"width": 1280, "height": 800},
-            )
-            page = context.new_page()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Buscar bloques JSON embebidos (FastStore / Next / VTEX)
+        items_encontrados = []
+        for script in soup.find_all('script'):
+            if script.string and ('productName' in script.string or 'price' in script.string or 'offers' in script.string):
+                try:
+                    txt_s = script.string.strip()
+                    if txt_s.startswith('{') or txt_s.startswith('['):
+                        data_json = json.loads(txt_s)
+                        # Extracción recursiva universal de productos
+                        def extraer_json(nodo):
+                            if isinstance(nodo, dict):
+                                if any(k in nodo for k in ['name', 'title', 'productName']) and any(k in nodo for k in ['price', 'offers', 'salePrice']):
+                                    items_encontrados.append(nodo)
+                                for v in nodo.values(): extraer_json(v)
+                            elif isinstance(nodo, list):
+                                for item in nodo: extraer_json(item)
+                        extraer_json(data_json)
+                except Exception:
+                    continue
 
-            _log(f"🔗 Navegando a: {url}")
-            try:
-                page.goto(url, wait_until="commit", timeout=90000)
-                page.wait_for_load_state("domcontentloaded", timeout=30000)
-            except Exception as nav_err:
-                _log(f"⚠️ Alerta menor en carga inicial, intentando continuar: {nav_err}", "warning")
-
-            time.sleep(4)
-
-            try:
-                page.wait_for_selector('a[href*="/p"]', timeout=20000)
-            except Exception:
-                _log("⚠️ No se detectaron selectores de productos de forma inmediata, procediendo a evaluar el DOM actual...", "warning")
-
-            items_dom = page.evaluate("""() => {
-                const results = [];
-                const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
-                
-                links.forEach(a => {
-                    const href = a.getAttribute('href');
-                    if (!href || href.includes('/c/') || href.includes('ayuda')) return;
-
-                    let card = a;
-                    for (let i = 0; i < 4; i++) {
-                        if (card.parentElement && !['BODY', 'MAIN', 'SECTION', 'HEADER', 'NAV'].includes(card.parentElement.tagName)) {
-                            card = card.parentElement;
-                        }
-                    }
-
-                    const text = card.innerText || '';
-                    const img = card.querySelector('img');
-                    const imgSrc = img ? (img.src || img.getAttribute('data-src') || '') : '';
-
-                    results.push({
-                        href: href,
-                        text: text,
-                        img: imgSrc
-                    });
-                });
-                return results;
-            }""")
-
-            _log(f"🧩 Elementos capturados del DOM renderizado: {len(items_dom)}")
-
-            for item in items_dom:
+        if items_encontrados:
+            _log(f"🔍 Productos detectados mediante bloques JSON: {len(items_encontrados)}")
+            for it in items_encontrados:
                 if len(productos) >= max_items: break
                 try:
-                    href = item['href']
-                    link_final = urljoin(base_url, href.split('?')[0])
+                    nombre = str(it.get('name') or it.get('title') or it.get('productName') or "").strip().upper()
+                    if len(nombre) < 3: continue
+                    
+                    p_o = _safe_parse_price(it.get('price') or it.get('salePrice') or it.get('lowPrice'))
+                    if p_o <= 0 or p_o > limite: continue
+                    
+                    p_r = _safe_parse_price(it.get('originalPrice') or it.get('listPrice') or p_o)
+                    link_rel = it.get('url') or it.get('permalink') or ''
+                    link_final = urljoin(base_url, link_rel) if link_rel else url
                     ident = _normalize_identifier(link_final)
 
                     if ident in vistos: continue
+                    vistos.add(ident)
 
-                    txt = item['text']
-                    
+                    img_url = str(it.get('image') or it.get('thumbnail') or '')
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url,
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    continue
+
+        # Contingencia por HTML directo si el JSON no trajo suficientes resultados
+        if not productos:
+            _log("🛡️ Analizando tarjetas de producto directamente en el HTML renderizado...")
+            tarjetas = soup.select('a[href*="/p"]')
+            for a in tarjetas:
+                if len(productos) >= max_items: break
+                try:
+                    href = a.get('href', '')
+                    if not href or '/c/' in href: continue
+                    link_final = urljoin(base_url, href.split('?')[0])
+                    ident = _normalize_identifier(link_final)
+                    if ident in vistos: continue
+
+                    card = a
+                    for _ in range(4):
+                        if card.parent and card.parent.name not in ['body', 'html', 'main']:
+                            card = card.parent
+
+                    txt = card.get_text()
                     prices = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', txt, re.IGNORECASE)
                     parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
-
                     if not parsed_prices: continue
 
                     p_o = min(parsed_prices)
                     p_r = max(parsed_prices)
-
-                    if p_o <= 0.0 or p_o > limite: continue
+                    if p_o <= 0 or p_o > limite: continue
 
                     lines = [l.strip() for l in txt.split('\n') if l.strip()]
-                    clean_lines = []
-                    for l in lines:
-                        l_up = l.upper()
-                        if any(k in l_up for k in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS', 'HORAS', 'FAVORITOS', 'HASTA', 'OFF']):
-                            continue
-                        if len(l) >= 3 and not re.match(r'^\d+[\.,]?\d*$', l):
-                            clean_lines.append(l)
-
+                    clean_lines = [l for l in lines if len(l) >= 3 and not any(x in l.upper() for x in ['AGREGAR', 'S/', '%', 'BOLSA'])]
                     if not clean_lines: continue
-                    nombre = " ".join(clean_lines[:2]).strip().upper()
+                    nombre = clean_lines[0].upper()
+
+                    img_el = card.find('img')
+                    img_url = img_el.get('src') or img_el.get('data-src') or '' if img_el else ''
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
 
                     vistos.add(ident)
                     productos.append({
@@ -2163,26 +2172,23 @@ def motor_natura(
                         "precio": p_o,
                         "precio_regular": max(p_r, p_o),
                         "link": link_final,
-                        "img": item['img'],
+                        "img": img_url,
                         "fecha": datetime.now(timezone.utc).isoformat()
                     })
                 except Exception:
                     continue
 
-            browser.close()
-
     except Exception as e:
-        _log(f"🛑 Error durante la ejecución de Playwright: {e}", "error")
+        _log(f"🛑 Error crítico en motor_natura vía ScraperAPI: {e}", "error")
 
     _log(f"✅ Patrullaje completado. Total ofertas reales extraídas: {len(productos)}", "success")
 
     summary = f"Finalizado. Productos encontrados: {len(productos)}."
-    metadata = {"source": "natura_playwright_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    metadata = {"source": "natura_scraperapi_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
     return productos
-
 
 def escanear_tienda(url, limite):
     dominio = urlparse(url).netloc.lower()
