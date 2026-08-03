@@ -1,0 +1,30 @@
+name: Rastrear Cupones Diariamente
+
+on:
+  schedule:
+    # Se ejecuta todos los días a las 06:00 AM Perú (11:00 UTC)
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+
+jobs:
+  scan_cupones:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargando Repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurando Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalando Librerías
+        run: |
+          pip install requests beautifulsoup4 supabase urllib3
+
+      - name: Ejecutando Escaneo de Cupones Web
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python scrapers_cupones.py
