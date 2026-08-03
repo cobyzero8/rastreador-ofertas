@@ -13,23 +13,6 @@ import urllib3
 import streamlit as st
 
 
-
-def instalar_binarios_playwright():
-    """Garantiza la presencia de Chromium en el entorno de Streamlit Cloud."""
-    try:
-        # Verificar si Chromium ya está instalado en el cache
-        cache_dir = os.path.expanduser("~/.cache/ms-playwright")
-        if not os.path.exists(cache_dir) or not os.listdir(cache_dir):
-            print("🌐 Instalando binario Chromium para Playwright...")
-            subprocess.run(["playwright", "install", "chromium"], check=True)
-            subprocess.run(["playwright", "install-deps"], check=True)
-    except Exception as e:
-        print(f"⚠️ Error instalando Chromium: {e}")
-
-# Ejecutar la verificación al inicio
-instalar_binarios_playwright()
-
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =======================================================
@@ -2030,254 +2013,35 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 
 
-def motor_natura(
-    url,
-    limite=9999,
-    max_pages=1,
-    step=48,
-    session=None,
-    max_items=500,
-    use_playwright_fallback=True,
-    headers_override=None,
-    return_as_dict=False
-):
-    """
-    Motor Natura Perú Definitivo mediante Playwright.
-    Levanta un navegador Chromium headless, espera la hidratación de React / FastStore
-    y extrae los productos y precios directamente del DOM renderizado.
-    """
-    import time, re
-    from urllib.parse import urlparse, urljoin
-    from datetime import datetime, timezone
-
-    try:
-        import streamlit as st
-    except Exception:
-        st = None
-
-    logs_list = []
-
-    def _log(msg, level="info"):
-        ts = datetime.now(timezone.utc).isoformat()
-        entry = f"[{level.upper()}] {ts} - {msg}"
-        logs_list.append(entry)
-        if st:
-            try:
-                from streamlit.runtime.scriptrunner import get_script_run_ctx
-                if get_script_run_ctx():
-                    if level == "error": st.error(msg)
-                    elif level == "warning": st.warning(msg)
-                    elif level == "success": st.success(msg)
-                    else: st.write(msg)
-            except Exception:
-                print(entry)
-        else:
-            print(entry)
-
-    def _safe_parse_price(val):
-        if val is None: return 0.0
-        try:
-            s = re.sub(r'[^\d\.,]', '', str(val)).strip()
-            if not s: return 0.0
-            if s.count('.') > 1: s = s.replace('.', '')
-            s = s.replace(',', '.')
-            m = re.search(r'\d+\.?\d*', s)
-            return float(m.group(0)) if m else 0.0
-        except Exception:
-            return 0.0
-
-    def _normalize_identifier(link, fallback=None):
-        try:
-            token = link.split('?')[0].rstrip('/').split('/')[-1]
-            token = re.sub(r'[^A-Za-z0-9\-]', '', token) or (fallback or str(abs(hash(link))))
-            return f"NATURA-{token.upper()}"
-        except Exception:
-            return f"NATURA-{abs(hash(link))}"
-
-    productos, vistos = [], set()
-    parsed = urlparse(url)
-    base_url = f"{parsed.scheme}://{parsed.netloc}"
-
-    _log(f"🌿 Iniciando Natura Perú (Playwright Engine) | Límite: S/. {limite}")
-
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        _log("🛑 Error: Playwright no está instalado. Ejecuta 'pip install playwright && playwright install chromium'", "error")
-        if return_as_dict:
-            return {"summary": "Error de dependencias", "productos": [], "metadata": {}, "logs": logs_list}
-        return []
-
-    try:
-        with sync_playwright() as p:
-            _log("🌐 Lanzando navegador Chromium headless...")
-            browser = p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security']
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                viewport={'width': 1280, 'height': 800}
-            )
-            page = context.new_page()
-
-            _log(f"🔗 Navegando a: {url}")
-            page.goto(url, wait_until="networkidle", timeout=30000)
-
-            # Scroll progresivo para forzar Lazy Loading
-            _log("📜 Ejecutando autoscroll para cargar imágenes y tarjetas...")
-            for _ in range(4):
-                page.mouse.wheel(0, 1000)
-                time.sleep(0.8)
-
-            # Esperar a que existan enlaces de productos en el DOM
-            page.wait_for_selector('a[href*="/p"]', timeout=10000)
-
-            # Evaluar el DOM renderizado desde el propio JavaScript del navegador
-            items_dom = page.evaluate("""() => {
-                const results = [];
-                const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
-                
-                links.forEach(a => {
-                    const href = a.getAttribute('href');
-                    if (!href || href.includes('/c/') || href.includes('ayuda')) return;
-
-                    // Buscar el contenedor de tarjeta más cercano
-                    let card = a;
-                    for (let i = 0; i < 4; i++) {
-                        if (card.parentElement && !['BODY', 'MAIN', 'SECTION', 'HEADER', 'NAV'].includes(card.parentElement.tagName)) {
-                            card = card.parentElement;
-                        }
-                    }
-
-                    const text = card.innerText || '';
-                    const img = card.querySelector('img');
-                    const imgSrc = img ? (img.src || img.getAttribute('data-src') || '') : '';
-
-                    results.push({
-                        href: href,
-                        text: text,
-                        img: imgSrc
-                    });
-                });
-                return results;
-            }""")
-
-            _log(f"🧩 Elementos capturados del DOM renderizado: {len(items_dom)}")
-
-            for item in items_dom:
-                if len(productos) >= max_items: break
-                try:
-                    href = item['href']
-                    link_final = urljoin(base_url, href.split('?')[0])
-                    ident = _normalize_identifier(link_final)
-
-                    if ident in vistos: continue
-
-                    txt = item['text']
-                    
-                    # Capturar precios con formato S/
-                    prices = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', txt, re.IGNORECASE)
-                    parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
-
-                    if not parsed_prices: continue
-
-                    p_o = min(parsed_prices)
-                    p_r = max(parsed_prices)
-
-                    if p_o <= 0.0 or p_o > limite: continue
-
-                    # Extraer el título limpiando palabras de interfaz
-                    lines = [l.strip() for l in txt.split('\n') if l.strip()]
-                    clean_lines = []
-                    for l in lines:
-                        l_up = l.upper()
-                        if any(k in l_up for k in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS', 'HORAS', 'FAVORITOS', 'HASTA', 'OFF']):
-                            continue
-                        if len(l) >= 3 and not re.match(r'^\d+[\.,]?\d*$', l):
-                            clean_lines.append(l)
-
-                    if not clean_lines: continue
-                    nombre = " ".join(clean_lines[:2]).strip().upper()
-
-                    vistos.add(ident)
-                    productos.append({
-                        "identificador": ident,
-                        "nombre": f"NATURA - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": item['img'],
-                        "fecha": datetime.now(timezone.utc).isoformat()
-                    })
-                except Exception:
-                    continue
-
-            browser.close()
-
-    except Exception as e:
-        _log(f"🛑 Error durante la ejecución de Playwright: {e}", "error")
-
-    _log(f"✅ Patrullaje completado. Total ofertas reales extraídas: {len(productos)}", "success")
-
-    summary = f"Finalizado. Productos encontrados: {len(productos)}."
-    metadata = {"source": "natura_playwright_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-    if return_as_dict:
-        return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
-    return productos
-
-
-
-
-
-
-
-
-
-
-
-
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
-#def escanear_tienda(url, limite):
- #   headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
-  #  dominio = urlparse(url).netloc.lower()
-    
-    #if "carsa.pe" in dominio: return motor_carsa(url, limite)
-    #elif "thn.pe" in dominio: return motor_thn(url, limite)
-   # elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
-  # elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
-    #elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
-   # elif "adidas.pe" in dominio: return motor_adidas(url, limite)
-   # elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
-    #elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
-    #elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
-    #elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
-    #elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
-    #elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
-    #elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
-    #elif "footloose.pe" in dominio: return motor_footloose(url, limite)
-    #elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
-    #elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
-    #elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
-   # elif "nike.com.pe" in dominio: return motor_nike(url, limite)
-    #elif "nike.com.pe" in url_completa: safe_log("🎯 [Enrutador] ¡Match detectado con Nike! Lanzando motor_nike...", "success") return motor_nike(url, limite)
-    #else: return motor_tradicional_general(url, limite, headers)
 def escanear_tienda(url, limite):
     dominio = urlparse(url).netloc.lower()
     url_completa = str(url).lower()
     
     safe_log(f"🔎 [Enrutador] Analizando URL: {url} | Dominio detectado: {dominio}", "info")
     
-    # 🛡️ Validación robusta usando la URL completa (evita errores por URLs mal copiadas en Supabase)
-    if "natura.com.pe" in url_completa:
-        safe_log("🎯 [Enrutador] ¡Match exacto con Natura! Lanzando motor_natura...", "success")
-        return motor_natura(url, limite)
-    else: 
-        safe_log(f"💤 [Enrutador] Tienda omitida (motores desactivados temporalmente para pruebas).", "info")
-        return []
+    if "carsa.pe" in dominio: return motor_carsa(url, limite)
+    elif "thn.pe" in dominio: return motor_thn(url, limite)
+    elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
+    elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
+    elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
+    elif "adidas.pe" in dominio: return motor_adidas(url, limite)
+    elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
+    elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
+    elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
+    elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
+    elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
+    elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
+    elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
+    elif "footloose.pe" in dominio: return motor_footloose(url, limite)
+    elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
+    elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
+    elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
+    elif "nike.com.pe" in dominio: return motor_nike(url, limite)
+    else: return motor_tradicional_general(url, limite, headers)
+              return []
 
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
