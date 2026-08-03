@@ -385,25 +385,25 @@ def motor_falabella(url, limite, headers):
     return productos
 
 
-def motor_adidas(url, limite):
+#=============
+    #ADIDAS
+#============
+    def motor_adidas(url, limite):
     import time
     import json
     import requests
     import re
     from bs4 import BeautifulSoup
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlparse
     from datetime import datetime, timezone, timedelta
 
-    # Función helper interna para sanitizar precios de Adidas
+    # Helper interno para sanitizar precios de Adidas
     def limpiar_precio_adidas(texto):
         if not texto:
             return 0.0
         texto = str(texto)
-        # 1. Eliminar cualquier etiqueta o texto de porcentaje/descuento (ej. "-30%", "30%")
         texto = re.sub(r'-?\s*\d+\s*%', '', texto)
-        # 2. Si vienen palabras como "Precio original", limpiarlas
         texto = re.sub(r'[^\d.,]', ' ', texto)
-        # 3. Extraer el primer bloque de números (el precio real)
         match = re.search(r'\d+(?:[.,]\d+)?', texto)
         if match:
             num_str = match.group(0).replace(',', '.')
@@ -414,12 +414,17 @@ def motor_adidas(url, limite):
         return 0.0
 
     # =======================================================
-    # ⏱️ CONTROL DE FRECUENCIA (MÁXIMO 1 VEZ CADA 2 HORAS)
+    # ⏱️ CONTROL DE FRECUENCIA INDIVIDUAL (12 HORAS POR URL)
     # =======================================================
+    # 13 URLs x 2 escaneos al día = 26 llamadas/día = 780 créditos/mes (< 1,000)
+    FRECUENCIA_MINUTOS = 720 
+    
     try:
+        # Usamos la ruta individual del enlace (path) para no bloquear las otras 12 URLs
+        path_url = urlparse(url).path
         res_check = supabase.table("historial_precios")\
             .select("fecha")\
-            .like("identificador", "ADIDAS%")\
+            .like("link_producto", f"%{path_url}%")\
             .order("fecha", descending=True)\
             .limit(1)\
             .execute()
@@ -430,40 +435,50 @@ def motor_adidas(url, limite):
             ahora = datetime.now(timezone.utc)
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
-            if minutos_transcurridos < 110:
-                safe_log(f"⏳ [Adidas] Escaneado hace {int(minutos_transcurridos)} min. Se omite esta ronda para ahorrar créditos de ScraperAPI.", "caption")
+            if minutos_transcurridos < FRECUENCIA_MINUTOS:
+                safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Se omite para cuidar los créditos de ScraperAPI.", "caption")
                 return []
     except Exception as e:
-        safe_log(f"⚠️ No se pudo verificar el temporizador de Adidas: {e}", "caption")
+        safe_log(f"⚠️ No se pudo verificar el temporizador individual de Adidas: {e}", "caption")
 
     productos_map = {}
     texto_html = ""
-    status_code = 0
 
-    safe_log("🚀 [Adidas] Solicitando página a través de ScraperAPI (Proxy Residencial)...", "info")
-
-    api_key = "4cd72a5cadb77297cd9f41f11dc632c0"
+    # =======================================================
+    # 🔑 ROTACIÓN AUTOMÁTICA DE CLAVES (SOPORTE ERROR 403)
+    # =======================================================
+    lista_keys = []
     try:
-        if "SCRAPERAPI_KEY" in st.secrets:
-            api_key = st.secrets["SCRAPERAPI_KEY"]
+        if "SCRAPERAPI_KEY" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY"])
+        if "SCRAPERAPI_KEY_2" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY_2"])
     except Exception:
         pass
+    
+    if not lista_keys:
+        lista_keys.append("4cd72a5cadb77297cd9f41f11dc632c0")
 
-    payload = {
-        'api_key': api_key,
-        'url': url
-    }
+    safe_log("🚀 [Adidas] Solicitando página a través de ScraperAPI...", "info")
 
-    try:
-        resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
-        status_code = resp.status_code
-        texto_html = resp.text
-    except Exception as e:
-        safe_log(f"🚨 [Adidas] Error al conectar con ScraperAPI: {e}", "warning")
-        return []
+    for api_key in lista_keys:
+        payload = {'api_key': api_key, 'url': url}
+        try:
+            resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
+            status_code = resp.status_code
+            
+            if status_code == 200 and len(resp.text) > 5000:
+                texto_html = resp.text
+                break  # Éxito: salimos del ciclo
+            elif status_code == 403:
+                safe_log(f"🚨 [Adidas] Error 403 (Sin Créditos) en clave {api_key[:5]}... Intentando con clave de respaldo.", "warning")
+                continue
+            else:
+                safe_log(f"⚠️ [Adidas] ScraperAPI devolvió HTTP {status_code}.", "warning")
+        except Exception as e:
+            safe_log(f"🚨 [Adidas] Error de conexión con ScraperAPI: {e}", "warning")
+            continue
 
-    if status_code != 200 or len(texto_html) <= 5000:
-        safe_log(f"🚨 [Adidas] ScraperAPI devolvió estado HTTP {status_code}.", "warning")
+    if not texto_html or len(texto_html) <= 5000:
+        safe_log("🛑 [Adidas] No se pudo obtener la página tras intentar con las claves disponibles.", "error")
         return []
 
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
@@ -497,7 +512,6 @@ def motor_adidas(url, limite):
                         nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or "").strip().upper()
                         if len(nombre) < 3: continue
 
-                        # Usar limpiador específico para Adidas
                         p_o = limpiar_precio_adidas(prod_j.get('salePrice') or prod_j.get('price'))
                         p_r = limpiar_precio_adidas(prod_j.get('originalPrice') or prod_j.get('price'))
                         if p_r == 0: p_r = p_o
@@ -537,7 +551,6 @@ def motor_adidas(url, limite):
                     if not img_el: img_el = ancestor.find('img')
 
                 if oferta_el:
-                    # Limpieza estricta descartando etiquetas de porcentaje
                     precio_oferta = limpiar_precio_adidas(oferta_el.text)
                     precio_regular = limpiar_precio_adidas(regular_el.text) if regular_el else precio_oferta
 
@@ -563,7 +576,7 @@ def motor_adidas(url, limite):
 
     return productos_list
 
-
+#=========FIN ADIDAS========
 
 
 
