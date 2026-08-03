@@ -2040,8 +2040,10 @@ def escanear_tienda(url, limite):
     elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
     elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
     elif "nike.com.pe" in dominio: return motor_nike(url, limite)
-    else: return motor_tradicional_general(url, limite, headers)
-              return []
+    else:
+        safe_log(f"💤 [Enrutador] Tienda sin motor específico. Aplicando motor tradicional general.", "info")
+        return motor_tradicional_general(url, limite, headers)
+              
 
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
