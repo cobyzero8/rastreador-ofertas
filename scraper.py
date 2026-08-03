@@ -1,4 +1,4 @@
-import os
+import os, subprocess
 import json
 import requests
 import httpx
@@ -11,6 +11,16 @@ from urllib.parse import urljoin, urlparse, parse_qs, quote
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
+
+def asegurar_playwright_instalado():
+    """Garantiza que el navegador Chromium esté instalado en la instancia de Streamlit"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        subprocess.run(["pip", "install", "playwright"])
+        subprocess.run(["playwright", "install", "chromium"])
+        subprocess.run(["playwright", "install-deps"])
+
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
