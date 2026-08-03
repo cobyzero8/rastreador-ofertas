@@ -2110,25 +2110,30 @@ def motor_natura(
 
     try:
         with sync_playwright() as p:
-            _log("🌐 Lanzando navegador Chromium headless...")
-            browser = p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security']
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                viewport={'width': 1280, 'height': 800}
-            )
-            page = context.new_page()
+          _log("🌐 Lanzando navegador Chromium headless (Modo Anti-WAF)...")
+          browser = p.chromium.launch(
+              headless=True,
+              args=[
+                  "--no-sandbox",
+                  "--disable-setuid-sandbox",
+                  "--disable-web-security",
+                  "--disable-http2",  # <--- Soluciona el error ERR_HTTP2_PROTOCOL_ERROR
+                  "--disable-blink-features=AutomationControlled",
+              ],
+          )
+          context = browser.new_context(
+              user_agent=(
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                  " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+              ),
+              viewport={"width": 1280, "height": 800},
+          )
+          page = context.new_page()
 
-            _log(f"🔗 Navegando a: {url}")
-            page.goto(url, wait_until="networkidle", timeout=30000)
-
-            # Scroll progresivo para forzar Lazy Loading
-            _log("📜 Ejecutando autoscroll para cargar imágenes y tarjetas...")
-            for _ in range(4):
-                page.mouse.wheel(0, 1000)
-                time.sleep(0.8)
+          _log(f"🔗 Navegando a: {url}")
+          # Cambiamos a 'domcontentloaded' para evitar bloqueos por tráfico en segundo plano
+          page.goto(url, wait_until="domcontentloaded", timeout=45000)
+          time.sleep(3)  # Pausa breve para hidratación de React
 
             # Esperar a que existan enlaces de productos en el DOM
             page.wait_for_selector('a[href*="/p"]', timeout=10000)
