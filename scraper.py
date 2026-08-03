@@ -2135,11 +2135,11 @@ def motor_natura(
           page.goto(url, wait_until="domcontentloaded", timeout=45000)
           time.sleep(3)  # Pausa breve para hidratación de React
 
-            # Esperar a que existan enlaces de productos en el DOM
-            page.wait_for_selector('a[href*="/p"]', timeout=10000)
+          # Esperar a que existan enlaces de productos en el DOM
+          page.wait_for_selector('a[href*="/p"]', timeout=10000)
 
-            # Evaluar el DOM renderizado desde el propio JavaScript del navegador
-            items_dom = page.evaluate("""() => {
+          # Evaluar el DOM renderizado desde el propio JavaScript del navegador
+          items_dom = page.evaluate("""() => {
                 const results = [];
                 const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
                 
