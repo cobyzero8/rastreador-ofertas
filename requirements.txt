@@ -8,3 +8,4 @@ urllib3
 cloudscraper
 playwright
 python-telegram-bot
+telethon
