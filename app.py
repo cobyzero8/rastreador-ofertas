@@ -48,7 +48,12 @@ st.sidebar.markdown("## 🧠 COBY & GEMINI")
 st.sidebar.caption("🚀 _Central de Ofertas Automatizada_")
 st.sidebar.write("---")
 
-menu = st.sidebar.radio("Sección:", ["📈 Ver Dashboard / Ofertas", "🛠️ Configurar Radares y URLs", "💥 Forzar Escaneo Intensivo"])
+menu = st.sidebar.radio("Sección:", [
+    "📈 Ver Dashboard / Ofertas", 
+    "🎟️ Cupones de Descuento", 
+    "🛠️ Configurar Radares y URLs", 
+    "💥 Forzar Escaneo Intensivo"
+])
 
 # Inicialización de Session States
 if "mod_id" not in st.session_state: st.session_state.mod_id = None
@@ -222,6 +227,56 @@ if menu == "📈 Ver Dashboard / Ofertas":
         st.dataframe(df_dash, column_config={"Tienda": "🏪 Tienda", "Nombre del Producto": "📦 Nombre del Producto", "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista"), "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"), "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"), "Descuento": st.column_config.NumberColumn("📉 Descuento", format="S/. %.2f"), "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver")}, hide_index=True, use_container_width=True)
     else:
         st.info("No hay ofertas registradas en este rango.")
+
+# ---------------------------
+# Cupones de Descuento (NUEVA SECCIÓN)
+# ---------------------------
+elif menu == "🎟️ Cupones de Descuento":
+    st.title("🎟️ Cupones y Códigos de Descuento Activos")
+    st.caption("⚡ _Central de códigos promocionales recopilados automáticamente de la web y canales de ofertas._")
+    st.write("---")
+
+    col_c1, col_c2 = st.columns([3, 1])
+    with col_c1:
+        st.subheader("📋 Lista de Cupones Vigentes por Tienda")
+    with col_c2:
+        if st.button("🔍 BUSCAR NUEVOS CUPONES AHORA", type="primary", use_container_width=True):
+            with st.spinner("🤖 Escaneando la web en busca de nuevos códigos promocionales..."):
+                try:
+                    from scrapers_cupones import ejecutar_escaneo_cupones_web
+                    ejecutar_escaneo_cupones_web()
+                    st.success("¡Escaneo finalizado! Lista de cupones actualizada.")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as ex_c:
+                    st.error(f"Error al ejecutar el rastreador de cupones: {ex_c}")
+
+    st.write("")
+    try:
+        res_cup = supabase.table("cupones").select("tienda, codigo, descripcion, origen, fecha_registro").eq("activo", True).order("fecha_registro", desc=True).execute()
+        if res_cup.data:
+            df_cupones = pd.DataFrame(res_cup.data)
+            
+            # Formatear nombres de columnas para la visualización
+            df_cupones_show = df_cupones[["tienda", "codigo", "descripcion", "origen", "fecha_registro"]].copy()
+            df_cupones_show.columns = ["Tienda", "Código", "Descripción / Beneficio", "Origen", "Fecha de Registro"]
+            
+            st.dataframe(
+                df_cupones_show,
+                column_config={
+                    "Tienda": st.column_config.TextColumn("🏪 Tienda"),
+                    "Código": st.column_config.TextColumn("🎟️ Código (Copiar y Pegar)"),
+                    "Descripción / Beneficio": st.column_config.TextColumn("📝 Descripción / Beneficio"),
+                    "Origen": st.column_config.TextColumn("🌐 Origen"),
+                    "Fecha de Registro": st.column_config.TextColumn("📅 Fecha Registro")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("No hay cupones activos registrados por el momento. Presiona 'BUSCAR NUEVOS CUPONES AHORA' para escanear.")
+    except Exception as err_c:
+        st.error(f"Error cargando cupones desde Supabase: {err_c}")
 
 # ---------------------------
 # Panel de Gestión
