@@ -385,42 +385,49 @@ def motor_falabella(url, limite, headers):
     return productos
 
 
-#=============
-    #ADIDAS
-#============
-    def motor_adidas(url, limite):
-    import time
-    import json
-    import requests
-    import re
-    from bs4 import BeautifulSoup
-    from urllib.parse import urljoin, urlparse
-    from datetime import datetime, timezone, timedelta
-
-    # Helper interno para sanitizar precios de Adidas
+# =======================================================
+# 👟 MOTOR ADIDAS OPTIMIZADO Y CORREGIDO
+# =======================================================
+def motor_adidas(url, limite):
+    # Helper interno para sanitizar precios de Adidas (Soporta miles: 1,299.00)
     def limpiar_precio_adidas(texto):
         if not texto:
             return 0.0
         texto = str(texto)
+        # Elimina porcentajes de descuento (ej. -30%)
         texto = re.sub(r'-?\s*\d+\s*%', '', texto)
-        texto = re.sub(r'[^\d.,]', ' ', texto)
-        match = re.search(r'\d+(?:[.,]\d+)?', texto)
+        # Extrae patrones numéricos
+        match = re.search(r'\d+(?:[.,]\d+)*', texto)
         if match:
-            num_str = match.group(0).replace(',', '.')
+            raw_num = match.group(0)
+            if ',' in raw_num and '.' in raw_num:
+                raw_num = raw_num.replace(',', '')
+            elif ',' in raw_num and len(raw_num.split(',')[-1]) == 2:
+                raw_num = raw_num.replace(',', '.')
+            else:
+                raw_num = raw_num.replace(',', '')
             try:
-                return float(num_str)
+                return float(raw_num)
             except ValueError:
                 return 0.0
         return 0.0
 
+    # Helper interno para extraer URL limpia de imagen
+    def extraer_url_imagen(nodo):
+        if isinstance(nodo, str) and nodo.startswith('http'):
+            return nodo
+        elif isinstance(nodo, dict):
+            return nodo.get('src') or nodo.get('url') or nodo.get('desktop') or ''
+        elif isinstance(nodo, list) and len(nodo) > 0:
+            return extraer_url_imagen(nodo[0])
+        return ''
+
     # =======================================================
     # ⏱️ CONTROL DE FRECUENCIA INDIVIDUAL (12 HORAS POR URL)
     # =======================================================
-    # 13 URLs x 2 escaneos al día = 26 llamadas/día = 780 créditos/mes (< 1,000)
     FRECUENCIA_MINUTOS = 720 
     
     try:
-        # Usamos la ruta individual del enlace (path) para no bloquear las otras 12 URLs
         path_url = urlparse(url).path
         res_check = supabase.table("historial_precios")\
             .select("fecha")\
@@ -436,7 +443,7 @@ def motor_falabella(url, limite, headers):
             minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
             if minutos_transcurridos < FRECUENCIA_MINUTOS:
-                safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Se omite para cuidar los créditos de ScraperAPI.", "caption")
+                safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Omitiendo para preservar crédito.", "caption")
                 return []
     except Exception as e:
         safe_log(f"⚠️ No se pudo verificar el temporizador individual de Adidas: {e}", "caption")
@@ -445,7 +452,7 @@ def motor_falabella(url, limite, headers):
     texto_html = ""
 
     # =======================================================
-    # 🔑 ROTACIÓN AUTOMÁTICA DE CLAVES (SOPORTE ERROR 403)
+    # 🔑 ROTACIÓN AUTOMÁTICA DE CLAVES
     # =======================================================
     lista_keys = []
     try:
@@ -457,7 +464,7 @@ def motor_falabella(url, limite, headers):
     if not lista_keys:
         lista_keys.append("4cd72a5cadb77297cd9f41f11dc632c0")
 
-    safe_log("🚀 [Adidas] Solicitando página a través de ScraperAPI...", "info")
+    safe_log("🚀 [Adidas] Consultando catálogo vía ScraperAPI...", "info")
 
     for api_key in lista_keys:
         payload = {'api_key': api_key, 'url': url}
@@ -467,24 +474,24 @@ def motor_falabella(url, limite, headers):
             
             if status_code == 200 and len(resp.text) > 5000:
                 texto_html = resp.text
-                break  # Éxito: salimos del ciclo
+                break
             elif status_code == 403:
-                safe_log(f"🚨 [Adidas] Error 403 (Sin Créditos) en clave {api_key[:5]}... Intentando con clave de respaldo.", "warning")
+                safe_log(f"🚨 [Adidas] Error 403 en clave {api_key[:5]}... Probando clave de respaldo.", "warning")
                 continue
             else:
-                safe_log(f"⚠️ [Adidas] ScraperAPI devolvió HTTP {status_code}.", "warning")
+                safe_log(f"⚠️ [Adidas] ScraperAPI devolvió código HTTP {status_code}.", "warning")
         except Exception as e:
             safe_log(f"🚨 [Adidas] Error de conexión con ScraperAPI: {e}", "warning")
             continue
 
     if not texto_html or len(texto_html) <= 5000:
-        safe_log("🛑 [Adidas] No se pudo obtener la página tras intentar con las claves disponibles.", "error")
+        safe_log("🛑 [Adidas] Imposible obtener respuesta HTML válida de Adidas.", "error")
         return []
 
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # Estrategia 1: Extracción JSON desde __NEXT_DATA__
+    # Estrategia 1: JSON __NEXT_DATA__
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -519,7 +526,7 @@ def motor_falabella(url, limite, headers):
                         if 0 < p_o <= limite:
                             link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
                             link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
-                            img_url = str(prod_j.get('image', ''))
+                            img_url = extraer_url_imagen(prod_j.get('image'))
 
                             productos_map[link_final] = {
                                 "nombre": f"ADIDAS - {nombre}",
@@ -533,7 +540,7 @@ def motor_falabella(url, limite, headers):
         except Exception:
             pass
 
-    # Estrategia 2: Fallback por selectores HTML
+    # Estrategia 2: Selectores HTML Fallback
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
@@ -570,13 +577,11 @@ def motor_falabella(url, limite, headers):
 
     productos_list = list(productos_map.values())
     if productos_list:
-        safe_log(f"✅ [Adidas] ¡Éxito vía ScraperAPI! Se indexaron {len(productos_list)} ofertas.", "success")
+        safe_log(f"✅ [Adidas] ¡Éxito! Se procesaron {len(productos_list)} ofertas.", "success")
     else:
-        safe_log(f"⚠️ [Adidas] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Adidas] No hay ofertas por debajo del presupuesto S/. {limite:.2f}", "warning")
 
     return productos_list
-
-#=========FIN ADIDAS========
 
 
 
