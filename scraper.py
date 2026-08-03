@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlparse, parse_qs, quote, urlunparse, urlenco
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
+from gestor_cupones import obtener_bloque_cupones_telegram
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1995,6 +1996,9 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         
+        # Consultar cupones activos para la tienda actual en Supabase
+        bloque_cupones = obtener_bloque_cupones_telegram(tienda_actual)
+
         # Actualizar la fecha del último escaneo en la tabla radares sin duplicar nada
         try:
             supabase.table("radares").update({"ultimo_escaneo": fecha_hoy}).eq("identificador", item['identificador']).execute()
@@ -2048,6 +2052,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
                         f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
                         f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
+                        f"{bloque_cupones}"
                     )
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
@@ -2066,6 +2071,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
                         f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
                         f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
+                        f"{bloque_cupones}"
                     )
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
