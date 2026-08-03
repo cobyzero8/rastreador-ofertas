@@ -91,11 +91,22 @@ def extraer_cupones_de_url(url, headers):
         soup = BeautifulSoup(resp.text, 'html.parser')
         encontrados = []
         
-        bloques = soup.find_all(['div', 'article', 'li'], class_=re.compile(r'(offer|coupon|promo|deal)', re.I))
-        
+        # 1️⃣ Extracción directa de atributos HTML (ej. data-code="POWER80" en CuponesPerú)
+        elementos_data = soup.find_all(lambda tag: tag.has_attr('data-code') or tag.has_attr('data-coupon'))
+        for el in elementos_data:
+            cod = el.get('data-code') or el.get('data-coupon')
+            if cod and isinstance(cod, str):
+                cod_clean = cod.strip().upper()
+                if len(cod_clean) >= 3 and cod_clean not in PALABRAS_IGNORAR and not cod_clean.isdigit():
+                    # Intenta obtener el título desde data-title o el texto del elemento
+                    desc = el.get('data-title') or el.get('title') or "Descuento en tienda"
+                    desc = re.sub(r'\s+', ' ', str(desc)).strip()[:80]
+                    encontrados.append((cod_clean, desc))
+
+        # 2️⃣ Extracción por bloques de promociones en texto visible (Picodi, El Comercio)
+        bloques = soup.find_all(['div', 'article', 'li', 'a'], class_=re.compile(r'(offer|coupon|promo|deal)', re.I))
         for b in bloques:
             txt = b.get_text()
-            
             cand_codigos = re.findall(r'\b[A-Z0-9]{4,15}\b', txt)
             codigos_validos = [c for c in cand_codigos if c not in PALABRAS_IGNORAR and not c.isdigit()]
             
@@ -103,7 +114,6 @@ def extraer_cupones_de_url(url, headers):
                 tit_el = b.find(['h3', 'h4', 'p', 'span'], class_=re.compile(r'(title|name|desc|header)', re.I))
                 desc = tit_el.get_text().strip()[:70] if tit_el else "Descuento en tienda"
                 desc = re.sub(r'\s+', ' ', desc)
-                
                 for cod in codigos_validos:
                     encontrados.append((cod, desc))
                     
@@ -111,7 +121,6 @@ def extraer_cupones_de_url(url, headers):
     except Exception as e:
         print(f"  🛑 Error al conectar con {url}: {e}")
         return []
-
 def ejecutar_escaneo_cupones_web():
     if not SUPABASE_KEY or not SUPABASE_URL:
         print("🛑 Error: SUPABASE_URL o SUPABASE_KEY no están configurados.")
