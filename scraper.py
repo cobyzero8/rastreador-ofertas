@@ -7,7 +7,7 @@ import re
 import time
 import random
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse, parse_qs, quote
+from urllib.parse import urljoin, urlparse, parse_qs, quote, unquote, urlunparse, urlencode
 from supabase import create_client, Client
 import urllib3
 import streamlit as st
@@ -411,16 +411,12 @@ def motor_adidas(url, limite):
     from urllib.parse import urljoin
     from datetime import datetime, timezone, timedelta
 
-    # Función helper interna para sanitizar precios de Adidas
     def limpiar_precio_adidas(texto):
         if not texto:
             return 0.0
         texto = str(texto)
-        # 1. Eliminar cualquier etiqueta o texto de porcentaje/descuento (ej. "-30%", "30%")
         texto = re.sub(r'-?\s*\d+\s*%', '', texto)
-        # 2. Si vienen palabras como "Precio original", limpiarlas
         texto = re.sub(r'[^\d.,]', ' ', texto)
-        # 3. Extraer el primer bloque de números (el precio real)
         match = re.search(r'\d+(?:[.,]\d+)?', texto)
         if match:
             num_str = match.group(0).replace(',', '.')
@@ -430,9 +426,6 @@ def motor_adidas(url, limite):
                 return 0.0
         return 0.0
 
-    # =======================================================
-    # ⏱️ CONTROL DE FRECUENCIA (MÁXIMO 1 VEZ CADA 2 HORAS)
-    # =======================================================
     try:
         res_check = supabase.table("historial_precios")\
             .select("fecha")\
@@ -486,7 +479,6 @@ def motor_adidas(url, limite):
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
-    # Estrategia 1: Extracción JSON desde __NEXT_DATA__
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -514,7 +506,6 @@ def motor_adidas(url, limite):
                         nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or "").strip().upper()
                         if len(nombre) < 3: continue
 
-                        # Usar limpiador específico para Adidas
                         p_o = limpiar_precio_adidas(prod_j.get('salePrice') or prod_j.get('price'))
                         p_r = limpiar_precio_adidas(prod_j.get('originalPrice') or prod_j.get('price'))
                         if p_r == 0: p_r = p_o
@@ -536,7 +527,6 @@ def motor_adidas(url, limite):
         except Exception:
             pass
 
-    # Estrategia 2: Fallback por selectores HTML
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
@@ -554,7 +544,6 @@ def motor_adidas(url, limite):
                     if not img_el: img_el = ancestor.find('img')
 
                 if oferta_el:
-                    # Limpieza estricta descartando etiquetas de porcentaje
                     precio_oferta = limpiar_precio_adidas(oferta_el.text)
                     precio_regular = limpiar_precio_adidas(regular_el.text) if regular_el else precio_oferta
 
@@ -579,9 +568,6 @@ def motor_adidas(url, limite):
         safe_log(f"⚠️ [Adidas] No se encontraron ofertas por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
-
-
 
 
 def motor_platanitos(url, limite):
@@ -1205,9 +1191,6 @@ def motor_ripley(url, limite, headers=None):
     return []
 
 
-
-
-
 def motor_footloose(url, limite):
     import requests
     from urllib.parse import urlparse, parse_qs, urljoin
@@ -1226,38 +1209,31 @@ def motor_footloose(url, limite):
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
         
-        # 1. Extraer la ruta raw de la consulta
         raw_path = parsed_url.path.rstrip('/')
         if 'query' in query_params:
             q_val = query_params['query'][0]
             if q_val.startswith('/'):
                 raw_path = q_val.rstrip('/')
 
-        # 2. Sanitizar segmentos descartando tallas numéricas que rompen VTEX (ej. "9-5")
         segmentos = [s for s in raw_path.split('/') if s and not re.match(r'^\d+[\-_.]\d+$', s)]
         path_limpio = '/' + '/'.join(segmentos) if segmentos else "/calzados"
         path_base = '/' + '/'.join(segmentos[:2]) if len(segmentos) >= 2 else path_limpio
 
-        # 3. Construcción del plan de peticiones secuenciales
         urls_a_probar = []
 
-        # Plan A: Path limpio omitiendo mapas de talla incompatibles
         if "map" in query_params:
             maps = query_params["map"][0].split(',')
             maps_validos = [m for m in maps if m in ['c', 'category-1', 'category-2', 'category-3', 'brand', 'b']]
             if maps_validos and len(maps_validos) == len(segmentos):
                 urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49", "map": ",".join(maps_validos)}))
 
-        # Plan B: Path limpio directo sin parámetro map
         urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_limpio}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
         
-        # Plan C: Desescalado a categoría raíz (/calzados/hombres)
         if path_base != path_limpio:
             urls_a_probar.append((f"https://www.footloose.pe/api/catalog_system/pub/products/search{path_base}", {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}))
 
         safe_log(f"📡 [Footloose API] Iniciando escaneo multinivel sobre `{path_limpio}`...", "info")
 
-        # 4. Ejecución del escaneo con fallback automático
         for api_endpoint, params in urls_a_probar:
             try:
                 resp = requests.get(api_endpoint, headers=headers, params=params, timeout=12, verify=False)
@@ -1296,7 +1272,6 @@ def motor_footloose(url, limite):
                                     }
                             except Exception: continue
                         
-                        # Si obtuvimos resultados dentro del rango de precio, rompemos el ciclo
                         if len(productos_map) > 0:
                             break
             except Exception:
@@ -1336,15 +1311,12 @@ def motor_estilos(url, limite):
         
         raw_path = unquote(parsed_url.path.rstrip('/'))
         
-        # Descartar tallas o segmentos numéricos incompatibles
         segmentos = [s for s in raw_path.split('/') if s and not re.match(r'^\d+[\-_.]\d+$', s)]
         path_limpio = '/' + '/'.join(segmentos) if segmentos else "/poleras-hombre"
         path_base = '/' + '/'.join(segmentos[-2:]) if len(segmentos) >= 2 else path_limpio
 
-        # Estrategia de peticiones secuenciales para VTEX Estilos
         urls_a_probar = []
 
-        # 1. Búsqueda por término explícito (_q o ft)
         q_term = query_params.get('_q', query_params.get('ft', [None]))[0]
         if q_term:
             urls_a_probar.append((
@@ -1352,13 +1324,11 @@ def motor_estilos(url, limite):
                 {"ft": q_term, "O": "OrderByPriceASC", "_from": "0", "_to": "49"}
             ))
 
-        # 2. Búsqueda por categoría / marcas (/puma/quiksilver/m/poleras hombre)
         urls_a_probar.append((
             f"https://www.estilos.com.pe/api/catalog_system/pub/products/search{path_limpio}",
             {"O": "OrderByPriceASC", "_from": "0", "_to": "49"}
         ))
         
-        # 3. Búsqueda por ruta base reducida
         if path_base != path_limpio:
             urls_a_probar.append((
                 f"https://www.estilos.com.pe/api/catalog_system/pub/products/search{path_base}",
@@ -1413,7 +1383,6 @@ def motor_estilos(url, limite):
     except Exception as e:
         safe_log(f"⚠️ [Estilos API] Error de consulta: {e}", "warning")
 
-    # Respaldo HTML por JSON-LD en caso de contingencia
     if not productos_map:
         try:
             safe_log("🛡️ [Estilos HTML] Escaneando estructura de respaldo...", "info")
@@ -1483,15 +1452,12 @@ def motor_promart(url, limite, headers=None):
     try:
         parsed_url = urlparse(url)
         
-        # 1. Construcción dinámica según la categoría de la URL enviada
         path = parsed_url.path.rstrip('/')
         api_base_url = f"https://www.promart.pe/api/catalog_system/pub/products/search{path}"
 
-        # 2. Armado manual del Query String sin romper los filtros VTEX
         query_parts = []
         if parsed_url.query:
             for pair in parsed_url.query.split('&'):
-                # Elimina filtros redundantes de categoría que causan el HTTP 400
                 if pair.startswith('fq=C:') or pair.startswith('fq=C%3A'):
                     continue
                 if pair.startswith('_from=') or pair.startswith('_to='):
@@ -1515,14 +1481,12 @@ def motor_promart(url, limite, headers=None):
 
             url_decodificada = unquote(url).lower()
             
-            # 3. FILTRO ESPECÍFICO DE TV: Solo se activa si la URL pide explícitamente el rango 50-59
             exigir_50_59_tv = "50-59" in url_decodificada and ("televisor" in path or "tv" in path)
 
             for p in data:
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # Validación estricta de pulgadas SOLO si es búsqueda de TVs 50-59"
                     if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
@@ -1554,7 +1518,6 @@ def motor_promart(url, limite, headers=None):
                     p_o = float(offer.get("Price", 0.0))
                     p_r = float(offer.get("ListPrice", p_o))
                     
-                    # Detección de Tarjeta oh!
                     p_tarjeta = None
                     installment_options = offer.get("PaymentOptions", {}).get("installmentOptions", [])
                     
@@ -1616,21 +1579,17 @@ def motor_coolbox(url, limite, headers=None):
         query_params = parse_qs(parsed_url.query)
         path = parsed_url.path.rstrip('/')
 
-        # 1. DETECCIÓN DE CLUSTERS Y COLECCIONES (Ej. initialQuery=1539)
         initial_map = query_params.get("initialMap", [""])[0]
         initial_query = query_params.get("initialQuery", [""])[0]
 
         query_parts = []
 
         if initial_map == "productClusterIds" and initial_query:
-            # Si es un cluster/colección dinámico, usamos la API base sin la ruta /todo-tv
             api_base_url = "https://www.coolbox.pe/api/catalog_system/pub/products/search"
             query_parts.append(f"fq=productClusterIds:{initial_query}")
         else:
-            # Si es una categoría normal, mantenemos la ruta
             api_base_url = f"https://www.coolbox.pe/api/catalog_system/pub/products/search{path}"
 
-        # 2. LIMPIEZA Y TRADUCCIÓN DE PARÁMETROS
         params_ignorar = ['initialmap', 'initialquery', 'map', 'query', 'searchstate', '_from', '_to']
         
         if parsed_url.query:
@@ -1649,7 +1608,6 @@ def motor_coolbox(url, limite, headers=None):
                 else:
                     query_parts.append(pair)
         
-        # Paginación y ordenamiento por menor precio
         if not any(p.startswith('O=') for p in query_parts):
             query_parts.append("O=OrderByPriceASC")
         query_parts.append("_from=0")
@@ -1672,7 +1630,6 @@ def motor_coolbox(url, limite, headers=None):
                 try:
                     nombre_prod = p.get("productName", "").strip().upper()
                     
-                    # Filtro inteligente de pulgadas si se trata de televisores
                     if exigir_50_59_tv:
                         match_pulgadas = re.search(r'(\d{2})\s*(?:"|”|’|PULGADAS|PULGADA|P\b)', nombre_prod)
                         if match_pulgadas:
@@ -1704,10 +1661,9 @@ def motor_coolbox(url, limite, headers=None):
                     if offer.get("AvailableQuantity", 0) <= 0: 
                         continue
 
-                    p_o = float(offer.get("Price", 0.0))          # Precio Web / Oferta
-                    p_r = float(offer.get("ListPrice", p_o))      # Precio Lista tachado
+                    p_o = float(offer.get("Price", 0.0))          
+                    p_r = float(offer.get("ListPrice", p_o))      
                     
-                    # Detección de Precio Exclusivo con Tarjetas asociadas
                     p_tarjeta = None
                     installment_options = offer.get("PaymentOptions", {}).get("installmentOptions", [])
                     
@@ -1748,8 +1704,6 @@ def motor_coolbox(url, limite, headers=None):
         safe_log(f"⚠️ [Coolbox] No hay productos que cumplan el filtro por debajo de S/. {limite:.2f}", "warning")
 
     return productos_list
-
-
 
 
 def motor_tradicional_general(url, limite, headers):
@@ -1877,11 +1831,9 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 _safe_log("❌ Error fatal: No se obtuvo respuesta HTTP de Nike.", "error")
                 break
 
-            # 🔍 BLOQUE DE DIAGNÓSTICO EN VIVO
             _safe_log(f"📡 [DIAGNÓSTICO NIKE] Status Code recibido: {resp.status_code}")
             _safe_log(f"📡 [DIAGNÓSTICO NIKE] Tamaño del contenido: {len(resp.text)} caracteres")
             
-            # Tomamos una muestra de los primeros 300 caracteres para ver qué respondió exactamente el servidor
             preview_texto = resp.text[:300].replace('\n', ' ').strip()
             _safe_log(f"🔍 [DIAGNÓSTICO NIKE] Preview HTML: {preview_texto}...")
 
@@ -1894,14 +1846,12 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
             text = resp.text
             
-            # Verificación extra por si la respuesta contiene avisos de bloqueo ocultos
             if any(term in text.lower() for term in ["access denied", "cloudflare", "captcha", "security check"]):
                 _safe_log("🚨 [ALERTA] El servidor devolvió una página de seguridad/bloqueo anti-bot de Nike.", "error")
 
             soup = BeautifulSoup(text, "html.parser")
             page_products = []
 
-            # 1️⃣ Capa 1: JSON
             if '"results"' in text or '"products"' in text or '"searchResults"' in text:
                 try:
                     json_blocks = re.findall(r'(\{(?:[^{}]|(?1))*\})', text[:300000])
@@ -1932,7 +1882,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 except Exception as e_json:
                     _safe_log(f"Error procesando JSON: {e_json}", "warning")
 
-            # 2️⃣ Capa 2: DOM HTML
             if not page_products:
                 cards = soup.select(".product-tile, .product-card, .product-grid li, .product-grid div.product, a[href*='/product/'], a[href*='/productos/']")
                 _safe_log(f"🔍 Tarjetas detectadas en HTML mediante selectores: {len(cards)}")
@@ -2110,36 +2059,36 @@ def motor_natura(
 
     try:
         with sync_playwright() as p:
-          _log("🌐 Lanzando navegador Chromium headless (Modo Anti-WAF)...")
-          browser = p.chromium.launch(
-              headless=True,
-              args=[
-                  "--no-sandbox",
-                  "--disable-setuid-sandbox",
-                  "--disable-web-security",
-                  "--disable-http2",  # <--- Soluciona el error ERR_HTTP2_PROTOCOL_ERROR
-                  "--disable-blink-features=AutomationControlled",
-              ],
-          )
-          context = browser.new_context(
-              user_agent=(
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                  " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-              ),
-              viewport={"width": 1280, "height": 800},
-          )
-          page = context.new_page()
+            _log("🌐 Lanzando navegador Chromium headless (Modo Anti-WAF)...")
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-web-security",
+                    "--disable-http2",  # <--- Soluciona el error ERR_HTTP2_PROTOCOL_ERROR
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+            )
+            page = context.new_page()
 
-          _log(f"🔗 Navegando a: {url}")
-          # Cambiamos a 'domcontentloaded' para evitar bloqueos por tráfico en segundo plano
-          page.goto(url, wait_until="domcontentloaded", timeout=45000)
-          time.sleep(3)  # Pausa breve para hidratación de React
+            _log(f"🔗 Navegando a: {url}")
+            # Cambiamos a 'domcontentloaded' para evitar bloqueos por tráfico en segundo plano
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            time.sleep(3)  # Pausa breve para hidratación de React
 
-          # Esperar a que existan enlaces de productos en el DOM
-          page.wait_for_selector('a[href*="/p"]', timeout=10000)
+            # Esperar a que existan enlaces de productos en el DOM
+            page.wait_for_selector('a[href*="/p"]', timeout=10000)
 
-          # Evaluar el DOM renderizado desde el propio JavaScript del navegador
-          items_dom = page.evaluate("""() => {
+            # Evaluar el DOM renderizado desde el propio JavaScript del navegador
+            items_dom = page.evaluate("""() => {
                 const results = [];
                 const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
                 
@@ -2233,50 +2182,12 @@ def motor_natura(
     return productos
 
 
-
-
-
-
-
-
-
-
-
-
-# =======================================================
-# ENRUTADOR AISLADO
-# =======================================================
-#def escanear_tienda(url, limite):
- #   headers = {"User-Agent": random.choice(LISTA_USER_AGENTS), "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", "Accept-Language": "es-ES,es;q=0.9"}
-  #  dominio = urlparse(url).netloc.lower()
-    
-    #if "carsa.pe" in dominio: return motor_carsa(url, limite)
-    #elif "thn.pe" in dominio: return motor_thn(url, limite)
-   # elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
-  # elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
-    #elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
-   # elif "adidas.pe" in dominio: return motor_adidas(url, limite)
-   # elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
-    #elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
-    #elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
-    #elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
-    #elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
-    #elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
-    #elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
-    #elif "footloose.pe" in dominio: return motor_footloose(url, limite)
-    #elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
-    #elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
-    #elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
-   # elif "nike.com.pe" in dominio: return motor_nike(url, limite)
-    #elif "nike.com.pe" in url_completa: safe_log("🎯 [Enrutador] ¡Match detectado con Nike! Lanzando motor_nike...", "success") return motor_nike(url, limite)
-    #else: return motor_tradicional_general(url, limite, headers)
 def escanear_tienda(url, limite):
     dominio = urlparse(url).netloc.lower()
     url_completa = str(url).lower()
     
     safe_log(f"🔎 [Enrutador] Analizando URL: {url} | Dominio detectado: {dominio}", "info")
     
-    # 🛡️ Validación robusta usando la URL completa (evita errores por URLs mal copiadas en Supabase)
     if "natura.com.pe" in url_completa:
         safe_log("🎯 [Enrutador] ¡Match exacto con Natura! Lanzando motor_natura...", "success")
         return motor_natura(url, limite)
@@ -2284,9 +2195,6 @@ def escanear_tienda(url, limite):
         safe_log(f"💤 [Enrutador] Tienda omitida (motores desactivados temporalmente para pruebas).", "info")
         return []
 
-# =======================================================
-# SISTEMA DE PATRULLAJE CENTRAL
-# =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
     try: 
         res = supabase.table("radares").select("*").execute()
@@ -2311,7 +2219,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         "CAMA": "🛏️", "OTROS": "📦"
     }
     
-    # 🚀 CONTENEDOR DE DIAGNÓSTICO EN TIEMPO REAL (Aparece PRIMERO arriba)
     status_container = st.status("🔍 **Iniciando Patrullaje y Diagnóstico en Vivo...**", expanded=True)
     
     with status_container:
@@ -2319,7 +2226,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             ident = item['identificador'].upper()
             url_low = item['url'].lower()
             
-            # Categorización del Radar (Incluyendo el parche de Nike en Zapatillas)
             if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
             elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
             elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
@@ -2344,7 +2250,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             tienda_actual = ident.replace('_', '-').split('-')[0]
             st.write(f"🔄 **Patrullando Tienda:** `{tienda_actual}` | Categoría: *{grupo}*...")
             
-            # Aquí se ejecuta el motor y los logs de diagnóstico saldrán en vivo dentro de la caja
             prods = escanear_tienda(item['url'], item['precio_max'])
             
             for p in prods:
@@ -2421,7 +2326,6 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
 
         st.success("✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**")
 
-    # 📊 REPORTE VISUAL DE PRODUCTOS (Se muestra DESPUÉS del diagnóstico)
     if len(lista_html_streamlit) > 0:
         try:
             st.markdown("---")
