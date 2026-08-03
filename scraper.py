@@ -714,12 +714,22 @@ def motor_carsa(url, limite):
         
     return productos
 
+import re
+from urllib.parse import urlparse, urljoin
+import requests
+from bs4 import BeautifulSoup
+import json
+
 def motor_oechsle(url, limite):
     productos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
         "Accept": "application/json"
     }
+    
+    # 🛠️ FIX 1: Limpiar la URL de entrada de espacios o caracteres extraños
+    url = str(url).strip()
+    url = re.sub(r'^\[|\]$', '', url)  # Elimina corchetes si existieran por error
     
     try:
         safe_log("📡 [Oechsle] Analizando estructura del radar...", "info")
@@ -732,18 +742,24 @@ def motor_oechsle(url, limite):
         
         has_category_filter = 'fq=C:' in raw_query or 'fq=C%3A' in raw_query
         
+        # 🛠️ FIX 2: Construcción limpia de la API oficial de VTEX (Sin etiquetas ni markdown)
+        base_api = "https://www.oechsle.pe/api/catalog_system/pub/products/search"
+        
         if has_category_filter:
-            api_url = f"[https://www.oechsle.pe/api/catalog_system/pub/products/search](https://www.oechsle.pe/api/catalog_system/pub/products/search)?{raw_query}"
+            api_url = f"{base_api}?{raw_query}"
         else:
             category_path = parsed_url.path.rstrip('/')
             if category_path and not category_path.startswith('/'):
                 category_path = '/' + category_path
-            api_url = f"[https://www.oechsle.pe/api/catalog_system/pub/products/search](https://www.oechsle.pe/api/catalog_system/pub/products/search){category_path}?{raw_query}"
+            api_url = f"{base_api}{category_path}?{raw_query}"
             
         if '_from=' not in api_url:
             api_url += "&_from=0&_to=49"
             
-        safe_log("📡 [Oechsle] Conectando con la base de datos oficial...", "info")
+        # 🛠️ FIX 3: Sanitizar url_api antes de enviarla a requests
+        api_url = str(api_url).strip()
+        
+        safe_log(f"📡 [Oechsle] Conectando con la base de datos oficial...", "info")
         resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
         
         if resp.status_code in [200, 206]:
@@ -790,7 +806,11 @@ def motor_oechsle(url, limite):
         try:
             html_headers = headers.copy()
             html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-            resp = requests.get(url, headers=html_headers, timeout=15, verify=False)
+            
+            # Sanitizado de la URL original para la contingencia
+            clean_html_url = str(url).strip()
+            resp = requests.get(clean_html_url, headers=html_headers, timeout=15, verify=False)
+            
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 json_ld_prods = []
@@ -816,7 +836,7 @@ def motor_oechsle(url, limite):
                             nombre = prod.get('name', '').upper()
                             link_final = prod.get('url', '')
                             if not link_final: continue
-                            link_final = urljoin("[https://www.oechsle.pe](https://www.oechsle.pe)", link_final)
+                            link_final = urljoin("https://www.oechsle.pe", link_final)
                             
                             if link_final in vistos_links: continue
                             
