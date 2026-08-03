@@ -388,6 +388,9 @@ def motor_falabella(url, limite, headers):
     except Exception: pass
     return productos
 
+# =======================================================
+# 🚀 MOTOR ADIDAS CON CONTROL DE FRECUENCIA EN RADARES
+# =======================================================
 def motor_adidas(url, limite):
     def limpiar_precio_adidas(texto):
         if not texto: return 0.0
@@ -412,38 +415,42 @@ def motor_adidas(url, limite):
         elif isinstance(nodo, list) and len(nodo) > 0: return extraer_url_imagen(nodo[0])
         return ''
 
-    FRECUENCIA_MINUTOS = 720 
+    FRECUENCIA_MINUTOS = 720  # 12 Horas
     
+    # Check de tiempo basado en la tabla 'radares'
     try:
-        path_url = urlparse(url).path
-        res_check = supabase.table("historial_precios")\
-            .select("fecha")\
-            .like("link_producto", f"%{path_url}%")\
-            .order("fecha", descending=True)\
+        res_check = supabase.table("radares")\
+            .select("ultimo_escaneo")\
+            .eq("url", url)\
             .limit(1)\
             .execute()
 
         if res_check.data and len(res_check.data) > 0:
-            ultima_fecha_str = res_check.data[0]['fecha']
-            ultima_fecha = datetime.fromisoformat(ultima_fecha_str.replace('Z', '+00:00'))
-            ahora = datetime.now(timezone.utc)
-            minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
+            fecha_str = res_check.data[0].get('ultimo_escaneo')
+            if fecha_str:
+                ultima_fecha = datetime.strptime(fecha_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone(timedelta(hours=-5)))
+                ahora = datetime.now(timezone(timedelta(hours=-5)))
+                minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
-            if minutos_transcurridos < FRECUENCIA_MINUTOS:
-                safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Omitiendo para preservar crédito.", "caption")
-                return []
+                if minutos_transcurridos < FRECUENCIA_MINUTOS:
+                    safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Omitiendo para preservar crédito de ScraperAPI.", "caption")
+                    return []
     except Exception as e:
-        safe_log(f"⚠️ No se pudo verificar el temporizador individual de Adidas: {e}", "caption")
+        safe_log(f"⚠️ No se pudo verificar el temporizador de Adidas en radares: {e}", "caption")
 
     productos_map = {}
     texto_html = ""
 
     lista_keys = []
     try:
-        if "SCRAPERAPI_KEY" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY"])
-        if "SCRAPERAPI_KEY_2" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY_2"])
+        if hasattr(st, "secrets"):
+            if "SCRAPERAPI_KEY" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY"])
+            if "SCRAPERAPI_KEY_2" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY_2"])
     except Exception: pass
     
+    if "SCRAPERAPI_KEY" in os.environ:
+        lista_keys.append(os.environ["SCRAPERAPI_KEY"])
+
     if not lista_keys:
         lista_keys.append("4cd72a5cadb77297cd9f41f11dc632c0")
 
@@ -452,7 +459,7 @@ def motor_adidas(url, limite):
     for api_key in lista_keys:
         payload = {'api_key': api_key, 'url': url}
         try:
-            resp = requests.get('[https://api.scraperapi.com/](https://api.scraperapi.com/)', params=payload, timeout=40)
+            resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
             status_code = resp.status_code
             
             if status_code == 200 and len(resp.text) > 5000:
@@ -507,7 +514,7 @@ def motor_adidas(url, limite):
 
                         if 0 < p_o <= limite:
                             link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
-                            link_final = urljoin("[https://www.adidas.pe](https://www.adidas.pe)", link_rel) if link_rel else url
+                            link_final = urljoin("https://www.adidas.pe", link_rel) if link_rel else url
                             img_url = extraer_url_imagen(prod_j.get('image'))
 
                             productos_map[link_final] = {
@@ -541,7 +548,7 @@ def motor_adidas(url, limite):
                     precio_regular = limpiar_precio_adidas(regular_el.text) if regular_el else precio_oferta
 
                     if 0 < precio_oferta <= limite:
-                        link_final = urljoin("[https://www.adidas.pe](https://www.adidas.pe)", enlace_el['href']) if enlace_el else url
+                        link_final = urljoin("https://www.adidas.pe", enlace_el['href']) if enlace_el else url
                         img_url = img_el.get('src', '') if img_el else ''
 
                         productos_map[link_final] = {
@@ -1928,6 +1935,9 @@ def escanear_tienda(url, limite, headers=None):
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
 # =======================================================
+# =======================================================
+# SISTEMA DE PATRULLAJE CENTRAL
+# =======================================================
 def revisar_ofertas(filtro_objetivo="TODOS"):
     try: 
         res = supabase.table("radares").select("*").execute()
@@ -1985,6 +1995,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         
+        # Actualizar la fecha del último escaneo en la tabla radares sin duplicar nada
+        try:
+            supabase.table("radares").update({"ultimo_escaneo": fecha_hoy}).eq("identificador", item['identificador']).execute()
+        except Exception:
+            pass
+
         for p in prods:
             try:
                 n_u = re.sub(r'\s+', ' ', p['nombre']).strip().upper()
@@ -2059,7 +2075,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
 
     safe_log("✅ **¡Patrullaje y Diagnóstico Finalizados con Éxito!**", "success")
 
-    # Visualización en Streamlit (solo si se ejecuta mediante `streamlit run`)
+    # Renderizado UI en Streamlit si existe contexto activo
     if len(lista_html_streamlit) > 0:
         try:
             st.markdown("---")
