@@ -2015,32 +2015,22 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 def motor_natura(
     url,
     limite=9999,
-    max_pages=10,
+    max_pages=1,
     step=48,
     session=None,
     max_items=500,
-    use_playwright_fallback=False,
+    use_playwright_fallback=True,
     headers_override=None,
     return_as_dict=False
 ):
     """
-    Motor Natura Perú Definitivo (VTEX Multi-API Engine).
-    Prueba secuencialmente los endpoints de catálogo reales de VTEX / Natura Perú
-    (Intelligent Search REST, VTEX Catalog Search y Facets) para extraer ofertas con stock.
+    Motor Natura Perú Definitivo mediante Playwright.
+    Levanta un navegador Chromium headless, espera la hidratación de React / FastStore
+    y extrae los productos y precios directamente del DOM renderizado.
     """
-    import os, time, re, json, requests
+    import time, re
     from urllib.parse import urlparse, urljoin
     from datetime import datetime, timezone
-    import urllib3
-
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    try:
-        from curl_cffi import requests as curl_requests
-        USE_CURL = True
-    except Exception:
-        import requests as curl_requests  # type: ignore
-        USE_CURL = False
 
     try:
         import streamlit as st
@@ -2087,186 +2077,133 @@ def motor_natura(
             return f"NATURA-{abs(hash(link))}"
 
     productos, vistos = [], set()
-    page_count = 0
-
     parsed = urlparse(url)
-    path_segments = [s for s in parsed.path.split('/') if s and s != 'c']
-    category_slug = path_segments[-1] if path_segments else "perfumeria-para-quien"
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
-    _log(f"🌿 Iniciando Natura Perú | Categoría: '{category_slug}' | Límite: S/. {limite}")
+    _log(f"🌿 Iniciando Natura Perú (Playwright Engine) | Límite: S/. {limite}")
 
-    sess = curl_requests.Session(impersonate="chrome120") if USE_CURL else requests.Session()
-    headers_api = {
-        "accept": "application/json, text/plain, */*",
-        "accept-language": "es-PE,es;q=0.9,en;q=0.8",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "referer": "https://www.natura.com.pe/",
-        "origin": "https://www.natura.com.pe"
-    }
-    if headers_override and isinstance(headers_override, dict):
-        headers_api.update(headers_override)
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        _log("🛑 Error: Playwright no está instalado. Ejecuta 'pip install playwright && playwright install chromium'", "error")
+        if return_as_dict:
+            return {"summary": "Error de dependencias", "productos": [], "metadata": {}, "logs": logs_list}
+        return []
 
-    for page in range(1, max_pages + 1):
-        page_count += 1
-        page_items = 0
-        from_idx = (page - 1) * step
-        to_idx = page * step - 1
+    try:
+        with sync_playwright() as p:
+            _log("🌐 Lanzando navegador Chromium headless...")
+            browser = p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security']
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={'width': 1280, 'height': 800}
+            )
+            page = context.new_page()
 
-        _log(f"🔗 [Pág. {page}] Probando endpoints de VTEX Catalog...")
+            _log(f"🔗 Navegando a: {url}")
+            page.goto(url, wait_until="networkidle", timeout=30000)
 
-        raw_products = []
+            # Scroll progresivo para forzar Lazy Loading
+            _log("📜 Ejecutando autoscroll para cargar imágenes y tarjetas...")
+            for _ in range(4):
+                page.mouse.wheel(0, 1000)
+                time.sleep(0.8)
 
-        # --- ENDPOINT 1: VTEX Intelligent Search (Categoría / Path) ---
-        if not raw_products:
-            url_is_cat = f"https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search/c/{category_slug}"
-            params_1 = {"page": page, "count": step, "sort": "discount:desc"}
-            try:
-                r1 = sess.get(url_is_cat, headers=headers_api, params=params_1, timeout=10)
-                if r1.status_code == 200:
-                    data1 = r1.json()
-                    raw_products = data1.get('products', [])
-                    if raw_products:
-                        _log(f"📡 [VTEX IS Path] ¡Éxito! Recibidos {len(raw_products)} productos.", "success")
-            except Exception as e:
-                _log(f"⚠️ IS Path error: {e}", "warning")
+            # Esperar a que existan enlaces de productos en el DOM
+            page.wait_for_selector('a[href*="/p"]', timeout=10000)
 
-        # --- ENDPOINT 2: VTEX Intelligent Search (Query / Search) ---
-        if not raw_products:
-            url_is_query = "https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search"
-            search_term = category_slug.replace("-para-quien", "").replace("-", " ")
-            params_2 = {"query": search_term, "page": page, "count": step, "sort": "discount:desc"}
-            try:
-                r2 = sess.get(url_is_query, headers=headers_api, params=params_2, timeout=10)
-                if r2.status_code == 200:
-                    data2 = r2.json()
-                    raw_products = data2.get('products', [])
-                    if raw_products:
-                        _log(f"📡 [VTEX IS Query] ¡Éxito! Recibidos {len(raw_products)} productos.", "success")
-            except Exception as e:
-                _log(f"⚠️ IS Query error: {e}", "warning")
+            # Evaluar el DOM renderizado desde el propio JavaScript del navegador
+            items_dom = page.evaluate("""() => {
+                const results = [];
+                const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
+                
+                links.forEach(a => {
+                    const href = a.getAttribute('href');
+                    if (!href || href.includes('/c/') || href.includes('ayuda')) return;
 
-        # --- ENDPOINT 3: VTEX Intelligent Search (Facets) ---
-        if not raw_products:
-            url_is_facets = "https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search"
-            params_3 = {
-                "selectedFacets[0][key]": "category-1",
-                "selectedFacets[0][value]": category_slug,
-                "page": page,
-                "count": step
-            }
-            try:
-                r3 = sess.get(url_is_facets, headers=headers_api, params=params_3, timeout=10)
-                if r3.status_code == 200:
-                    data3 = r3.json()
-                    raw_products = data3.get('products', [])
-                    if raw_products:
-                        _log(f"📡 [VTEX IS Facets] ¡Éxito! Recibidos {len(raw_products)} productos.", "success")
-            except Exception as e:
-                _log(f"⚠️ IS Facets error: {e}", "warning")
+                    // Buscar el contenedor de tarjeta más cercano
+                    let card = a;
+                    for (let i = 0; i < 4; i++) {
+                        if (card.parentElement && !['BODY', 'MAIN', 'SECTION', 'HEADER', 'NAV'].includes(card.parentElement.tagName)) {
+                            card = card.parentElement;
+                        }
+                    }
 
-        # --- ENDPOINT 4: VTEX Catalog System Search Legacy ---
-        if not raw_products:
-            url_legacy = f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{category_slug}"
-            params_4 = {"_from": from_idx, "_to": to_idx, "O": "OrderByTopSaleDESC"}
-            try:
-                r4 = sess.get(url_legacy, headers=headers_api, params=params_4, timeout=10)
-                if r4.status_code == 200:
-                    data4 = r4.json()
-                    if isinstance(data4, list) and data4:
-                        raw_products = data4
-                        _log(f"📡 [VTEX Legacy Search] ¡Éxito! Recibidos {len(raw_products)} productos.", "success")
-            except Exception as e:
-                _log(f"⚠️ Legacy Search error: {e}", "warning")
+                    const text = card.innerText || '';
+                    const img = card.querySelector('img');
+                    const imgSrc = img ? (img.src || img.getAttribute('data-src') || '') : '';
 
-        # --- ENDPOINT 5: VTEX Search FT (FullText) ---
-        if not raw_products:
-            url_ft = "https://www.natura.com.pe/api/catalog_system/pub/products/search"
-            params_5 = {"ft": "perfume", "_from": from_idx, "_to": to_idx}
-            try:
-                r5 = sess.get(url_ft, headers=headers_api, params=params_5, timeout=10)
-                if r5.status_code == 200:
-                    data5 = r5.json()
-                    if isinstance(data5, list) and data5:
-                        raw_products = data5
-                        _log(f"📡 [VTEX FT Search] ¡Éxito! Recibidos {len(raw_products)} productos.", "success")
-            except Exception as e:
-                _log(f"⚠️ FT Search error: {e}", "warning")
+                    results.push({
+                        href: href,
+                        text: text,
+                        img: imgSrc
+                    });
+                });
+                return results;
+            }""")
 
-        # --- PROCESAMIENTO Y DEPURACIÓN ---
-        if not raw_products:
-            _log(f"🛑 [Pág. {page}] Todos los endpoints devolvieron 0 productos.", "warning")
-            break
+            _log(f"🧩 Elementos capturados del DOM renderizado: {len(items_dom)}")
 
-        for p in raw_products:
-            if len(productos) >= max_items: break
-            try:
-                nombre = str(p.get('productName') or p.get('name') or '').strip().upper()
-                if not nombre or len(nombre) < 3: continue
+            for item in items_dom:
+                if len(productos) >= max_items: break
+                try:
+                    href = item['href']
+                    link_final = urljoin(base_url, href.split('?')[0])
+                    ident = _normalize_identifier(link_final)
 
-                slug = p.get('linkText') or p.get('slug') or p.get('link') or p.get('url') or ''
-                if not slug: continue
+                    if ident in vistos: continue
 
-                if not slug.startswith('http'):
-                    slug_clean = slug.strip('/')
-                    if not slug_clean.endswith('/p') and not '/p/' in slug_clean:
-                        slug_clean = f"{slug_clean}/p"
-                    link_final = f"{base_url}/{slug_clean}"
-                else:
-                    link_final = slug.split('?')[0]
+                    txt = item['text']
+                    
+                    # Capturar precios con formato S/
+                    prices = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', txt, re.IGNORECASE)
+                    parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
-                ident = _normalize_identifier(link_final, fallback=str(p.get('productId', '')))
-                if ident in vistos: continue
+                    if not parsed_prices: continue
 
-                p_o, p_r, img_url = 0.0, 0.0, ""
-                items = p.get('items', [])
-                if items and isinstance(items, list):
-                    first_item = items[0]
-                    sellers = first_item.get('sellers', [])
-                    if sellers:
-                        offer = sellers[0].get('commertialOffer', {})
-                        p_o = _safe_parse_price(offer.get('Price'))
-                        p_r = _safe_parse_price(offer.get('ListPrice')) or p_o
+                    p_o = min(parsed_prices)
+                    p_r = max(parsed_prices)
 
-                    imgs = first_item.get('images', [])
-                    if imgs and isinstance(imgs, list):
-                        img_url = imgs[0].get('imageUrl', '') if isinstance(imgs[0], dict) else str(imgs[0])
+                    if p_o <= 0.0 or p_o > limite: continue
 
-                if p_o == 0.0:
-                    price_info = p.get('priceRange', {})
-                    if isinstance(price_info, dict) and 'minPrice' in price_info:
-                        p_o = _safe_parse_price(price_info.get('minPrice', {}).get('price'))
-                        p_r = _safe_parse_price(price_info.get('maxPrice', {}).get('price')) or p_o
-                    else:
-                        p_o = _safe_parse_price(p.get('price') or p.get('spotPrice'))
-                        p_r = _safe_parse_price(p.get('listPrice') or p_o)
+                    # Extraer el título limpiando palabras de interfaz
+                    lines = [l.strip() for l in txt.split('\n') if l.strip()]
+                    clean_lines = []
+                    for l in lines:
+                        l_up = l.upper()
+                        if any(k in l_up for k in ['AGREGAR', 'BOLSA', 'S/', '%', 'ÚLTIMAS', 'HORAS', 'FAVORITOS', 'HASTA', 'OFF']):
+                            continue
+                        if len(l) >= 3 and not re.match(r'^\d+[\.,]?\d*$', l):
+                            clean_lines.append(l)
 
-                if p_o <= 0.0 or p_o > limite: continue
+                    if not clean_lines: continue
+                    nombre = " ".join(clean_lines[:2]).strip().upper()
 
-                vistos.add(ident)
-                productos.append({
-                    "identificador": ident,
-                    "nombre": f"NATURA - {nombre}",
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url,
-                    "fecha": datetime.now(timezone.utc).isoformat()
-                })
-                page_items += 1
+                    vistos.add(ident)
+                    productos.append({
+                        "identificador": ident,
+                        "nombre": f"NATURA - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": item['img'],
+                        "fecha": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception:
+                    continue
 
-            except Exception:
-                continue
+            browser.close()
 
-        _log(f"✅ Se indexaron {page_items} ofertas en la página {page}.", "success")
-        if page_items == 0 or len(productos) >= max_items:
-            break
-        time.sleep(0.3)
+    except Exception as e:
+        _log(f"🛑 Error durante la ejecución de Playwright: {e}", "error")
 
-    _log(f"✅ Patrullaje completado. Total ofertas válidas: {len(productos)}", "success")
+    _log(f"✅ Patrullaje completado. Total ofertas reales extraídas: {len(productos)}", "success")
 
-    summary = f"Finalizado. Productos encontrados: {len(productos)}. Páginas revisadas: {page_count}."
-    metadata = {"source": "natura_vtex_multi_api_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
+    summary = f"Finalizado. Productos encontrados: {len(productos)}."
+    metadata = {"source": "natura_playwright_engine", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     if return_as_dict:
         return {"summary": summary, "productos": productos, "metadata": metadata, "logs": logs_list}
