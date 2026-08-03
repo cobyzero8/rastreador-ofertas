@@ -2079,16 +2079,26 @@ def motor_natura(
             )
             page = context.new_page()
 
-            _log(f"🔗 Navegando a: {url}")
-            # Cambiamos a 'domcontentloaded' para evitar bloqueos por tráfico en segundo plano
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            time.sleep(3)  # Pausa breve para hidratación de React
+          _log(f"🔗 Navegando a: {url}")
+          
+          # Aumentamos el timeout a 90s y usamos 'commit' para evitar bloqueos por demoras de red
+          try:
+              page.goto(url, wait_until="commit", timeout=90000)
+              # Damos un margen para que cargue el contenido base del DOM
+              page.wait_for_load_state("domcontentloaded", timeout=30000)
+          except Exception as nav_err:
+              _log(f"⚠️ Alerta menor en carga inicial, intentando continuar: {nav_err}", "warning")
 
-            # Esperar a que existan enlaces de productos en el DOM
-            page.wait_for_selector('a[href*="/p"]', timeout=10000)
+          time.sleep(4)  # Pausa breve para hidratación de React
 
-            # Evaluar el DOM renderizado desde el propio JavaScript del navegador
-            items_dom = page.evaluate("""() => {
+          # Esperar a que existan enlaces de productos en el DOM (con un timeout mayor)
+          try:
+              page.wait_for_selector('a[href*="/p"]', timeout=20000)
+          except Exception:
+              _log("⚠️ No se detectaron selectores de productos de forma inmediata, procediendo a evaluar el DOM actual...", "warning")
+
+          # Evaluar el DOM renderizado desde el propio JavaScript del navegador
+          items_dom = page.evaluate("""() => {
                 const results = [];
                 const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
                 
