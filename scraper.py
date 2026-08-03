@@ -2066,7 +2066,7 @@ def motor_natura(
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-web-security",
-                    "--disable-http2",  # <--- Soluciona el error ERR_HTTP2_PROTOCOL_ERROR
+                    "--disable-http2",
                     "--disable-blink-features=AutomationControlled",
                 ],
             )
@@ -2079,26 +2079,21 @@ def motor_natura(
             )
             page = context.new_page()
 
-          _log(f"🔗 Navegando a: {url}")
-          
-          # Aumentamos el timeout a 90s y usamos 'commit' para evitar bloqueos por demoras de red
-          try:
-              page.goto(url, wait_until="commit", timeout=90000)
-              # Damos un margen para que cargue el contenido base del DOM
-              page.wait_for_load_state("domcontentloaded", timeout=30000)
-          except Exception as nav_err:
-              _log(f"⚠️ Alerta menor en carga inicial, intentando continuar: {nav_err}", "warning")
+            _log(f"🔗 Navegando a: {url}")
+            try:
+                page.goto(url, wait_until="commit", timeout=90000)
+                page.wait_for_load_state("domcontentloaded", timeout=30000)
+            except Exception as nav_err:
+                _log(f"⚠️ Alerta menor en carga inicial, intentando continuar: {nav_err}", "warning")
 
-          time.sleep(4)  # Pausa breve para hidratación de React
+            time.sleep(4)
 
-          # Esperar a que existan enlaces de productos en el DOM (con un timeout mayor)
-          try:
-              page.wait_for_selector('a[href*="/p"]', timeout=20000)
-          except Exception:
-              _log("⚠️ No se detectaron selectores de productos de forma inmediata, procediendo a evaluar el DOM actual...", "warning")
+            try:
+                page.wait_for_selector('a[href*="/p"]', timeout=20000)
+            except Exception:
+                _log("⚠️ No se detectaron selectores de productos de forma inmediata, procediendo a evaluar el DOM actual...", "warning")
 
-          # Evaluar el DOM renderizado desde el propio JavaScript del navegador
-          items_dom = page.evaluate("""() => {
+            items_dom = page.evaluate("""() => {
                 const results = [];
                 const links = Array.from(document.querySelectorAll('a[href*="/p"]'));
                 
@@ -2106,7 +2101,6 @@ def motor_natura(
                     const href = a.getAttribute('href');
                     if (!href || href.includes('/c/') || href.includes('ayuda')) return;
 
-                    // Buscar el contenedor de tarjeta más cercano
                     let card = a;
                     for (let i = 0; i < 4; i++) {
                         if (card.parentElement && !['BODY', 'MAIN', 'SECTION', 'HEADER', 'NAV'].includes(card.parentElement.tagName)) {
@@ -2140,7 +2134,6 @@ def motor_natura(
 
                     txt = item['text']
                     
-                    # Capturar precios con formato S/
                     prices = re.findall(r'S/\s*\.?\s*(\d+(?:[\.,]\d+)?)', txt, re.IGNORECASE)
                     parsed_prices = [_safe_parse_price(p) for p in prices if 15.0 <= _safe_parse_price(p) <= 2000.0]
 
@@ -2151,7 +2144,6 @@ def motor_natura(
 
                     if p_o <= 0.0 or p_o > limite: continue
 
-                    # Extraer el título limpiando palabras de interfaz
                     lines = [l.strip() for l in txt.split('\n') if l.strip()]
                     clean_lines = []
                     for l in lines:
