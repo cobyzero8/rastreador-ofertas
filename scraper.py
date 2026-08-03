@@ -2013,37 +2013,62 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
 
 
 
+
+# =======================================================
 # =======================================================
 # ENRUTADOR AISLADO
 # =======================================================
-def escanear_tienda(url, limite):
+def escanear_tienda(url, limite, headers=None):
     dominio = urlparse(url).netloc.lower()
-    url_completa = str(url).lower()
+    
+    if headers is None:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
     
     safe_log(f"🔎 [Enrutador] Analizando URL: {url} | Dominio detectado: {dominio}", "info")
     
-    if "carsa.pe" in dominio: return motor_carsa(url, limite)
-    elif "thn.pe" in dominio: return motor_thn(url, limite)
-    elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]): return motor_belcorp(url, limite, headers)
-    elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio: return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
-    elif "falabella.com" in dominio: return motor_falabella(url, limite, headers)
-    elif "adidas.pe" in dominio: return motor_adidas(url, limite)
-    elif "platanitos.com" in dominio: return motor_platanitos(url, limite)
-    elif "hiraoka.com.pe" in dominio: return motor_hiraoka(url, limite)
-    elif "oechsle.pe" in dominio: return motor_oechsle(url, limite)
-    elif "plazavea.com.pe" in dominio: return motor_plazavea(url, limite, headers=headers)
-    elif "juntoz.com" in dominio: return motor_juntoz(url, limite, headers=headers)
-    elif "triathlon.com.pe" in dominio: return motor_triathlon(url, limite, headers=headers)
-    elif "ripley.com.pe" in dominio: return motor_ripley(url, limite, headers=headers)
-    elif "footloose.pe" in dominio: return motor_footloose(url, limite)
-    elif "estilos.com.pe" in dominio: return motor_estilos(url, limite)
-    elif "promart.pe" in dominio: return motor_promart(url, limite, headers=headers)
-    elif "coolbox.pe" in dominio: return motor_coolbox(url, limite, headers=headers)
-    elif "nike.com.pe" in dominio: return motor_nike(url, limite)
+    if "carsa.pe" in dominio:
+        return motor_carsa(url, limite)
+    elif "thn.pe" in dominio:
+        return motor_thn(url, limite)
+    elif any(k in dominio for k in ["tiendabelcorp", "cyzone", "lbel", "esika"]):
+        return motor_belcorp(url, limite, headers)
+    elif "efe.com.pe" in dominio or "lacuracao.pe" in dominio:
+        return motor_conecta_retail(url, limite, headers, "EFE" if "efe.com.pe" in dominio else "CURACAO")
+    elif "falabella.com" in dominio:
+        return motor_falabella(url, limite, headers)
+    elif "adidas.pe" in dominio:
+        return motor_adidas(url, limite)
+    elif "platanitos.com" in dominio:
+        return motor_platanitos(url, limite)
+    elif "hiraoka.com.pe" in dominio:
+        return motor_hiraoka(url, limite)
+    elif "oechsle.pe" in dominio:
+        return motor_oechsle(url, limite)
+    elif "plazavea.com.pe" in dominio:
+        return motor_plazavea(url, limite, headers=headers)
+    elif "juntoz.com" in dominio:
+        return motor_juntoz(url, limite, headers=headers)
+    elif "triathlon.com.pe" in dominio:
+        return motor_triathlon(url, limite, headers=headers)
+    elif "ripley.com.pe" in dominio:
+        return motor_ripley(url, limite, headers=headers)
+    elif "footloose.pe" in dominio:
+        return motor_footloose(url, limite)
+    elif "estilos.com.pe" in dominio:
+        return motor_estilos(url, limite)
+    elif "promart.pe" in dominio:
+        return motor_promart(url, limite, headers=headers)
+    elif "coolbox.pe" in dominio:
+        return motor_coolbox(url, limite, headers=headers)
+    elif "nike.com.pe" in dominio:
+        return motor_nike(url, limite)
     else:
         safe_log(f"💤 [Enrutador] Tienda sin motor específico. Aplicando motor tradicional general.", "info")
         return motor_tradicional_general(url, limite, headers)
-              
+
 
 # =======================================================
 # SISTEMA DE PATRULLAJE CENTRAL
