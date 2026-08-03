@@ -9,86 +9,63 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL") or "https://uxornuepdxqlhzizjnhr.s
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # Mapeo completo ajustado a tu lista de tiendas
+# Mapeo estructurado con 3 fuentes web activas para Perú (Picodi, El Comercio, Cupones Perú)
 MAPA_FUENTES = {
     "ADIDAS": [
         {"url": "https://www.picodi.com/pe/adidas", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/adidas", "origen": "CUPON_PE"}
-    ],
-    "CARSA": [
-        {"url": "https://www.picodi.com/pe/carsa", "origen": "PICODI"}
-    ],
-    "COOLBOX": [
-        {"url": "https://www.picodi.com/pe/coolbox", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/coolbox", "origen": "CUPON_PE"}
-    ],
-    "CURACAO": [
-        {"url": "https://www.picodi.com/pe/la-curacao", "origen": "PICODI"}
-    ],
-    "CYZONE": [
-        {"url": "https://www.picodi.com/pe/cyzone", "origen": "PICODI"}
-    ],
-    "EFE": [
-        {"url": "https://www.picodi.com/pe/tiendas-efe", "origen": "PICODI"}
-    ],
-    "ESIKA": [
-        {"url": "https://www.picodi.com/pe/esika", "origen": "PICODI"}
-    ],
-    "ESTILOS": [
-        {"url": "https://www.picodi.com/pe/estilos", "origen": "PICODI"}
-    ],
-    "FALABELLA": [
-        {"url": "https://www.picodi.com/pe/falabella", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/falabella", "origen": "CUPON_PE"}
-    ],
-    "FOOTLOOSE": [
-        {"url": "https://www.picodi.com/pe/footloose", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/footloose", "origen": "CUPON_PE"}
-    ],
-    "HIRAOKA": [
-        {"url": "https://www.picodi.com/pe/hiraoka", "origen": "PICODI"}
-    ],
-    "JBL": [
-        {"url": "https://www.picodi.com/pe/jbl", "origen": "PICODI"}
-    ],
-    "JUNTOZ": [
-        {"url": "https://www.picodi.com/pe/juntoz", "origen": "PICODI"}
-    ],
-    "LBEL": [
-        {"url": "https://www.picodi.com/pe/lbel", "origen": "PICODI"}
+        {"url": "https://cupones.elcomercio.pe/cupones-adidas", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-adidas", "origen": "CUPONES_PERU"}
     ],
     "NIKE": [
         {"url": "https://www.picodi.com/pe/nike", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/nike", "origen": "CUPON_PE"}
+        {"url": "https://cupones.elcomercio.pe/cupones-nike", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-nike", "origen": "CUPONES_PERU"}
     ],
-    "OECHSLE": [
-        {"url": "https://www.picodi.com/pe/oechsle", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/oechsle", "origen": "CUPON_PE"}
-    ],
-    "PLATANITOS": [
-        {"url": "https://www.picodi.com/pe/platanitos", "origen": "PICODI"}
+    "FALABELLA": [
+        {"url": "https://www.picodi.com/pe/falabella", "origen": "PICODI"},
+        {"url": "https://cupones.elcomercio.pe/cupones-falabella", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-falabella", "origen": "CUPONES_PERU"}
     ],
     "PLAZA_VEA": [
         {"url": "https://www.picodi.com/pe/plaza-vea", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/plaza-vea", "origen": "CUPON_PE"}
+        {"url": "https://cupones.elcomercio.pe/cupones-plaza-vea", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-plaza-vea", "origen": "CUPONES_PERU"}
+    ],
+    "OECHSLE": [
+        {"url": "https://www.picodi.com/pe/oechsle", "origen": "PICODI"},
+        {"url": "https://cupones.elcomercio.pe/cupones-oechsle", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-oechsle", "origen": "CUPONES_PERU"}
     ],
     "PROMART": [
         {"url": "https://www.picodi.com/pe/promart", "origen": "PICODI"},
-        {"url": "https://www.cupon.pe/promart", "origen": "CUPON_PE"}
+        {"url": "https://cupones.elcomercio.pe/cupones-promart", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-promart", "origen": "CUPONES_PERU"}
     ],
-    "THN": [
-        {"url": "https://www.picodi.com/pe/thn", "origen": "PICODI"}
+    "COOLBOX": [
+        {"url": "https://www.picodi.com/pe/coolbox", "origen": "PICODI"},
+        {"url": "https://cupones.elcomercio.pe/cupones-coolbox", "origen": "EL_COMERCIO"},
+        {"url": "https://www.cuponesperu.com.pe/cupones-coolbox", "origen": "CUPONES_PERU"}
     ],
-    "TRIATHLON": [
-        {"url": "https://www.picodi.com/pe/triathlon", "origen": "PICODI"}
-    ]
-}
-
-# Palabras clave a descartar
-PALABRAS_IGNORAR = {
-    "PICODI", "OFERTA", "VER", "CUPON", "DESCUENTO", "PERU", "ENVIO", 
-    "GRATIS", "HASTA", "ONLINE", "TIENDA", "COMPRA", "NUEVO", "PAGINA",
-    "PAGO", "DETALLES", "MAS", "MENOS", "TODOS", "SABER", "AQUI", "VERBAL",
-    "CUPONES", "OFERTAS", "SITIO", "WEB", "CONSIGUE", "HAZ", "CLIC"
+    "FOOTLOOSE": [
+        {"url": "https://www.picodi.com/pe/footloose", "origen": "PICODI"},
+        {"url": "https://cupones.elcomercio.pe/cupones-footloose", "origen": "EL_COMERCIO"}
+    ],
+    "HIRAOKA": [
+        {"url": "https://www.picodi.com/pe/hiraoka", "origen": "PICODI"},
+        {"url": "https://cupones.elcomercio.pe/cupones-hiraoka", "origen": "EL_COMERCIO"}
+    ],
+    "CARSA": [{"url": "https://www.picodi.com/pe/carsa", "origen": "PICODI"}],
+    "CURACAO": [{"url": "https://www.picodi.com/pe/la-curacao", "origen": "PICODI"}],
+    "CYZONE": [{"url": "https://www.picodi.com/pe/cyzone", "origen": "PICODI"}],
+    "EFE": [{"url": "https://www.picodi.com/pe/tiendas-efe", "origen": "PICODI"}],
+    "ESIKA": [{"url": "https://www.picodi.com/pe/esika", "origen": "PICODI"}],
+    "ESTILOS": [{"url": "https://www.picodi.com/pe/estilos", "origen": "PICODI"}],
+    "JBL": [{"url": "https://www.picodi.com/pe/jbl", "origen": "PICODI"}],
+    "JUNTOZ": [{"url": "https://www.picodi.com/pe/juntoz", "origen": "PICODI"}],
+    "LBEL": [{"url": "https://www.picodi.com/pe/lbel", "origen": "PICODI"}],
+    "PLATANITOS": [{"url": "https://www.picodi.com/pe/platanitos", "origen": "PICODI"}],
+    "THN": [{"url": "https://www.picodi.com/pe/thn", "origen": "PICODI"}],
+    "TRIATHLON": [{"url": "https://www.picodi.com/pe/triathlon", "origen": "PICODI"}]
 }
 
 def guardar_cupon_db(supabase, tienda, codigo, descripcion, origen):
