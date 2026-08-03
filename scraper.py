@@ -12,14 +12,22 @@ from supabase import create_client, Client
 import urllib3
 import streamlit as st
 
-def asegurar_playwright_instalado():
-    """Garantiza que el navegador Chromium esté instalado en la instancia de Streamlit"""
+
+
+def instalar_binarios_playwright():
+    """Garantiza la presencia de Chromium en el entorno de Streamlit Cloud."""
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        subprocess.run(["pip", "install", "playwright"])
-        subprocess.run(["playwright", "install", "chromium"])
-        subprocess.run(["playwright", "install-deps"])
+        # Verificar si Chromium ya está instalado en el cache
+        cache_dir = os.path.expanduser("~/.cache/ms-playwright")
+        if not os.path.exists(cache_dir) or not os.listdir(cache_dir):
+            print("🌐 Instalando binario Chromium para Playwright...")
+            subprocess.run(["playwright", "install", "chromium"], check=True)
+            subprocess.run(["playwright", "install-deps"], check=True)
+    except Exception as e:
+        print(f"⚠️ Error instalando Chromium: {e}")
+
+# Ejecutar la verificación al inicio
+instalar_binarios_playwright()
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
