@@ -109,6 +109,34 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     try: return requests.post(url_api, json=payload, timeout=10).status_code == 200
     except Exception: return False
 
+def es_error_de_precio(precio_actual, precio_regular, precio_anterior=None, categoria="OTROS"):
+    """
+    Evalúa si una caída de precio corresponde a un posible error/bug del administrador.
+    Retorna (Es_Error_Bool, Porcentaje_Descuento_o_Caida)
+    """
+    if precio_actual <= 0:
+        return False, 0.0
+
+    p_reg = max(precio_regular, precio_actual)
+    descuento_pct = ((p_reg - precio_actual) / p_reg) * 100.0 if p_reg > 0 else 0.0
+
+    # Criterio 1: Descuento masivo vs Precio Regular (>= 80%)
+    if descuento_pct >= 80.0:
+        return True, descuento_pct
+
+    # Criterio 2: Caída brusca respecto al último precio registrado (>= 75%)
+    if precio_anterior and precio_anterior > 0:
+        caida_historica = ((precio_anterior - precio_actual) / precio_anterior) * 100.0
+        if caida_historica >= 75.0:
+            return True, caida_historica
+
+    # Criterio 3: Umbral absurdo en productos costosos (ej. TV o Laptop a menos de S/. 50)
+    categorias_alto_valor = ["TV", "PC", "CELULAR", "REFRIGERADORA", "LAVADORA", "BARRA DE SONIDO"]
+    if categoria in categorias_alto_valor and precio_actual <= 50.0:
+        return True, 95.0
+
+    return False, descuento_pct
+
 def extraer_productos_json_universal(nodo):
     coleccion = []
     if isinstance(nodo, dict):
@@ -2074,6 +2102,42 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 }
                 
                 emoji = mapa_emojis.get(grupo, "🔥")
+
+                # =======================================================
+                # 🚨 EVALUACIÓN DE DETECCIÓN DE BUG / ERROR DE PRECIO
+                # =======================================================
+                es_bug, pct_descuento = es_error_de_precio(
+                    precio_actual=p_v, 
+                    precio_regular=p_r, 
+                    precio_anterior=precio_anterior, 
+                    categoria=grupo
+                )
+
+                if es_bug:
+                    if precio_anterior is None:
+                        try: supabase.table("historial_precios").insert(datos_guardar).execute()
+                        except Exception: pass
+                    else:
+                        try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
+                        except Exception: pass
+
+                    msg_bug = (
+                        f"🚨🚨 <b>¡POSIBLE ERROR DE PRECIO / BUG!</b> 🚨🚨\n"
+                        f"‼️ <b>¡COMPRA RÁPIDO ANTES QUE LO CORRIJAN!</b> ‼️\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                        f"💥 <b>Precio BUG:</b> <b>S/. {p_v:.2f}</b>\n"
+                        f"❌ <b>Precio Normal:</b> S/. {p_r:.2f}\n"
+                        f"🔥 <b>Descuento Brutal:</b> {pct_descuento:.0f}%\n\n"
+                        f"⏰ <i>Nota: Los errores de sistema suelen durar pocos minutos.</i>\n"
+                        f"{bloque_cupones}"
+                    )
+                    if enviar_telegram_real(msg_bug, p['link'], p.get('img', '')): 
+                        alertas += 1
+                        safe_log(f"🔥 ¡BUG DE PRECIO DETECTADO Y ENVIADO! -> {p['nombre']}", "success")
+                        time.sleep(0.3)
+                    continue
 
                 if precio_anterior is None:
                     try: supabase.table("historial_precios").insert(datos_guardar).execute()
