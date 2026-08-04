@@ -1811,41 +1811,46 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
                 break
 
             text = resp.text
-            
-            if any(term in text.lower() for term in ["access denied", "cloudflare", "captcha", "security check"]):
+            soup = BeautifulSoup(text, "html.parser")
+
+            # CORRECCIÓN 1: Detección anti-bot precisa basada en <title> / HTTP status para evitar falsos positivos
+            page_title = soup.title.text.lower() if soup and soup.title else ""
+            if resp.status_code in [403, 429] or any(term in page_title for term in ["access denied", "attention required", "cloudflare", "security check"]):
                 _safe_log("🚨 [ALERTA] El servidor devolvió una página de seguridad/bloqueo anti-bot de Nike.", "error")
 
-            soup = BeautifulSoup(text, "html.parser")
             page_products = []
 
             # Capa 1: JSON
+            # CORRECCIÓN 2: Se eliminó la expresión regular con recursión (?1) que causa re.error en el módulo estándar re de Python
             if '"results"' in text or '"products"' in text or '"searchResults"' in text:
                 try:
-                    json_blocks = re.findall(r'(\{(?:[^{}]|(?1))*\})', text[:300000])
-                    for jb in json_blocks:
-                        if '"results"' in jb and '"price"' in jb:
+                    for script in soup.find_all("script"):
+                        script_content = script.string or script.text or ""
+                        if any(k in script_content for k in ['"results"', '"products"', '"searchResults"']):
                             try:
-                                parsed = json.loads(jb)
-                                results = parsed.get("results") or parsed.get("products") or parsed.get("searchResults") or []
-                                for it in results:
-                                    if len(productos) + len(page_products) >= max_items: break
-                                    nombre = (it.get("title") or it.get("name") or "").strip()
-                                    precio = float(it.get("price") or 0) if it.get("price") else 0.0
-                                    link = it.get("permalink") or it.get("url") or ""
-                                    img = it.get("thumbnail") or it.get("image") or ""
-                                    if nombre and 0 < precio <= limite:
-                                        ident = _normalize_identifier(link or page_url)
-                                        if ident in vistos: continue
-                                        vistos.add(ident)
-                                        page_products.append({
-                                            "identificador": ident, "nombre": f"NIKE - {nombre.upper()}",
-                                            "precio": precio, "precio_regular": float(it.get("original_price") or precio),
-                                            "link": link, "img": img, "fecha": datetime.now(timezone.utc).isoformat()
-                                        })
-                                if page_products:
-                                    _safe_log(f"✅ Se hallaron {len(page_products)} productos vía JSON embebido.")
-                                    break
+                                script_clean = script_content.strip()
+                                if script_clean.startswith('{') and script_clean.endswith('}'):
+                                    parsed = json.loads(script_clean)
+                                    results = parsed.get("results") or parsed.get("products") or parsed.get("searchResults") or []
+                                    for it in results:
+                                        if len(productos) + len(page_products) >= max_items: break
+                                        if not isinstance(it, dict): continue
+                                        nombre = (it.get("title") or it.get("name") or "").strip()
+                                        precio = float(it.get("price") or 0) if it.get("price") else 0.0
+                                        link = it.get("permalink") or it.get("url") or ""
+                                        img = it.get("thumbnail") or it.get("image") or ""
+                                        if nombre and 0 < precio <= limite:
+                                            ident = _normalize_identifier(link or page_url)
+                                            if ident in vistos: continue
+                                            vistos.add(ident)
+                                            page_products.append({
+                                                "identificador": ident, "nombre": f"NIKE - {nombre.upper()}",
+                                                "precio": precio, "precio_regular": float(it.get("original_price") or precio),
+                                                "link": link, "img": img, "fecha": datetime.now(timezone.utc).isoformat()
+                                            })
                             except Exception: continue
+                    if page_products:
+                        _safe_log(f"✅ Se hallaron {len(page_products)} productos vía JSON embebido.")
                 except Exception as e_json:
                     _safe_log(f"Error procesando JSON: {e_json}", "warning")
 
