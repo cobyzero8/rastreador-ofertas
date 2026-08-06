@@ -115,35 +115,35 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
 
 def es_error_de_precio(precio_actual, precio_regular, precio_anterior=None, categoria="OTROS"):
     """
-    Evalúa si una caída de precio corresponde a un posible error/bug del administrador.
-    Respeta el precio regular original publicado en la web (incluyendo S/. 9,999.00),
-    evitando que la estrategia comercial de la tienda dispare alertas continuas de bug.
+    Evalúa de forma precisa si una caída corresponde a un error/bug real.
+    Exige un porcentaje de descuento real y un ahorro mínimo en Soles para evitar falsas alarmas.
     Retorna (Es_Error_Bool, Porcentaje_Descuento_o_Caida)
     """
     if precio_actual <= 0:
         return False, 0.0
 
     p_reg = max(precio_regular, precio_actual)
-    descuento_pct = ((p_reg - precio_actual) / p_reg) * 100.0 if p_reg > 0 else 0.0
+    ahorro_soles = p_reg - precio_actual
+    descuento_pct = (ahorro_soles / p_reg) * 100.0 if p_reg > 0 else 0.0
 
-    # Si la web usa un precio regular inflado (>= 9999.0 o >4x precio oferta),
-    # es un precio dummy de tienda. No se considera bug por el Criterio 1.
+    # Si la web usa un precio regular inflado (>= 9999.0 o >4x precio oferta), es un precio dummy
     es_precio_reg_ficticio_web = (p_reg >= 9999.0 or p_reg > precio_actual * 4.0)
 
-    # Criterio 1: Descuento masivo publicado en la web (>= 80%) con precio lista real
-    if descuento_pct >= 80.0 and not es_precio_reg_ficticio_web:
+    # Criterio 1: Descuento masivo publicado en la web (>= 75%) con ahorro significativo (>= S/. 30.00)
+    if descuento_pct >= 75.0 and ahorro_soles >= 30.0 and not es_precio_reg_ficticio_web:
         return True, descuento_pct
 
-    # Criterio 2: Caída brusca respecto al último precio registrado en BD (>= 75%)
+    # Criterio 2: Caída brusca respecto al último precio en BD (>= 70%) con ahorro significativo
     if precio_anterior and precio_anterior > 0:
         caida_historica = ((precio_anterior - precio_actual) / precio_anterior) * 100.0
-        if caida_historica >= 75.0:
+        ahorro_historico = precio_anterior - precio_actual
+        if caida_historica >= 70.0 and ahorro_historico >= 30.0:
             return True, caida_historica
 
-    # Criterio 3: Umbral en productos de alto valor
+    # Criterio 3: Productos de alto valor vendidos a precio insólito (ej. TV/PC de S/. 300+ vendida a <= S/. 50)
     categorias_alto_valor = ["TV", "PC", "CELULAR", "REFRIGERADORA", "LAVADORA", "BARRA DE SONIDO"]
-    if categoria in categorias_alto_valor and precio_actual <= 50.0:
-        return True, 95.0
+    if categoria in categorias_alto_valor and precio_actual <= 50.0 and p_reg >= 300.0 and not es_precio_reg_ficticio_web:
+        return True, descuento_pct
 
     return False, descuento_pct
 
@@ -2060,8 +2060,15 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         ident = item['identificador'].upper()
         url_low = sanitizar_url(item['url']).lower()
         
-        # Categorización
-        if "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
+        # Identificar si es un accesorio/insumo para no clasificarlo como electrodoméstico principal
+        es_accesorio = any(acc in ident or acc.lower() in url_low for acc in [
+            "FILTRO", "DETERGENTE", "LIMPIADOR", "PROTECTOR", "FUNDA", "CABLE", 
+            "SOPORTE", "AMORTIGUADOR", "REPUESTO", "ADAPTADOR", "PASTILLA", "JABON"
+        ])
+
+        # Categorización precisa
+        if es_accesorio: grupo = "OTROS"
+        elif "SHORT" in ident or "short" in url_low: grupo = "SHORTS"
         elif "PERFUME" in ident or "perfume" in url_low: grupo = "PERFUMES"
         elif "ZAPATILLA" in ident or "zapatilla" in url_low or "calzado" in url_low or "nike.com.pe" in url_low: grupo = "ZAPATILLAS"
         elif "MEDIAS" in ident or "medias" in url_low: grupo = "MEDIAS"
@@ -2075,7 +2082,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         elif "CELULAR" in ident or "phone" in url_low or "celular" in url_low: grupo = "CELULAR"
         elif "PC" in ident or "laptop" in url_low: grupo = "PC"
         elif "REFRIGERADORA" in ident or "refrig" in url_low: grupo = "REFRIGERADORA"
-        elif "LAVADORA" in ident or "lavado" in url_low: grupo = "LAVADORA"
+        elif "LAVADORA" in ident: grupo = "LAVADORA"
         elif "ELECTRO" in ident: grupo = "ELECTRODOMESTICOS"
         elif "CAMA" in ident or "colchon" in url_low: grupo = "CAMA"
         else: grupo = "OTROS"
@@ -2110,7 +2117,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 total += 1
                 p_v = float(p['precio'])
                 
-                # Respetar intacto el precio regular de la web (incluyendo S/. 9,999.00)
+                # Respetar intacto el precio regular de la web
                 p_r = max(float(p.get('precio_regular', p_v)), p_v)
                 
                 p['tienda_origen'] = tienda_actual
@@ -2216,7 +2223,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         time.sleep(0.3)
 
                 else:
-                    # 3. PRODUCTO REGISTRADO SIN BAJADA DE PRECIO Y SIN BUG -> Actualiza BD en silencio (SIN reporte)
+                    # 3. PRODUCTO REGISTRADO SIN BAJADA DE PRECIO Y SIN BUG -> Actualiza BD en silencio
                     try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
                     except Exception: pass
 
