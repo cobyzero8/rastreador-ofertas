@@ -104,7 +104,6 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     payload = {"chat_id": TELEGRAM_CHAT_ID, "parse_mode": "HTML"}
     
     if url_imagen: 
-        # Control del límite de 1024 caracteres para captions de fotos en Telegram
         if len(mensaje_html) > 1000:
             mensaje_html = mensaje[:850] + f"...\n\n👉 <a href='{link_producto}'><b>¡COMPRAR AQUÍ!</b></a>"
         payload["photo"], payload["caption"] = url_imagen, mensaje_html
@@ -117,6 +116,8 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
 def es_error_de_precio(precio_actual, precio_regular, precio_anterior=None, categoria="OTROS"):
     """
     Evalúa si una caída de precio corresponde a un posible error/bug del administrador.
+    Respeta el precio regular original publicado en la web (incluyendo S/. 9,999.00),
+    evitando que la estrategia comercial de la tienda dispare alertas continuas de bug.
     Retorna (Es_Error_Bool, Porcentaje_Descuento_o_Caida)
     """
     if precio_actual <= 0:
@@ -125,17 +126,21 @@ def es_error_de_precio(precio_actual, precio_regular, precio_anterior=None, cate
     p_reg = max(precio_regular, precio_actual)
     descuento_pct = ((p_reg - precio_actual) / p_reg) * 100.0 if p_reg > 0 else 0.0
 
-    # Criterio 1: Descuento masivo vs Precio Regular (>= 80%)
-    if descuento_pct >= 80.0:
+    # Si la web usa un precio regular inflado (>= 9999.0 o >4x precio oferta),
+    # es un precio dummy de tienda. No se considera bug por el Criterio 1.
+    es_precio_reg_ficticio_web = (p_reg >= 9999.0 or p_reg > precio_actual * 4.0)
+
+    # Criterio 1: Descuento masivo publicado en la web (>= 80%) con precio lista real
+    if descuento_pct >= 80.0 and not es_precio_reg_ficticio_web:
         return True, descuento_pct
 
-    # Criterio 2: Caída brusca respecto al último precio registrado (>= 75%)
+    # Criterio 2: Caída brusca respecto al último precio registrado en BD (>= 75%)
     if precio_anterior and precio_anterior > 0:
         caida_historica = ((precio_anterior - precio_actual) / precio_anterior) * 100.0
         if caida_historica >= 75.0:
             return True, caida_historica
 
-    # Criterio 3: Umbral absurdo en productos costosos (ej. TV o Laptop a menos de S/. 50)
+    # Criterio 3: Umbral en productos de alto valor
     categorias_alto_valor = ["TV", "PC", "CELULAR", "REFRIGERADORA", "LAVADORA", "BARRA DE SONIDO"]
     if categoria in categorias_alto_valor and precio_actual <= 50.0:
         return True, 95.0
@@ -727,6 +732,7 @@ def motor_hiraoka(url, limite):
     return productos
 
 def motor_carsa(url, limite):
+    """Motor CARSA optimizado con extracción de URL de imágenes."""
     productos = []
     url = sanitizar_url(url)
     headers = {
@@ -747,15 +753,31 @@ def motor_carsa(url, limite):
             safe_log(f"🛑 [Diag CARSA] Bloqueo total por Firewall/Anti-Bot. Código {resp.status_code}", "error")
             return []
 
-        matches = re.findall(r'"productName":"([^"]+)".*?"Price":(\d+\.?\d*)', resp.text)
+        matches = re.findall(
+            r'"productName":"([^"]+)".*?"Price":(\d+\.?\d*).*?(?:'
+            r'"imageUrl":"([^"]+)"|"image":"([^"]+)"|)', 
+            resp.text
+        )
         
         if not matches:
             safe_log("🛑 [Diag CARSA] Descarga exitosa, pero no encontramos productos con el buscador de texto.", "error")
         else:
-            for nombre, precio in matches:
-                p = float(precio)
+            for match in matches:
+                nombre = match[0]
+                p = float(match[1])
+                img_url = match[2] or match[3] if len(match) > 2 else ""
+                
+                if img_url and img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+
                 if 0 < p <= limite:
-                    productos.append({"nombre": f"CARSA - {nombre}", "precio": p, "precio_regular": p, "link": url, "img": ""})
+                    productos.append({
+                        "nombre": f"CARSA - {nombre}",
+                        "precio": p,
+                        "precio_regular": p,
+                        "link": url,
+                        "img": img_url
+                    })
             safe_log(f"✅ [Diag CARSA] Se encontraron {len(matches)} productos. {len(productos)} cumplen el límite.", "success")
             
     except Exception as e:
@@ -2069,7 +2091,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         bloque_cupones = obtener_bloque_cupones_telegram(tienda_actual)
         bloque_cupones_str = f"\n{bloque_cupones}" if bloque_cupones else ""
 
-        # Actualizar la fecha del último escaneo en la tabla radares sin duplicar nada
+        # Actualizar la fecha del último escaneo en la tabla radares
         try:
             supabase.table("radares").update({"ultimo_escaneo": fecha_hoy}).eq("identificador", item['identificador']).execute()
         except Exception:
@@ -2087,7 +2109,10 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 enviados.add(n_u)
                 total += 1
                 p_v = float(p['precio'])
+                
+                # Respetar intacto el precio regular de la web (incluyendo S/. 9,999.00)
                 p_r = max(float(p.get('precio_regular', p_v)), p_v)
+                
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
                 
@@ -2100,13 +2125,18 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                     if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
                 except Exception: pass
-                
+
+                # Saneamiento de imágenes para Supabase/Telegram
+                img_limpia = sanitizar_url(p.get('img', ''))
+                if not img_limpia or img_limpia.lower() in ['empty', 'none', 'null']:
+                    img_limpia = None
+
                 datos_guardar = {
                     "identificador": id_registro, 
                     "precio": p_v, 
                     "precio_regular": p_r, 
                     "link_producto": sanitizar_url(p['link']), 
-                    "imagen_producto": sanitizar_url(p.get('img', '')), 
+                    "imagen_producto": img_limpia, 
                     "fecha": fecha_hoy
                 }
                 
@@ -2142,13 +2172,14 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"⏰ <i>Nota: Los errores de sistema suelen durar pocos minutos.</i>"
                         f"{bloque_cupones_str}"
                     )
-                    if enviar_telegram_real(msg_bug, p['link'], p.get('img', '')): 
+                    if enviar_telegram_real(msg_bug, p['link'], img_limpia or ""): 
                         alertas += 1
                         safe_log(f"🔥 ¡BUG DE PRECIO DETECTADO Y ENVIADO! -> {p['nombre']}", "success")
                         time.sleep(0.3)
                     continue
 
                 if precio_anterior is None:
+                    # 1. PRODUCTO NUEVO EN BASE DE DATOS -> Guarda y Envía Alerta
                     try: supabase.table("historial_precios").insert(datos_guardar).execute()
                     except Exception: pass
 
@@ -2160,11 +2191,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}"
                         f"{bloque_cupones_str}"
                     )
-                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                    if enviar_telegram_real(msg_t, p['link'], img_limpia or ""): 
                         alertas += 1
                         time.sleep(0.3)
 
                 elif p_v < precio_anterior:
+                    # 2. PRODUCTO REGISTRADO QUE BAJÓ DE PRECIO -> Actualiza BD y Envía Alerta
                     try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
                     except Exception: pass
 
@@ -2179,9 +2211,14 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}"
                         f"{bloque_cupones_str}"
                     )
-                    if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
+                    if enviar_telegram_real(msg_t, p['link'], img_limpia or ""): 
                         alertas += 1
                         time.sleep(0.3)
+
+                else:
+                    # 3. PRODUCTO REGISTRADO SIN BAJADA DE PRECIO Y SIN BUG -> Actualiza BD en silencio (SIN reporte)
+                    try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
+                    except Exception: pass
 
             except Exception: continue
 
