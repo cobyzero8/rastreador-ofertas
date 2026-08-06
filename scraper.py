@@ -102,10 +102,15 @@ def enviar_telegram_real(mensaje, link_producto="", url_imagen=""):
     mensaje_html = f"{mensaje}\n\n👉 <a href='{link_producto}'><b>¡COMPRAR AQUÍ!</b></a>"
     url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto" if url_imagen else f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "parse_mode": "HTML"}
+    
     if url_imagen: 
+        # Control del límite de 1024 caracteres para captions de fotos en Telegram
+        if len(mensaje_html) > 1000:
+            mensaje_html = mensaje[:850] + f"...\n\n👉 <a href='{link_producto}'><b>¡COMPRAR AQUÍ!</b></a>"
         payload["photo"], payload["caption"] = url_imagen, mensaje_html
     else: 
         payload["text"] = mensaje_html
+        
     try: return requests.post(url_api, json=payload, timeout=10).status_code == 200
     except Exception: return False
 
@@ -1813,7 +1818,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             text = resp.text
             soup = BeautifulSoup(text, "html.parser")
 
-            # CORRECCIÓN 1: Detección anti-bot precisa basada en <title> / HTTP status para evitar falsos positivos
             page_title = soup.title.text.lower() if soup and soup.title else ""
             if resp.status_code in [403, 429] or any(term in page_title for term in ["access denied", "attention required", "cloudflare", "security check"]):
                 _safe_log("🚨 [ALERTA] El servidor devolvió una página de seguridad/bloqueo anti-bot de Nike.", "error")
@@ -1821,7 +1825,6 @@ def motor_nike(url, limite=9999, max_pages=10, use_playwright_fallback=False, se
             page_products = []
 
             # Capa 1: JSON
-            # CORRECCIÓN 2: Se eliminó la expresión regular con recursión (?1) que causa re.error en el módulo estándar re de Python
             if '"results"' in text or '"products"' in text or '"searchResults"' in text:
                 try:
                     for script in soup.find_all("script"):
@@ -2064,6 +2067,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         # Consultar cupones activos para la tienda actual en Supabase
         bloque_cupones = obtener_bloque_cupones_telegram(tienda_actual)
+        bloque_cupones_str = f"\n{bloque_cupones}" if bloque_cupones else ""
 
         # Actualizar la fecha del último escaneo en la tabla radares sin duplicar nada
         try:
@@ -2135,8 +2139,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"💥 <b>Precio BUG:</b> <b>S/. {p_v:.2f}</b>\n"
                         f"❌ <b>Precio Normal:</b> S/. {p_r:.2f}\n"
                         f"🔥 <b>Descuento Brutal:</b> {pct_descuento:.0f}%\n\n"
-                        f"⏰ <i>Nota: Los errores de sistema suelen durar pocos minutos.</i>\n"
-                        f"{bloque_cupones}"
+                        f"⏰ <i>Nota: Los errores de sistema suelen durar pocos minutos.</i>"
+                        f"{bloque_cupones_str}"
                     )
                     if enviar_telegram_real(msg_bug, p['link'], p.get('img', '')): 
                         alertas += 1
@@ -2153,8 +2157,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                         f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
                         f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                        f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}\n"
-                        f"{bloque_cupones}"
+                        f"💰 <b>Precio Encontrado:</b> S/. {p_v:.2f}"
+                        f"{bloque_cupones_str}"
                     )
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
@@ -2172,8 +2176,8 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
                         f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
                         f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
-                        f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}\n"
-                        f"{bloque_cupones}"
+                        f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}"
+                        f"{bloque_cupones_str}"
                     )
                     if enviar_telegram_real(msg_t, p['link'], p.get('img', '')): 
                         alertas += 1
