@@ -13,16 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Descargando Repositorio
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configurando Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Instalando Librerías Básicas y Streamlit
+      - name: Instalando Dependencias
         run: |
-          pip install requests beautifulsoup4 supabase urllib3 pandas streamlit st-annotated-text curl_cffi
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install requests beautifulsoup4 supabase urllib3 pandas streamlit st-annotated-text curl_cffi; fi
 
       - name: Ejecutando Patrullaje de Ofertas
         env:
@@ -32,4 +33,4 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
         run: |
-          python -c "import os; from scraper import revisar_ofertas; print(revisar_ofertas('TODOS'))"
+          python -c "import os; from patrol import revisar_ofertas; print(revisar_ofertas('TODOS'))"
