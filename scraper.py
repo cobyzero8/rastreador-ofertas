@@ -2205,7 +2205,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         ident = item['identificador'].upper()
         url_low = sanitizar_url(item['url']).lower()
         
-        # Identificar si es un accesorio/insumo para no clasificarlo como electrodoméstico principal
+        # Identificar si es un accesorio/insumo
         es_accesorio = any(acc in ident or acc.lower() in url_low for acc in [
             "FILTRO", "DETERGENTE", "LIMPIADOR", "PROTECTOR", "FUNDA", "CABLE", 
             "SOPORTE", "AMORTIGUADOR", "REPUESTO", "ADAPTADOR", "PASTILLA", "JABON"
@@ -2276,15 +2276,20 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
                 
-                id_limpio = re.sub(r'[^A-Z0-9_]', '', n_u.replace(' ', '_'))
-                id_registro = f"{item['identificador']}-{id_limpio}"[:200]
+                # -------------------------------------------------------------
+                # 🛠️ IDENTIFICADOR ESTABLE POR MD5 Y UPSERT A SUPABASE
+                # -------------------------------------------------------------
+                url_limpia = sanitizar_url(p['link']).split('?')[0]
+                hash_url = hashlib.md5(url_limpia.encode('utf-8')).hexdigest()[:12]
+                id_registro = f"{item['identificador']}-{hash_url}".upper()
                 
                 precio_anterior = None
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
                     if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
-                except Exception: pass
+                except Exception as e_sel:
+                    safe_log(f"⚠️ Error consultando precio anterior: {e_sel}", "caption")
 
                 # Saneamiento de imágenes para Supabase/Telegram
                 img_limpia = sanitizar_url(p.get('img', ''))
@@ -2313,12 +2318,10 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 )
 
                 if es_bug:
-                    if precio_anterior is None:
-                        try: supabase.table("historial_precios").insert(datos_guardar).execute()
-                        except Exception: pass
-                    else:
-                        try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
-                        except Exception: pass
+                    try: 
+                        supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
+                    except Exception as e_up: 
+                        safe_log(f"🚨 Error actualizando Supabase (BUG): {e_up}", "error")
 
                     msg_bug = (
                         f"🚨🚨 <b>¡POSIBLE ERROR DE PRECIO / BUG!</b> 🚨🚨\n"
@@ -2338,10 +2341,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         time.sleep(0.3)
                     continue
 
+                # 1. PRODUCTO NUEVO EN BASE DE DATOS
                 if precio_anterior is None:
-                    # 1. PRODUCTO NUEVO EN BASE DE DATOS -> Guarda y Envía Alerta
-                    try: supabase.table("historial_precios").insert(datos_guardar).execute()
-                    except Exception: pass
+                    try: 
+                        supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
+                    except Exception as e_up: 
+                        safe_log(f"🚨 Error insertando producto nuevo en Supabase: {e_up}", "error")
 
                     msg_t = (
                         f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
@@ -2355,10 +2360,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         alertas += 1
                         time.sleep(0.3)
 
-                elif p_v < precio_anterior:
-                    # 2. PRODUCTO REGISTRADO QUE BAJÓ DE PRECIO -> Actualiza BD y Envía Alerta
-                    try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
-                    except Exception: pass
+                # 2. PRODUCTO REGISTRADO QUE BAJÓ DE PRECIO (Mínimo S/. 1.00 de diferencia)
+                elif p_v < (precio_anterior - 1.00):
+                    try: 
+                        supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
+                    except Exception as e_up: 
+                        safe_log(f"🚨 Error actualizando bajada de precio en Supabase: {e_up}", "error")
 
                     ahorro = precio_anterior - p_v
                     msg_t = (
@@ -2375,10 +2382,12 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         alertas += 1
                         time.sleep(0.3)
 
+                # 3. MISMO PRECIO O VARIACIÓN ÍNFIMA -> Actualiza en silencio
                 else:
-                    # 3. PRODUCTO REGISTRADO SIN BAJADA DE PRECIO Y SIN BUG -> Actualiza BD en silencio
-                    try: supabase.table("historial_precios").update(datos_guardar).eq("identificador", id_registro).execute()
-                    except Exception: pass
+                    try: 
+                        supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
+                    except Exception: 
+                        pass
 
             except Exception: continue
 
