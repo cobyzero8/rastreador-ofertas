@@ -145,9 +145,6 @@ def botonera_independiente():
 # ---------------------------
 # Dashboard / Ofertas
 # ---------------------------
-# ---------------------------
-# Dashboard / Ofertas
-# ---------------------------
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Central de Ofertas Activas")
     with st.sidebar.expander("🧪 Verificar Bot de Telegram"):
@@ -208,10 +205,10 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 parts = id_p.split("-")
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "GENERAL"
 
-                # Extracción prioritario del nombre directo desde la BD
+                # Parseo prioritario del nombre real desde Supabase
                 raw_nombre = reg.get("nombre_producto")
-                if raw_nombre:
-                    prd_txt = str(raw_nombre).title()
+                if raw_nombre and str(raw_nombre).strip() and str(raw_nombre).lower() != "none":
+                    prd_txt = str(raw_nombre).strip().title()
                 elif len(parts) >= 4:
                     prd_txt = "-".join(parts[2:-1]).replace("_", " ").title()
                 elif len(parts) == 3:
@@ -426,9 +423,6 @@ elif menu == "🛠️ Configurar Radares y URLs":
 # ---------------------------
 # Forzar Escaneo Intensivo
 # ---------------------------
-# ---------------------------
-# Forzar Escaneo Intensivo
-# ---------------------------
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje Activo")
     botonera_independiente()
@@ -488,9 +482,10 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                 parts = id_p.split("-")
                 tienda = parts[0] if len(parts) > 0 else "GENERAL"
                 
+                # Parseo prioritario del nombre real desde Supabase
                 raw_nombre = reg.get("nombre_producto")
-                if raw_nombre:
-                    nombre_prod = str(raw_nombre).title()
+                if raw_nombre and str(raw_nombre).strip() and str(raw_nombre).lower() != "none":
+                    nombre_prod = str(raw_nombre).strip().title()
                 elif len(parts) >= 4:
                     nombre_prod = "-".join(parts[2:-1]).replace("_", " ").title()
                 else:
