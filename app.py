@@ -145,6 +145,9 @@ def botonera_independiente():
 # ---------------------------
 # Dashboard / Ofertas
 # ---------------------------
+# ---------------------------
+# Dashboard / Ofertas
+# ---------------------------
 if menu == "📈 Ver Dashboard / Ofertas":
     st.title("🕵️‍♂️ Central de Ofertas Activas")
     with st.sidebar.expander("🧪 Verificar Bot de Telegram"):
@@ -169,7 +172,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
     lista_dashboard = []
     try:
         f_activo = st.session_state.filtro_activo
-        query = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
+        query = supabase.table("historial_precios").select("identificador, nombre_producto, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
 
         if f_activo == "PERFUMES": query = query.ilike("identificador", "%PERFUME%")
         elif f_activo == "ZAPATILLAS": query = query.or_("identificador.ilike.%ZAPATILLA%,identificador.ilike.%CALZADO%")
@@ -205,9 +208,19 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 parts = id_p.split("-")
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "GENERAL"
 
-                if len(parts) >= 5: prd_txt = "-".join(parts[4:]).replace("_", " ").title()
-                elif len(parts) >= 3: prd_txt = parts[2].replace("_", " ").title()
-                else: prd_txt = id_p.replace("_", " ").title()
+                # Extracción prioritario del nombre directo desde la BD
+                raw_nombre = reg.get("nombre_producto")
+                if raw_nombre:
+                    prd_txt = str(raw_nombre).title()
+                elif len(parts) >= 4:
+                    prd_txt = "-".join(parts[2:-1]).replace("_", " ").title()
+                elif len(parts) == 3:
+                    if len(parts[2]) == 12 and all(c in '0123456789ABCDEF' for c in parts[2]):
+                        prd_txt = parts[1].replace("_", " ").title()
+                    else:
+                        prd_txt = parts[2].replace("_", " ").title()
+                else:
+                    prd_txt = id_p.replace("_", " ").title()
 
                 raw_regular = reg.get('precio_regular')
                 precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
@@ -225,7 +238,20 @@ if menu == "📈 Ver Dashboard / Ofertas":
 
     if lista_dashboard:
         df_dash = pd.DataFrame(lista_dashboard).sort_values(by="Descuento", ascending=False)
-        st.dataframe(df_dash, column_config={"Tienda": "🏪 Tienda", "Nombre del Producto": "📦 Nombre del Producto", "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista"), "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"), "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"), "Descuento": st.column_config.NumberColumn("📉 Descuento", format="S/. %.2f"), "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver")}, hide_index=True, use_container_width=True)
+        st.dataframe(
+            df_dash, 
+            column_config={
+                "Tienda": "🏪 Tienda", 
+                "Nombre del Producto": "📦 Nombre del Producto", 
+                "Imagen del Producto": st.column_config.ImageColumn("🖼️ Vista"), 
+                "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"), 
+                "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"), 
+                "Descuento": st.column_config.NumberColumn("📉 Descuento", format="S/. %.2f"), 
+                "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver")
+            }, 
+            hide_index=True, 
+            use_container_width=True
+        )
     else:
         st.info("No hay ofertas registradas en este rango.")
 
@@ -400,6 +426,9 @@ elif menu == "🛠️ Configurar Radares y URLs":
 # ---------------------------
 # Forzar Escaneo Intensivo
 # ---------------------------
+# ---------------------------
+# Forzar Escaneo Intensivo
+# ---------------------------
 elif menu == "💥 Forzar Escaneo Intensivo":
     st.title("💥 Módulo de Patrullaje Activo")
     botonera_independiente()
@@ -438,7 +467,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     target_escaneado = st.session_state.get("filtro_activo", "TODOS")
 
     try:
-        q = supabase.table("historial_precios").select("identificador, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
+        q = supabase.table("historial_precios").select("identificador, nombre_producto, precio, precio_regular, imagen_producto, link_producto, fecha").order("fecha", desc=True)
         if target_escaneado and target_escaneado != "TODOS":
             q = q.ilike("identificador", f"%{target_escaneado}%")
         
@@ -458,7 +487,14 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                 
                 parts = id_p.split("-")
                 tienda = parts[0] if len(parts) > 0 else "GENERAL"
-                nombre_prod = "-".join(parts[2:]).replace("_", " ").title() if len(parts) >= 3 else id_p
+                
+                raw_nombre = reg.get("nombre_producto")
+                if raw_nombre:
+                    nombre_prod = str(raw_nombre).title()
+                elif len(parts) >= 4:
+                    nombre_prod = "-".join(parts[2:-1]).replace("_", " ").title()
+                else:
+                    nombre_prod = id_p.replace("_", " ").title()
                 
                 reporte_items.append({
                     "Tienda": tienda,
