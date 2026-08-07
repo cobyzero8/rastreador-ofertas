@@ -24,6 +24,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL") or "https://uxornuepdxqlhzizjnhr.s
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_DEV_CHAT_ID = os.environ.get("TELEGRAM_DEV_CHAT_ID") or TELEGRAM_CHAT_ID
 
 try:
     if hasattr(st, "secrets"):
@@ -35,6 +36,8 @@ try:
             TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
         if "TELEGRAM_CHAT_ID" in st.secrets and st.secrets["TELEGRAM_CHAT_ID"]:
             TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+        if "TELEGRAM_DEV_CHAT_ID" in st.secrets and st.secrets["TELEGRAM_DEV_CHAT_ID"]:
+            TELEGRAM_DEV_CHAT_ID = st.secrets["TELEGRAM_DEV_CHAT_ID"]
 except Exception:
     pass
 
@@ -197,6 +200,148 @@ def extraer_numeros_dict(d, valores_aux):
         for sub_v in d.values(): extraer_numeros_dict(sub_v, valores_aux)
     elif isinstance(d, list):
         for item in d: extraer_numeros_dict(item, valores_aux)
+
+# =======================================================
+# 🏥 SISTEMA DE AUTO-CURACIÓN Y SALUD (HEALTH CHECK)
+# =======================================================
+def notificar_desarrollador_caida(tienda: str, fallos: int, url_prueba: str):
+    """Envía un reporte privado al desarrollador cuando un scraper falla repetidamente."""
+    dev_chat = TELEGRAM_DEV_CHAT_ID or TELEGRAM_CHAT_ID
+    if not TELEGRAM_TOKEN or not dev_chat:
+        return
+        
+    mensaje_html = (
+        f"🚨 <b>ALERTA DE INFRAESTRUCTURA (HEALTH CHECK)</b> 🚨\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🛠️ <b>Motor Afectado:</b> <code>{tienda}</code>\n"
+        f"❌ <b>Fallos Consecutivos:</b> {fallos}\n"
+        f"⚠️ <b>Diagnóstico:</b> El scraper devolvió 0 productos en {fallos} patrullajes seguidos.\n"
+        f"🔍 <b>Causa probable:</b> Cambio en la estructura DOM/CSS o bloqueo anti-bot.\n\n"
+        f"🔗 <a href='{url_prueba}'><b>Probar URL manualmente en navegador</b></a>"
+    )
+    
+    url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": dev_chat,
+        "text": mensaje_html,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    try:
+        requests.post(url_api, json=payload, timeout=10)
+    except Exception as e:
+        safe_log(f"Error enviando alerta dev: {e}", "warning")
+
+def registrar_resultado_salud(supabase_client: Client, tienda: str, total_productos: int, url_origen: str):
+    """
+    Actualiza el estado de salud de la tienda.
+    - Si total_productos > 0: Resetea fallos a 0 y marca GREEN.
+    - Si total_productos == 0: Incrementa fallos acumulados (YELLOW con 1-2, RED con >= 3).
+    """
+    zona_peru = timezone(timedelta(hours=-5))
+    ahora_iso = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
+    
+    fallos_actuales = 0
+    try:
+        res = supabase_client.table("health_checks").select("fallos_consecutivos").eq("tienda", tienda).execute()
+        if res.data and len(res.data) > 0:
+            fallos_actuales = res.data[0].get("fallos_consecutivos", 0)
+    except Exception:
+        pass
+    
+    if total_productos > 0:
+        nuevos_fallos = 0
+        nuevo_estado = "GREEN"
+    else:
+        nuevos_fallos = fallos_actuales + 1
+        nuevo_estado = "RED" if nuevos_fallos >= 3 else "YELLOW"
+
+    datos_actualizar = {
+        "tienda": tienda,
+        "estado": nuevo_estado,
+        "fallos_consecutivos": nuevos_fallos,
+        "ultimo_escaneo": ahora_iso,
+        "ultimos_productos_count": total_productos,
+        "ultimo_error": "0 productos extraídos" if total_productos == 0 else None
+    }
+
+    try:
+        supabase_client.table("health_checks").upsert(datos_actualizar, on_conflict="tienda").execute()
+    except Exception as e:
+        safe_log(f"⚠️ No se pudo registrar salud de {tienda} en Supabase: {e}", "caption")
+
+    if nuevos_fallos == 3:
+        notificar_desarrollador_caida(tienda, nuevos_fallos, url_origen)
+
+def renderizar_dashboard_salud(supabase_client: Client):
+    """Renderiza el tablero de salud tipo semáforo en Streamlit."""
+    st.markdown("## 🏥 Panel de Salud de Scrapers (Health Check)")
+    st.caption("Monitoreo en tiempo real del estado operativo de los motores de extracción.")
+    
+    try:
+        res = supabase_client.table("health_checks").select("*").order("tienda").execute()
+        data = res.data if res.data else []
+    except Exception as e:
+        st.error(f"Error cargando registros de salud: {e}")
+        return
+    
+    if not data:
+        st.info("No hay registros de salud disponibles. Ejecuta un patrullaje primero.")
+        return
+
+    total_motores = len(data)
+    verdes = sum(1 for d in data if d.get('estado') == 'GREEN')
+    amarillos = sum(1 for d in data if d.get('estado') == 'YELLOW')
+    rojos = sum(1 for d in data if d.get('estado') == 'RED')
+    
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Total Scrapers", total_motores)
+    kpi2.metric("🟢 Operativos", verdes)
+    kpi3.metric("🟡 Advertencia", amarillos)
+    kpi4.metric("🔴 Caídos", rojos)
+    
+    st.markdown("---")
+    
+    st.markdown("""
+        <style>
+        .health-card {
+            background-color: #1e222d;
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 10px;
+            border-left: 6px solid #ccc;
+        }
+        .status-green { border-left-color: #2ed573; }
+        .status-yellow { border-left-color: #ffa502; }
+        .status-red { border-left-color: #ff4757; }
+        .badge-green { background: #2ed57322; color: #2ed573; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+        .badge-yellow { background: #ffa50222; color: #ffa502; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+        .badge-red { background: #ff475722; color: #ff4757; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    for item in data:
+        estado = item.get('estado', 'GREEN')
+        clase_card = "status-green" if estado == "GREEN" else "status-yellow" if estado == "YELLOW" else "status-red"
+        badge_html = f"<span class='badge-{estado.lower()}'>{estado}</span>"
+        icon = "🟢" if estado == "GREEN" else "🟡" if estado == "YELLOW" else "🔴"
+        
+        with st.container():
+            col_info, col_action = st.columns([8, 2])
+            with col_info:
+                st.markdown(
+                    f"""
+                    <div class="health-card {clase_card}">
+                        <h4>{icon} {item.get('tienda')} — Status: {badge_html}</h4>
+                        <p style="margin: 0;"><b>Fallos Consecutivos:</b> {item.get('fallos_consecutivos', 0)} | <b>Último Hallazgo:</b> {item.get('ultimos_productos_count', 0)} prods</p>
+                        <small style="color: #888;">Último Escaneo: {item.get('ultimo_escaneo')}</small>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+            with col_action:
+                if estado == "RED":
+                    st.warning("Revisión urgente")
 
 # =======================================================
 # 🚀 MOTORES DE EXTRACCIÓN (AISLADOS E INDEPENDIENTES)
@@ -2094,6 +2239,14 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
         
         prods = escanear_tienda(item['url'], item['precio_max'])
         
+        # 🛡️ REGISTRO AUTOMÁTICO DE SALUD DE SCRAPERS
+        registrar_resultado_salud(
+            supabase_client=supabase,
+            tienda=tienda_actual,
+            total_productos=len(prods),
+            url_origen=item['url']
+        )
+
         # Consultar cupones activos para la tienda actual en Supabase
         bloque_cupones = obtener_bloque_cupones_telegram(tienda_actual)
         bloque_cupones_str = f"\n{bloque_cupones}" if bloque_cupones else ""
