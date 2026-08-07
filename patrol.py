@@ -8,6 +8,10 @@ from notifications import enviar_alerta_telegram
 from utils import safe_log, es_error_de_precio, safe_float
 
 def revisar_ofertas(filtro_categoria="TODOS"):
+    if not supabase:
+        safe_log("🛑 No hay conexión con Supabase. Revisa que SUPABASE_URL y SUPABASE_KEY estén configuradas en los Secrets de GitHub.", "error")
+        return "Fallo de conexión con Supabase: Credenciales faltantes."
+    
     safe_log(f"🕵️‍♂️ Iniciando patrullaje con filtro: '{filtro_categoria}'", "info")
     
     try:
