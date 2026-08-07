@@ -1,15 +1,16 @@
-import streamlit as st
-import json
 import os
 import time
+import json
 import pandas as pd
 import requests
-import threading
+import streamlit as st
 from datetime import datetime, timezone
 from supabase import create_client, Client
-from scraper import revisar_ofertas, renderizar_dashboard_salud
 
-# Importación para vincular el contexto de Streamlit a hilos secundarios
+# Importaciones ajustadas a la arquitectura modular
+from patrol import revisar_ofertas
+from health_monitor import renderizar_dashboard_salud
+
 try:
     from streamlit.runtime.scriptrunner import add_script_run_ctx
 except ImportError:
@@ -26,10 +27,13 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# ⚡ Optimización de caché (TTL = 5 min)
 @st.cache_data(ttl=300)
 def obtener_tiendas_dinamicas():
-    tiendas_base = ["ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"]
+    tiendas_base = [
+        "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", 
+        "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", 
+        "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"
+    ]
     try:
         res = supabase.table("radares").select("identificador").execute()
         if res.data:
@@ -56,7 +60,6 @@ menu = st.sidebar.radio("Sección:", [
     "💥 Forzar Escaneo Intensivo"
 ])
 
-# Inicialización de Session States
 if "mod_id" not in st.session_state: st.session_state.mod_id = None
 if "mod_tienda" not in st.session_state: st.session_state.mod_tienda = "ADIDAS"
 if "mod_cat" not in st.session_state: st.session_state.mod_cat = "Zapatillas"
@@ -205,7 +208,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 parts = id_p.split("-")
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "GENERAL"
 
-                # Parseo prioritario del nombre real desde Supabase
                 raw_nombre = reg.get("nombre_producto")
                 if raw_nombre and str(raw_nombre).strip() and str(raw_nombre).lower() != "none":
                     prd_txt = str(raw_nombre).strip().title()
@@ -280,8 +282,6 @@ elif menu == "🎟️ Cupones de Descuento":
         res_cup = supabase.table("cupones").select("tienda, codigo, descripcion, origen, fecha_registro").eq("activo", True).order("fecha_registro", desc=True).execute()
         if res_cup.data:
             df_cupones = pd.DataFrame(res_cup.data)
-            
-            # Formatear nombres de columnas para la visualización
             df_cupones_show = df_cupones[["tienda", "codigo", "descripcion", "origen", "fecha_registro"]].copy()
             df_cupones_show.columns = ["Tienda", "Código", "Descripción / Beneficio", "Origen", "Fecha de Registro"]
             
@@ -430,14 +430,12 @@ elif menu == "💥 Forzar Escaneo Intensivo":
 
     start_btn = st.button("🚀 INICIAR BARRIDO QUIRÚRGICO", type="primary", use_container_width=True)
 
-    # 🚀 EJECUCIÓN DIRECTA EN 1 SOLO CLIC
     if start_btn:
         target = st.session_state.get("filtro_activo", "TODOS")
         
         with st.status(f"🕵️‍♂️ Patrullando objetivo: '{target}'...", expanded=True) as status:
-            st.write(f"🔎 Iniciando enrutamiento y escaneo de tienda...")
+            st.write("🔎 Iniciando enrutamiento y escaneo de tienda...")
             try:
-                # Ejecutar directamente el motor
                 result_msg = revisar_ofertas(target)
                 st.session_state.scraper_result = {"resumen": result_msg, "target": target, "status": "ok"}
                 status.update(label="✅ ¡Patrullaje completado con éxito!", state="complete", expanded=False)
@@ -445,7 +443,6 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                 st.session_state.scraper_result = {"error": str(e), "target": target, "status": "error"}
                 status.update(label=f"❌ Error durante el patrullaje: {e}", state="error", expanded=True)
 
-    # 📊 REPORTE DE RESULTADOS DE LA ÚLTIMA EJECUCIÓN
     raw_res = st.session_state.get("scraper_result", None)
     if raw_res:
         st.write("---")
@@ -454,7 +451,6 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         else:
             st.success(f"📋 **Resumen:** {raw_res.get('resumen')}")
 
-    # 📊 TABLA / TARJETAS DE OFERTAS EN VIVO
     st.write("---")
     st.subheader("📊 Reporte de Ofertas Registradas")
 
@@ -482,7 +478,6 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                 parts = id_p.split("-")
                 tienda = parts[0] if len(parts) > 0 else "GENERAL"
                 
-                # Parseo prioritario del nombre real desde Supabase
                 raw_nombre = reg.get("nombre_producto")
                 if raw_nombre and str(raw_nombre).strip() and str(raw_nombre).lower() != "none":
                     nombre_prod = str(raw_nombre).strip().title()
@@ -549,7 +544,6 @@ elif menu == "💥 Forzar Escaneo Intensivo":
     except Exception as err_rep:
         st.error(f"Error cargando catálogo: {err_rep}")
 
-    # 📄 AUDITORÍA Y REGISTRO EN DISCO
     debug_path = "ml_debug/combined_debug.json"
     if os.path.exists(debug_path):
         try:
