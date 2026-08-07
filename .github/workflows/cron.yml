@@ -2,7 +2,6 @@ name: Patrullero de Ofertas Coby 24/7
 
 on:
   schedule:
-    # Corre automáticamente cada 45 minutos
     - cron: '*/45 * * * *'
   push:
     branches: [ "main" ]
@@ -22,8 +21,9 @@ jobs:
 
       - name: Instalando Dependencias
         run: |
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install requests beautifulsoup4 supabase urllib3 pandas streamlit st-annotated-text curl_cffi; fi
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests beautifulsoup4 supabase urllib3 pandas streamlit curl_cffi
 
       - name: Ejecutando Patrullaje de Ofertas
         env:
