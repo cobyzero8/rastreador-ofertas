@@ -1,63 +1,153 @@
 import re
 import streamlit as st
+from urllib.parse import urlparse, urlunparse
 
-def sanitizar_url(url_raw):
-    if not url_raw: return ""
-    url = str(url_raw).strip()
-    match = re.search(r'\((https?://[^\s)]+)\)', url)
-    if match: url = match.group(1)
-    return re.sub(r'^[\[\'"]+|[\]\'"]+$', '', url).strip()
-
-def safe_log(texto, tipo="text"):
+def safe_log(mensaje, tipo="info"):
+    """Imprime mensajes en consola y en Streamlit si la interfaz está activa."""
+    prefijos = {
+        "info": "ℹ️",
+        "success": "✅",
+        "warning": "⚠️",
+        "error": "🚨",
+        "caption": "💬"
+    }
+    icono = prefijos.get(tipo, "📌")
+    print(f"[{tipo.upper()}] {mensaje}")
     try:
-        if tipo in ["text", "write"]: st.write(texto)
-        elif tipo == "caption": st.caption(texto)
-        elif tipo == "info": st.info(texto)
-        elif tipo == "error": st.error(texto)
-        elif tipo == "success": st.success(texto)
-        elif tipo == "warning": st.warning(texto)
-        elif tipo == "toast": st.toast(texto)
-    except Exception:
-        print(f"[{tipo.upper()}] {texto}")
-
-def limpiar_precio_pnp(texto_precio):
-    if not texto_precio: return 0.0
-    try:
-        texto = re.sub(r'[^\d.,]', '', str(texto_precio)).strip()
-        if not texto: return 0.0
-        if ',' in texto and '.' in texto:
-            if texto.rfind('.') > texto.rfind(','): texto = texto.replace(',', '')
-            else: texto = texto.replace('.', '').replace(',', '.')
+        if tipo == "caption":
+            st.caption(mensaje)
+        elif tipo == "error":
+            st.error(mensaje)
+        elif tipo == "warning":
+            st.warning(mensaje)
+        elif tipo == "success":
+            st.success(mensaje)
         else:
-            if ',' in texto and len(texto.split(',')[-1]) != 2: texto = texto.replace(',', '')
-            elif '.' in texto and len(texto.split('.')[-1]) != 2: texto = texto.replace('.', '')
-            elif ',' in texto: texto = texto.replace(',', '.')
-        match = re.findall(r'\d+\.\d+|\d+', texto)
-        return float(match[0]) if match else 0.0
-    except Exception: return 0.0
+            st.info(mensaje)
+    except Exception:
+        pass
+
+def sanitizar_url(url):
+    """Limpia y normaliza URLs para evitar errores de formato."""
+    if not url:
+        return ""
+    url = str(url).strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    parsed = urlparse(url)
+    return urlunparse(parsed)
 
 def safe_float(val):
-    if val is None: return 0.0
-    if isinstance(val, (int, float)): return float(val)
-    return limpiar_precio_pnp(str(val))
+    """Convierte de forma segura cualquier valor a float."""
+    if val is None:
+        return 0.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        try:
+            s = str(val).replace('S/', '').replace('S/.', '').replace(',', '').strip()
+            return float(s)
+        except Exception:
+            return 0.0
 
-def es_error_de_precio(precio_actual, precio_regular, precio_anterior=None, categoria="OTROS"):
-    if precio_actual <= 0: return False, 0.0
-    p_reg = max(precio_regular, precio_actual)
-    ahorro_soles = p_reg - precio_actual
-    descuento_pct = (ahorro_soles / p_reg) * 100.0 if p_reg > 0 else 0.0
-    es_precio_reg_ficticio = (p_reg >= 9999.0 or p_reg > precio_actual * 4.0)
+def limpiar_precio_pnp(texto):
+    """Extrae y convierte precios en formato de soles peruanos a número float."""
+    if not texto:
+        return 0.0
+    texto_str = str(texto)
+    match = re.search(r'\d+(?:[.,]\d+)*', texto_str)
+    if match:
+        raw_num = match.group(0)
+        if ',' in raw_num and '.' in raw_num:
+            raw_num = raw_num.replace(',', '')
+        elif ',' in raw_num and len(raw_num.split(',')[-1]) == 2:
+            raw_num = raw_num.replace(',', '.')
+        else:
+            raw_num = raw_num.replace(',', '')
+        try:
+            return float(raw_num)
+        except ValueError:
+            return 0.0
+    return 0.0
 
-    if descuento_pct >= 75.0 and ahorro_soles >= 30.0 and not es_precio_reg_ficticio:
-        return True, descuento_pct
+def es_error_de_precio(precio_actual, precio_regular, precio_anterior, categoria="OTROS"):
+    """Determina si una baja de precio califica como error de sistema / bug."""
+    if precio_regular <= 0 or precio_actual <= 0:
+        return False, 0.0
+    
+    descuento_pct = ((precio_regular - precio_actual) / precio_regular) * 100.0
+    
+    umbrales = {
+        "TV": 70.0,
+        "CELULAR": 70.0,
+        "PC": 70.0,
+        "PERFUMES": 80.0,
+        "ZAPATILLAS": 75.0
+    }
+    umbral_aplicar = umbrales.get(categoria, 75.0)
+    
+    es_bug = descuento_pct >= umbral_aplicar
+    return es_bug, descuento_pct
 
-    if precio_anterior and precio_anterior > 0:
-        caida_historica = ((precio_anterior - precio_actual) / precio_anterior) * 100.0
-        if caida_historica >= 70.0 and (precio_anterior - precio_actual) >= 30.0:
-            return True, caida_historica
+def extraer_productos_json_universal(data):
+    """Recorre recursivamente un objeto JSON buscando estructuras de productos."""
+    productos = []
+    if isinstance(data, dict):
+        if any(k in data for k in ['displayName', 'productName', 'title']) and any(k in data for k in ['prices', 'price', 'salePrice', 'url', 'link']):
+            productos.append(data)
+        
+        for clave in ['products', 'results', 'items', 'elements', 'itemListElement', 'mainEntity']:
+            if clave in data and isinstance(data[clave], list):
+                for item in data[clave]:
+                    productos.extend(extraer_productos_json_universal(item))
+                    
+        for k, v in data.items():
+            if k not in ['products', 'results', 'items', 'elements', 'itemListElement']:
+                productos.extend(extraer_productos_json_universal(v))
+                
+    elif isinstance(data, list):
+        for item in data:
+            productos.extend(extraer_productos_json_universal(item))
 
-    categorias_alto_valor = ["TV", "PC", "CELULAR", "REFRIGERADORA", "LAVADORA", "BARRA DE SONIDO"]
-    if categoria in categorias_alto_valor and precio_actual <= 50.0 and p_reg >= 300.0 and not es_precio_reg_ficticio:
-        return True, descuento_pct
+    unicos = []
+    vistos = set()
+    for p in productos:
+        if isinstance(p, dict):
+            ident = p.get('id') or p.get('productId') or p.get('displayName') or p.get('productName')
+            if ident and ident not in vistos:
+                vistos.add(ident)
+                unicos.append(p)
+            elif not ident:
+                unicos.append(p)
+    return unicos
 
-    return False, descuento_pct
+def extraer_numeros_dict(d, lista_salida):
+    """Extrae de forma recursiva valores numéricos de un diccionario."""
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if isinstance(v, (int, float)) and v > 0:
+                lista_salida.append(float(v))
+            elif isinstance(v, (dict, list)):
+                extraer_numeros_dict(v, lista_salida)
+    elif isinstance(d, list):
+        for item in d:
+            extraer_numeros_dict(item, lista_salida)
+
+def encontrar_foto_fala(prod_dict):
+    """Extrae la URL de imagen desde la estructura JSON de Falabella."""
+    if not isinstance(prod_dict, dict):
+        return ""
+    
+    for key in ['mediaUrls', 'images', 'image', 'primaryImageUrl', 'iconUrl']:
+        val = prod_dict.get(key)
+        if isinstance(val, list) and len(val) > 0:
+            img = val[0]
+            if isinstance(img, dict):
+                return img.get('url') or img.get('src') or ""
+            return str(img)
+        elif isinstance(val, str) and len(val) > 10:
+            return val
+        elif isinstance(val, dict):
+            return val.get('url') or val.get('src') or ""
+            
+    return ""
