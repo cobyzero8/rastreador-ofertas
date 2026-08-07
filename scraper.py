@@ -590,6 +590,7 @@ def motor_falabella(url, limite, headers):
 
 def motor_adidas(url, limite):
     url = sanitizar_url(url)
+    
     def limpiar_precio_adidas(texto):
         if not texto: return 0.0
         texto = str(texto)
@@ -638,22 +639,36 @@ def motor_adidas(url, limite):
     productos_map = {}
     texto_html = ""
 
+    # =======================================================
+    # 🔑 CARGA Y ROTACIÓN MULTI-KEY DE SCRAPERAPI (3 KEYS)
+    # =======================================================
     lista_keys = []
+    
+    # 1. Cargar desde st.secrets
     try:
         if hasattr(st, "secrets"):
-            if "SCRAPERAPI_KEY" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY"])
-            if "SCRAPERAPI_KEY_2" in st.secrets: lista_keys.append(st.secrets["SCRAPERAPI_KEY_2"])
+            for key_name in ["SCRAPERAPI_KEY", "SCRAPERAPI_KEY_2", "SCRAPERAPI_KEY_3"]:
+                if key_name in st.secrets and st.secrets[key_name]:
+                    val = str(st.secrets[key_name]).strip()
+                    if val and val not in lista_keys:
+                        lista_keys.append(val)
     except Exception: pass
     
-    if "SCRAPERAPI_KEY" in os.environ:
-        lista_keys.append(os.environ["SCRAPERAPI_KEY"])
+    # 2. Cargar desde os.environ (si aplica)
+    for key_name in ["SCRAPERAPI_KEY", "SCRAPERAPI_KEY_2", "SCRAPERAPI_KEY_3"]:
+        if key_name in os.environ and os.environ[key_name]:
+            val = str(os.environ[key_name]).strip()
+            if val and val not in lista_keys:
+                lista_keys.append(val)
 
+    # 3. Clave por defecto si no se detecta ninguna en la configuración
     if not lista_keys:
         lista_keys.append("4cd72a5cadb77297cd9f41f11dc632c0")
 
-    safe_log("🚀 [Adidas] Consultando catálogo vía ScraperAPI...", "info")
+    safe_log(f"🚀 [Adidas] Consultando catálogo vía ScraperAPI ({len(lista_keys)} claves disponibles)...", "info")
 
-    for api_key in lista_keys:
+    # Bucle de conmutación automática si falla una clave
+    for idx, api_key in enumerate(lista_keys, 1):
         payload = {'api_key': api_key, 'url': url}
         try:
             resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=40)
@@ -662,17 +677,17 @@ def motor_adidas(url, limite):
             if status_code == 200 and len(resp.text) > 5000:
                 texto_html = resp.text
                 break
-            elif status_code == 403:
-                safe_log(f"🚨 [Adidas] Error 403 en clave {api_key[:5]}... Probando clave de respaldo.", "warning")
+            elif status_code in [401, 403, 429]:
+                safe_log(f"🚨 [Adidas] Error HTTP {status_code} con clave #{idx} ({api_key[:5]}...). Cambiando a clave de respaldo...", "warning")
                 continue
             else:
-                safe_log(f"⚠️ [Adidas] ScraperAPI devolvió código HTTP {status_code}.", "warning")
+                safe_log(f"⚠️ [Adidas] ScraperAPI respuesta inusual (HTTP {status_code}) con clave #{idx}.", "warning")
         except Exception as e:
-            safe_log(f"🚨 [Adidas] Error de conexión con ScraperAPI: {e}", "warning")
+            safe_log(f"🚨 [Adidas] Error de conexión con ScraperAPI (Clave #{idx}): {e}", "warning")
             continue
 
     if not texto_html or len(texto_html) <= 5000:
-        safe_log("🛑 [Adidas] Imposible obtener respuesta HTML válida de Adidas.", "error")
+        safe_log("🛑 [Adidas] Imposible obtener respuesta HTML válida de Adidas tras probar todas las claves.", "error")
         return []
 
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
