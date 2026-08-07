@@ -614,7 +614,7 @@ def motor_adidas(url, limite):
         elif isinstance(nodo, list) and len(nodo) > 0: return extraer_url_imagen(nodo[0])
         return ''
 
-    FRECUENCIA_MINUTOS = 720  # 12 Horas
+    FRECUENCIA_MINUTOS = 240  # 4 Horas
     
     try:
         res_check = supabase.table("radares")\
