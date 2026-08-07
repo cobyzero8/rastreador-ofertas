@@ -2247,7 +2247,7 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
             url_origen=item['url']
         )
 
-        # Consultar cupones activos para la tienda actual en Supabase
+        # Consultar cupones activos para la tienda actual
         bloque_cupones = obtener_bloque_cupones_telegram(tienda_actual)
         bloque_cupones_str = f"\n{bloque_cupones}" if bloque_cupones else ""
 
@@ -2269,29 +2269,30 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 enviados.add(n_u)
                 total += 1
                 p_v = float(p['precio'])
-                
-                # Respetar intacto el precio regular de la web
                 p_r = max(float(p.get('precio_regular', p_v)), p_v)
                 
                 p['tienda_origen'] = tienda_actual
                 lista_html_streamlit.append(p)
                 
                 # -------------------------------------------------------------
-                # 🛠️ IDENTIFICADOR ESTABLE POR MD5 Y UPSERT A SUPABASE
+                # 🔑 GENERACIÓN DE IDENTIFICADOR ÚNICO FIJO POR URL
                 # -------------------------------------------------------------
                 url_limpia = sanitizar_url(p['link']).split('?')[0]
                 hash_url = hashlib.md5(url_limpia.encode('utf-8')).hexdigest()[:12]
                 id_registro = f"{item['identificador']}-{hash_url}".upper()
                 
+                # -------------------------------------------------------------
+                # 🔍 1. CONSULTA DE EXISTENCIA EN BASE DE DATOS
+                # -------------------------------------------------------------
                 precio_anterior = None
                 try:
                     res_ant = supabase.table("historial_precios").select("precio").eq("identificador", id_registro).execute()
                     if res_ant.data and len(res_ant.data) > 0:
                         precio_anterior = float(res_ant.data[0]['precio'])
                 except Exception as e_sel:
-                    safe_log(f"⚠️ Error consultando precio anterior: {e_sel}", "caption")
+                    safe_log(f"⚠️ Error consultando precio en Supabase: {e_sel}", "caption")
 
-                # Saneamiento de imágenes para Supabase/Telegram
+                # Preparar imagen y payload
                 img_limpia = sanitizar_url(p.get('img', ''))
                 if not img_limpia or img_limpia.lower() in ['empty', 'none', 'null']:
                     img_limpia = None
@@ -2307,47 +2308,21 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                 
                 emoji = mapa_emojis.get(grupo, "🔥")
 
-                # =======================================================
-                # 🚨 EVALUACIÓN DE DETECCIÓN DE BUG / ERROR DE PRECIO
-                # =======================================================
-                es_bug, pct_descuento = es_error_de_precio(
-                    precio_actual=p_v, 
-                    precio_regular=p_r, 
-                    precio_anterior=precio_anterior, 
-                    categoria=grupo
-                )
+                # =============================================================
+                # 🚦 EVALUACIÓN DE LAS 3 REGLAS ESTRICTAS
+                # =============================================================
 
-                if es_bug:
-                    try: 
-                        supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
-                    except Exception as e_up: 
-                        safe_log(f"🚨 Error actualizando Supabase (BUG): {e_up}", "error")
-
-                    msg_bug = (
-                        f"🚨🚨 <b>¡POSIBLE ERROR DE PRECIO / BUG!</b> 🚨🚨\n"
-                        f"‼️ <b>¡COMPRA RÁPIDO ANTES QUE LO CORRIJAN!</b> ‼️\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
-                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                        f"💥 <b>Precio BUG:</b> <b>S/. {p_v:.2f}</b>\n"
-                        f"❌ <b>Precio Normal:</b> S/. {p_r:.2f}\n"
-                        f"🔥 <b>Descuento Brutal:</b> {pct_descuento:.0f}%\n\n"
-                        f"⏰ <i>Nota: Los errores de sistema suelen durar pocos minutos.</i>"
-                        f"{bloque_cupones_str}"
-                    )
-                    if enviar_telegram_real(msg_bug, p['link'], img_limpia or ""): 
-                        alertas += 1
-                        safe_log(f"🔥 ¡BUG DE PRECIO DETECTADO Y ENVIADO! -> {p['nombre']}", "success")
-                        time.sleep(0.3)
-                    continue
-
-                # 1. PRODUCTO NUEVO EN BASE DE DATOS
+                # -------------------------------------------------------------
+                # CASO 1: EL PRODUCTO NO EXISTE EN LA BD (ES COMPLETAMENTE NUEVO)
+                # -------------------------------------------------------------
                 if precio_anterior is None:
+                    # Guardar en BD
                     try: 
                         supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
                     except Exception as e_up: 
-                        safe_log(f"🚨 Error insertando producto nuevo en Supabase: {e_up}", "error")
+                        safe_log(f"🚨 Error insertando en Supabase: {e_up}", "error")
 
+                    # Notificar a Telegram
                     msg_t = (
                         f"✨ <b>¡NUEVO PRODUCTO ENCONTRADO!</b> ✨\n"
                         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2360,30 +2335,59 @@ def revisar_ofertas(filtro_objetivo="TODOS"):
                         alertas += 1
                         time.sleep(0.3)
 
-                # 2. PRODUCTO REGISTRADO QUE BAJÓ DE PRECIO (Mínimo S/. 1.00 de diferencia)
-                elif p_v < (precio_anterior - 1.00):
+                # -------------------------------------------------------------
+                # CASO 2: EL PRODUCTO EXISTE Y SU PRECIO ACTUAL ES MENOR (BAJÓ DE PRECIO)
+                # -------------------------------------------------------------
+                elif p_v < precio_anterior:
+                    # Actualizar en BD con el nuevo precio menor y la hora actual
                     try: 
                         supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
                     except Exception as e_up: 
-                        safe_log(f"🚨 Error actualizando bajada de precio en Supabase: {e_up}", "error")
+                        safe_log(f"🚨 Error actualizando bajada en Supabase: {e_up}", "error")
 
-                    ahorro = precio_anterior - p_v
-                    msg_t = (
-                        f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
-                        f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
-                        f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
-                        f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
-                        f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}"
-                        f"{bloque_cupones_str}"
+                    # Evaluar si califica como Bug o Bajada Normal
+                    es_bug, pct_descuento = es_error_de_precio(
+                        precio_actual=p_v, 
+                        precio_regular=p_r, 
+                        precio_anterior=precio_anterior, 
+                        categoria=grupo
                     )
-                    if enviar_telegram_real(msg_t, p['link'], img_limpia or ""): 
+
+                    if es_bug:
+                        msg_out = (
+                            f"🚨🚨 <b>¡POSIBLE ERROR DE PRECIO / BUG!</b> 🚨🚨\n"
+                            f"‼️ <b>¡COMPRA RÁPIDO ANTES QUE LO CORRIJAN!</b> ‼️\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                            f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                            f"💥 <b>Precio BUG:</b> <b>S/. {p_v:.2f}</b>\n"
+                            f"❌ <b>Precio Normal:</b> S/. {p_r:.2f}\n"
+                            f"🔥 <b>Descuento Brutal:</b> {pct_descuento:.0f}%\n\n"
+                            f"⏰ <i>Nota: Los errores de sistema suelen durar pocos minutos.</i>"
+                            f"{bloque_cupones_str}"
+                        )
+                    else:
+                        ahorro = precio_anterior - p_v
+                        msg_out = (
+                            f"{emoji} <b>¡OFERTA: BAJÓ DE PRECIO!</b> {emoji}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📦 <b>Producto:</b> <code>{p['nombre']}</code>\n"
+                            f"🏪 <b>Tienda:</b> <code>{tienda_actual}</code>\n"
+                            f"❌ <b>Precio Anterior:</b> S/. {precio_anterior:.2f}\n"
+                            f"💰 <b>Nuevo Precio Oferta:</b> S/. {p_v:.2f}\n"
+                            f"📉 <b>Te Ahorras:</b> S/. {ahorro:.2f}"
+                            f"{bloque_cupones_str}"
+                        )
+
+                    if enviar_telegram_real(msg_out, p['link'], img_limpia or ""): 
                         alertas += 1
                         time.sleep(0.3)
 
-                # 3. MISMO PRECIO O VARIACIÓN ÍNFIMA -> Actualiza en silencio
+                # -------------------------------------------------------------
+                # CASO 3: EL PRODUCTO EXISTE Y SU PRECIO ES IGUAL O MAYOR (p_v >= precio_anterior)
+                # -------------------------------------------------------------
                 else:
+                    # SOLO ACTUALIZA LA HORA/FECHA EN LA BD. NO HACE NADA EN TELEGRAM.
                     try: 
                         supabase.table("historial_precios").upsert(datos_guardar, on_conflict="identificador").execute()
                     except Exception: 
