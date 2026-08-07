@@ -7,7 +7,7 @@ import requests
 import threading
 from datetime import datetime, timezone
 from supabase import create_client, Client
-from scraper import revisar_ofertas
+from scraper import revisar_ofertas, renderizar_dashboard_salud
 
 # Importación para vincular el contexto de Streamlit a hilos secundarios
 try:
@@ -51,6 +51,7 @@ st.sidebar.write("---")
 menu = st.sidebar.radio("Sección:", [
     "📈 Ver Dashboard / Ofertas", 
     "🎟️ Cupones de Descuento", 
+    "🏥 Salud de Scrapers (Health Check)",
     "🛠️ Configurar Radares y URLs", 
     "💥 Forzar Escaneo Intensivo"
 ])
@@ -229,7 +230,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
         st.info("No hay ofertas registradas en este rango.")
 
 # ---------------------------
-# Cupones de Descuento (NUEVA SECCIÓN)
+# Cupones de Descuento
 # ---------------------------
 elif menu == "🎟️ Cupones de Descuento":
     st.title("🎟️ Cupones y Códigos de Descuento Activos")
@@ -277,6 +278,12 @@ elif menu == "🎟️ Cupones de Descuento":
             st.info("No hay cupones activos registrados por el momento. Presiona 'BUSCAR NUEVOS CUPONES AHORA' para escanear.")
     except Exception as err_c:
         st.error(f"Error cargando cupones desde Supabase: {err_c}")
+
+# ---------------------------
+# Panel de Salud (Health Check)
+# ---------------------------
+elif menu == "🏥 Salud de Scrapers (Health Check)":
+    renderizar_dashboard_salud(supabase)
 
 # ---------------------------
 # Panel de Gestión
