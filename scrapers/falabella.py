@@ -6,18 +6,10 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
-from utils import (
-    sanitizar_url, 
-    extraer_productos_json_universal, 
-    safe_float, 
-    limpiar_precio_pnp, 
-    encontrar_foto_fala,
-    extraer_numeros_dict
-)
+from utils import sanitizar_url, safe_float, es_error_de_precio, safe_log
 from config import LISTA_USER_AGENTS
 
 def motor_falabella(url, limite=999999.0, headers=None):
-    # 🟢 Si no se reciben headers desde el enrutador, los genera automáticamente
     if headers is None:
         user_agent = random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         headers = {
@@ -28,6 +20,7 @@ def motor_falabella(url, limite=999999.0, headers=None):
 
     productos = []
     url = sanitizar_url(url)
+    
     try:
         texto_html = ""
         status_code = 0
@@ -36,128 +29,185 @@ def motor_falabella(url, limite=999999.0, headers=None):
                 resp = requests.get(url, headers=headers, timeout=15, verify=False)
                 texto_html = resp.text
                 status_code = resp.status_code
-            except Exception: pass
-            if status_code == 200 and len(texto_html) > 5000: break
-            else: time.sleep(random.uniform(1.5, 3.0))
+            except Exception:
+                pass
+            if status_code == 200 and len(texto_html) > 5000:
+                break
+            else:
+                time.sleep(random.uniform(1.0, 2.5))
         
-        if status_code != 200 or len(texto_html) < 5000: return []
+        if status_code != 200 or len(texto_html) < 5000:
+            return []
+            
         soup = BeautifulSoup(texto_html, 'html.parser')
         
-        fala_prods = []
-        scripts_fala = soup.find_all('script')
-        for script in scripts_fala:
-            if script.text and 'displayName' in script.text and len(script.text) > 1000:
-                try:
-                    txt = script.text.strip()
-                    start_idx = txt.find('{')
-                    end_idx = txt.rfind('}')
-                    if start_idx != -1 and end_idx != -1:
-                        json_data = json.loads(txt[start_idx:end_idx+1])
-                        encontrados = extraer_productos_json_universal(json_data)
-                        if encontrados:
-                            fala_prods = encontrados
-                            break
-                except Exception: continue
+        # --- CAPA 1: EXTRACCIÓN VÍA NEXT_DATA (JSON) ---
+        next_data_script = soup.find("script", id="__NEXT_DATA__")
+        if next_data_script and next_data_script.string:
+            try:
+                data = json.loads(next_data_script.string)
+                results = (
+                    data.get("props", {})
+                    .get("pageProps", {})
+                    .get("searchResult", {})
+                    .get("content", {})
+                    .get("results", [])
+                )
+                if not results:
+                    results = data.get("props", {}).get("pageProps", {}).get("results", [])
 
-        if fala_prods:
-            for prod in fala_prods:
-                try:
-                    nombre = str(prod.get('displayName') or prod.get('productName') or prod.get('title') or '').strip().upper()
-                    if len(nombre) < 3: continue
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
                     
-                    p_o, p_r = 0.0, 0.0
-                    precios_list = prod.get('prices') or prod.get('price') or []
-                    if isinstance(precios_list, dict): precios_list = [precios_list]
+                    # 1. Validar enlace de producto REAL (descarta marcas y filtros de búsqueda)
+                    link_rel = item.get('url') or item.get('link') or item.get('href') or ''
+                    if not link_rel or ('/product/' not in link_rel and '/p/' not in link_rel):
+                        continue
                     
-                    if isinstance(precios_list, list):
-                        for pr in precios_list:
-                            if not isinstance(pr, dict): continue
-                            tipo_p = str(pr.get('type', '')).lower()
-                            val_p = pr.get('price') or pr.get('value')
-                            if isinstance(val_p, list) and len(val_p) > 0: val_p = val_p[0]
-                            float_p = safe_float(val_p)
-                            if any(x in tipo_p for x in ['sale', 'event', 'oferta', 'internet', 'current', 'card', 'cmr', 'eventprice']): p_o = float_p
-                            elif any(x in tipo_p for x in ['list', 'original', 'regular', 'normal', 'normalprice']): p_r = float_p
-                        
-                        if p_o == 0.0 or p_r <= p_o:
-                            valores_aux = []
-                            extraer_numeros_dict(prod, valores_aux)
-                            valores_unicos = sorted(list(set(valores_aux)))
-                            if len(valores_unicos) >= 2:
-                                p_o = valores_unicos[0]
-                                p_r = valores_unicos[-1]
-                            elif len(valores_unicos) == 1:
-                                p_o = valores_unicos[0]
-                                if p_r == 0.0: p_r = p_o
+                    link_final = urljoin("https://www.falabella.com.pe", link_rel)
 
-                    if p_o == 0.0: p_o = safe_float(prod.get('salePrice') or prod.get('price'))
-                    if p_r == 0.0: p_r = safe_float(prod.get('listPrice') or prod.get('originalPrice') or prod.get('regularPrice') or p_o)
-                    
-                    if 0 < p_o <= limite:
-                        link_rel = prod.get('url') or prod.get('link') or prod.get('href') or ''
-                        link_final = urljoin("https://www.falabella.com.pe", link_rel)
-                        img = encontrar_foto_fala(prod)
-                        
-                        if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
-                            url_limpia = link_final.split('?')[0].split('#')[0]
-                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id: img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
-                        
-                        if str(img).startswith('//'): img = 'https:' + str(img)
-                        img = str(img).split(' ')[0].strip().rstrip(',')
-                        productos.append({"nombre": f"FALABELLA - {nombre}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": str(img)})
-                except Exception: continue
+                    # 2. Validar Nombre Completo (No solo la marca vacía)
+                    nombre = str(item.get('displayName') or item.get('title') or item.get('productName') or '').strip().upper()
+                    if len(nombre) < 6 or nombre in ["ADIDAS", "PUMA", "REEBOK", "LA MARTINA", "NIKE", "DIADORA"]:
+                        continue
 
+                    # 3. Extracción ESTRICTA de precios desde la lista de Falabella (sin números aleatorios)
+                    prices_list = item.get('prices') or []
+                    if isinstance(prices_list, dict):
+                        prices_list = [prices_list]
+
+                    precio_oferta = 0.0
+                    precio_regular = 0.0
+
+                    for p in prices_list:
+                        if not isinstance(p, dict):
+                            continue
+                        p_type = str(p.get("type", "")).lower()
+                        raw_val = p.get("price") or p.get("value")
+                        if isinstance(raw_val, list) and raw_val:
+                            raw_val = raw_val[0]
+                        val = safe_float(raw_val)
+                        
+                        if val <= 0:
+                            continue
+
+                        if any(x in p_type for x in ["sale", "event", "oferta", "internet", "current", "cmr", "card", "eventprice"]):
+                            precio_oferta = val if (precio_oferta == 0 or val < precio_oferta) else precio_oferta
+                        elif any(x in p_type for x in ["list", "original", "regular", "normal", "normalprice"]):
+                            precio_regular = val if (precio_regular == 0 or val > precio_regular) else precio_regular
+
+                    if precio_oferta == 0.0 and prices_list:
+                        valid_p = [safe_float(p.get("price") or p.get("value")) for p in prices_list if safe_float(p.get("price") or p.get("value")) > 0]
+                        if valid_p:
+                            precio_oferta = min(valid_p)
+                            precio_regular = max(valid_p)
+
+                    if precio_regular == 0.0:
+                        precio_regular = precio_oferta
+
+                    # 🚨 FILTRO ANTI-BASURA: Descartar precios < S/ 10.00 o erróneos
+                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta) or precio_oferta > limite:
+                        continue
+
+                    # 4. Extracción / Reconstrucción de la IMAGEN HD
+                    img_url = ""
+                    media = item.get("media") or item.get("images") or []
+                    if isinstance(media, list) and media:
+                        first_media = media[0]
+                        if isinstance(first_media, dict):
+                            img_url = first_media.get("url") or first_media.get("src") or ""
+                        else:
+                            img_url = str(first_media)
+                    elif isinstance(media, dict):
+                        img_url = media.get("url") or media.get("src") or ""
+
+                    # Reconstrucción de fallback usando el ID de Falabella si no viene URL de imagen
+                    if not img_url or len(img_url) < 15 or 'data:image' in img_url:
+                        url_limpia = link_final.split('?')[0].split('#')[0]
+                        match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                        if match_id:
+                            img_url = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+
+                    if str(img_url).startswith('//'):
+                        img_url = 'https:' + str(img_url)
+
+                    img_url = str(img_url).split(' ')[0].strip().rstrip(',')
+
+                    productos.append({
+                        "nombre": f"FALABELLA - {nombre}",
+                        "precio": precio_oferta,
+                        "precio_regular": max(precio_regular, precio_oferta),
+                        "link": link_final,
+                        "img": img_url
+                    })
+            except Exception as ex_json:
+                safe_log(f"⚠️ Error procesando JSON Falabella: {ex_json}", "warning")
+
+        # --- CAPA 2: FALLBACK HTML (Si no se encontraron datos en el JSON) ---
         if not productos:
-            items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item|item)', re.I))
+            items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item)', re.I))
             for t in items:
                 try:
-                    tit_el = t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], id=re.compile(r'name', re.I)) or t.find(['b', 'span', 'p', 'h3', 'h4', 'a'], class_=re.compile(r'(title|name|description|displayName)', re.I))
-                    if not tit_el or len(tit_el.text.strip()) < 3: continue
-                    
-                    el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
-                    el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
-                    
-                    p_o = 0.0
-                    if el_event: p_o = safe_float(el_event.get('data-event-price'))
-                    else:
-                        o_el = t.find(id=re.compile(r'(salePrice|offerPrice|currentPrice|precio|event)', re.I)) or t.find(class_=re.compile(r'(salePrice|price-value|oferta|current-price|price-item|eventPrice)', re.I))
-                        if o_el: p_o = limpiar_precio_pnp(o_el.text)
-                        
-                    p_r = p_o
-                    if el_normal: p_r = safe_float(el_normal.get('data-normal-price'))
-                    else:
-                        r_el = t.find(id=re.compile(r'(listPrice|regularPrice|oldPrice|normal)', re.I)) or t.find(class_=re.compile(r'(listPrice|regular-price|old-price|normal-price)', re.I))
-                        if r_el: p_r = limpiar_precio_pnp(r_el.text)
-                    
-                    if 0 < p_o <= limite:
-                        a_el = t.find('a', href=True) or (t if t.name == 'a' else None)
-                        link_final = urljoin(url, a_el['href']) if a_el else url
-                        img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img', id=re.compile(r'image', re.I)) or t.find('img')
-                        img = ''
-                        if img_el:
-                            for attr in ['data-srcset', 'srcset', 'data-src', 'src', 'data-lazy']:
-                                val = img_el.get(attr)
-                                if val and 'data:image' not in str(val) and len(str(val)) > 10:
-                                    img = str(val).split(' ')[0].strip()
-                                    break
-                        
-                        if not img or '/product/' in str(img) or len(str(img)) < 15 or str(img).strip() in ['0', 'None', 'false']:
-                            url_limpia = link_final.split('?')[0].split('#')[0]
-                            match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
-                            if match_id: img = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
-                        
-                        if str(img).startswith('//'): img = 'https:' + str(img)
-                        img = str(img).split(' ')[0].strip().rstrip(',')
-                        productos.append({"nombre": f"FALABELLA - {tit_el.text.strip().upper()}", "precio": p_o, "precio_regular": max(p_r, p_o), "link": link_final, "img": img})
-                except Exception: continue
+                    a_el = t.find('a', href=True)
+                    if not a_el or ('/product/' not in a_el['href'] and '/p/' not in a_el['href']):
+                        continue
 
+                    link_final = urljoin("https://www.falabella.com.pe", a_el['href'])
+
+                    tit_el = t.find(['b', 'span', 'p', 'h3', 'h4'], class_=re.compile(r'(title|name|displayName)', re.I))
+                    nombre_txt = tit_el.text.strip().upper() if tit_el else ""
+                    if len(nombre_txt) < 6 or nombre_txt in ["ADIDAS", "PUMA", "REEBOK", "LA MARTINA", "NIKE", "DIADORA"]:
+                        continue
+
+                    el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
+                    precio_oferta = safe_float(el_event.get('data-event-price')) if el_event else 0.0
+
+                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta) or precio_oferta > limite:
+                        continue
+
+                    el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
+                    precio_regular = safe_float(el_normal.get('data-normal-price')) if el_normal else precio_oferta
+
+                    img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img')
+                    img_url = ""
+                    if img_el:
+                        for attr in ['data-srcset', 'srcset', 'data-src', 'src']:
+                            val = img_el.get(attr)
+                            if val and 'data:image' not in str(val) and len(str(val)) > 10:
+                                img_url = str(val).split(' ')[0].strip()
+                                break
+
+                    if not img_url or len(img_url) < 15:
+                        url_limpia = link_final.split('?')[0].split('#')[0]
+                        match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                        if match_id:
+                            img_url = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
+
+                    if str(img_url).startswith('//'):
+                        img_url = 'https:' + str(img_url)
+
+                    productos.append({
+                        "nombre": f"FALABELLA - {nombre_txt}",
+                        "precio": precio_oferta,
+                        "precio_regular": max(precio_regular, precio_oferta),
+                        "link": link_final,
+                        "img": img_url
+                    })
+                except Exception:
+                    continue
+
+        # Filtrar duplicados
         vistos = set()
         productos_unicos = []
         for p in productos:
             if p['link'] not in vistos:
                 vistos.add(p['link'])
                 productos_unicos.append(p)
+
         return productos_unicos
-    except Exception: pass
+
+    except Exception as e:
+        safe_log(f"🚨 Error en motor Falabella: {e}", "error")
+
     return productos
