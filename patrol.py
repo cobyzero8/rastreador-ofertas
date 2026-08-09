@@ -101,36 +101,40 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     .execute()
 
                 if not res_existente.data:
-                    # =========================================================
-                    # 🔴 REGLA 1: PRODUCTO NUEVO (NO EXISTE EN BD)
-                    # ACCIÓN: Se guarda en BD + Se envía SIEMPRE alerta a Telegram
-                    # =========================================================
-                    datos_insert = {
-                        "identificador": f"{tienda}-{categoria}",
-                        "nombre_producto": nombre_real,
-                        "precio": precio_oferta,
-                        "precio_regular": precio_regular,
-                        "imagen_producto": imagen,
-                        "link_producto": link_prod,
-                        "fecha": fecha_actual
-                    }
-                    
-                    res_ins = supabase.table("historial_precios").insert(datos_insert).execute()
-                    
-                    if res_ins and res_ins.data:
-                        total_productos_procesados += 1
-                        total_ofertas_notificadas += 1
-
-                        enviar_alerta_telegram(
-                            tienda=tienda,
-                            nombre=nombre_real,
-                            precio_oferta=precio_oferta,
-                            precio_regular=precio_regular,
-                            link=link_prod,
-                            imagen=imagen,
-                            tipo_alerta="NUEVO_PRODUCTO"
-                        )
-                        safe_log(f"🆕 Producto nuevo (no estaba en BD): {nombre_real} -> Alerta enviada a Telegram", "success")
+    # 🔴 CASO 1: PRODUCTO NUEVO
+    datos_insert = {
+        "identificador": f"{tienda}-{categoria}",
+        "nombre_producto": nombre_real,
+        "precio": precio_oferta,
+        "precio_regular": precio_regular,
+        "imagen_producto": imagen,
+        "link_producto": link_prod,
+        "fecha": fecha_actual
+    }
+    
+    res_ins = supabase.table("historial_precios").insert(datos_insert).execute()
+    
+    if res_ins and res_ins.data:
+        total_productos_procesados += 1
+        
+        # Enviar alerta a Telegram
+        exito_telegram = enviar_alerta_telegram(
+            tienda=tienda,
+            nombre=nombre_real,
+            precio_oferta=precio_oferta,
+            precio_regular=precio_regular,
+            link=link_prod,
+            imagen=imagen,
+            tipo_alerta="NUEVO_PRODUCTO"
+        )
+        
+        if exito_telegram:
+            total_ofertas_notificadas += 1
+            safe_log(f"🆕 Producto nuevo notificado: {nombre_real}", "success")
+            # 🟢 PAUSA DE 1.5 SEGUNDOS PARA EVITAR BLOQUEOS DE TELEGRAM
+            time.sleep(1.5)
+        else:
+            safe_log(f"⚠️ Guardado en BD pero Telegram limitó el envío: {nombre_real}", "warning")
 
                 else:
                     # El producto SÍ existe en la BD
