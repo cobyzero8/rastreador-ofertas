@@ -564,78 +564,84 @@ elif menu == "💥 Forzar Escaneo Intensivo":
 # ---------------------------
 # Métricas Visuales de Health Check (Gráficos)
 # ---------------------------
+# ---------------------------
+# Métricas Visuales de Health Check (Gráficos)
+# ---------------------------
 elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
     st.title("📊 Monitor Visual de Salud de Scrapers")
-    st.caption("Análisis cuantitativo de la efectividad y rendimiento de cada motor de extracción.")
+    st.caption("Estado actual, historial de fallos y rendimiento de extracción por tienda.")
     st.write("---")
 
     try:
-        res = supabase.table("salud_scrapers")\
-            .select("*")\
-            .order("fecha", desc=True)\
-            .limit(1000)\
+        # Consulta con todos los campos reales de health_checks
+        res = supabase.table("health_checks")\
+            .select("tienda, estado, fallos_consecutivos, ultimo_escaneo, ultimos_productos_count, ultimo_error")\
+            .order("fallos_consecutivos", desc=True)\
             .execute()
 
         data = res.data if res and res.data else []
 
         if not data:
-            st.info("ℹ️ No hay suficientes registros en la tabla 'salud_scrapers' aún. Se irán acumulando con cada patrullaje.")
+            st.info("ℹ️ No hay registros almacenados en la tabla 'health_checks'.")
         else:
             df_salud = pd.DataFrame(data)
 
-            total_escaneos = len(df_salud)
-            escaneos_exitosos = len(df_salud[df_salud["productos_extraidos"] > 0])
-            tasa_exito_global = (escaneos_exitosos / total_escaneos * 100) if total_escaneos > 0 else 0.0
-            total_prods_capturados = df_salud["productos_extraidos"].sum()
+            # Métricas KPi Principales
+            total_tiendas = len(df_salud)
+            operativas = len(df_salud[df_salud["estado"].str.upper() == "OPERATIVO"])
+            caidas = len(df_salud[df_salud["estado"].str.upper() == "CAIDO"])
+            total_prods = df_salud["ultimos_productos_count"].fillna(0).sum()
 
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total de Escaneos", f"{total_escaneos}")
-            m2.metric("Tasa de Éxito Global", f"{tasa_exito_global:.1f}%")
-            m3.metric("Escaneos Efectivos", f"{escaneos_exitosos}")
-            m4.metric("Productos Capturados", f"{total_prods_capturados}")
+            m1.metric("Tiendas Monitoreadas", f"{total_tiendas}")
+            m2.metric("🟢 Operativas", f"{operativas}")
+            m3.metric("🔴 Caídas", f"{caidas}")
+            m4.metric("📦 Total Prods. Úl. Scan", f"{int(total_prods)}")
 
             st.divider()
 
-            if "tienda" in df_salud.columns and "productos_extraidos" in df_salud.columns:
-                resumen = df_salud.groupby("tienda").agg(
-                    Total_Escaneos=("productos_extraidos", "count"),
-                    Escaneos_Exitosos=("productos_extraidos", lambda x: (x > 0).sum()),
-                    Promedio_Productos=("productos_extraidos", "mean")
-                ).reset_index()
+            # Gráficos Visuales Lado a Lado
+            col_g1, col_g2 = st.columns(2)
 
-                resumen["Tasa_Exito_%"] = (resumen["Escaneos_Exitosos"] / resumen["Total_Escaneos"] * 100).round(1)
-                resumen["Promedio_Productos"] = resumen["Promedio_Productos"].round(1)
+            with col_g1:
+                st.markdown("#### 🚨 Fallos Consecutivos por Tienda")
+                st.bar_chart(data=df_salud, x="tienda", y="fallos_consecutivos", color="#FF3D00")
 
-                col_graf, col_tabla = st.columns([1.2, 1])
+            with col_g2:
+                st.markdown("#### 📦 Productos Extraídos en Último Escaneo")
+                st.bar_chart(data=df_salud, x="tienda", y="ultimos_productos_count", color="#00C853")
 
-                with col_graf:
-                    st.markdown("#### 📊 Tasa de Éxito por Tienda (%)")
-                    st.bar_chart(data=resumen, x="tienda", y="Tasa_Exito_%", color="#00C853")
+            st.divider()
+            st.markdown("#### 📋 Detalle Completo de Diagnóstico")
 
-                with col_tabla:
-                    st.markdown("#### 📋 Diagnóstico por Tienda")
+            # Formato estético del estado
+            def dar_formato_estado(est):
+                e = str(est).upper() if est else "DESCONOCIDO"
+                if "OPERATIVO" in e:
+                    return "🟢 OPERATIVO"
+                elif "CAIDO" in e:
+                    return "🔴 CAÍDO"
+                elif "ADVERTENCIA" in e:
+                    return "⚠️ ADVERTENCIA"
+                return f"⚪ {e}"
 
-                    def evaluar_estado(row):
-                        if row["Tasa_Exito_%"] >= 80:
-                            return "🟢 Estable"
-                        elif row["Tasa_Exito_%"] >= 40:
-                            return "⚠️ Inestable"
-                        else:
-                            return "🔴 Caído / Bloqueado"
+            df_salud["Estado"] = df_salud["estado"].apply(dar_formato_estado)
+            df_salud["ultimo_error"] = df_salud["ultimo_error"].fillna("Sin errores registrados")
 
-                    resumen["Estado"] = resumen.apply(evaluar_estado, axis=1)
+            # Renombrar columnas para la interfaz
+            df_mostrar = df_salud.rename(columns={
+                "tienda": "Tienda",
+                "fallos_consecutivos": "Fallos Consecutivos",
+                "ultimos_productos_count": "Prods. Capturados",
+                "ultimo_escaneo": "Último Escaneo",
+                "ultimo_error": "Último Error Registrado"
+            })[["Tienda", "Estado", "Fallos Consecutivos", "Prods. Capturados", "Último Escaneo", "Último Error Registrado"]]
 
-                    st.dataframe(
-                        resumen.rename(columns={
-                            "tienda": "Tienda",
-                            "Total_Escaneos": "Escaneos",
-                            "Escaneos_Exitosos": "Éxitos",
-                            "Tasa_Exito_%": "Éxito %",
-                            "Promedio_Productos": "Prom. Prods"
-                        })[["Tienda", "Estado", "Éxito %", "Prom. Prods", "Escaneos"]],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+            st.dataframe(
+                df_mostrar,
+                use_container_width=True,
+                hide_index=True
+            )
     except Exception as e:
         st.error(f"🚨 Error al generar reporte visual de salud: {e}")
 
