@@ -31,7 +31,7 @@ supabase = init_supabase()
 @st.cache_data(ttl=300)
 def obtener_tiendas_dinamicas():
     tiendas_base = [
-        "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", 
+        "GENERAL", "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", 
         "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", 
         "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"
     ]
