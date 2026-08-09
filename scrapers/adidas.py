@@ -1,4 +1,5 @@
 import os
+import re  # 🟢 CORRECCIÓN CRÍTICA: Necesario para re.sub y re.search
 import json
 import requests
 import streamlit as st
@@ -8,11 +9,16 @@ from bs4 import BeautifulSoup
 from config import supabase
 from utils import sanitizar_url, safe_log, limpiar_precio_pnp
 
-def motor_adidas(url, limite):
+def motor_adidas(url, limite=999999.0, headers=None):
+    """
+    Scraper para Adidas Perú con rotación de claves ScraperAPI,
+    temporizador de escaneo y extracción doble (Next.js JSON + HTML Fallback).
+    """
     url = sanitizar_url(url)
     
     def limpiar_precio_adidas(texto):
-        if not texto: return 0.0
+        if not texto:
+            return 0.0
         texto = str(texto)
         texto = re.sub(r'-?\s*\d+\s*%', '', texto)
         match = re.search(r'\d+(?:[.,]\d+)*', texto)
@@ -24,17 +30,23 @@ def motor_adidas(url, limite):
                 raw_num = raw_num.replace(',', '.')
             else:
                 raw_num = raw_num.replace(',', '')
-            try: return float(raw_num)
-            except ValueError: return 0.0
+            try:
+                return float(raw_num)
+            except ValueError:
+                return 0.0
         return 0.0
 
     def extraer_url_imagen(nodo):
-        if isinstance(nodo, str) and nodo.startswith('http'): return nodo
-        elif isinstance(nodo, dict): return nodo.get('src') or nodo.get('url') or nodo.get('desktop') or ''
-        elif isinstance(nodo, list) and len(nodo) > 0: return extraer_url_imagen(nodo[0])
+        if isinstance(nodo, str) and nodo.startswith('http'):
+            return nodo
+        elif isinstance(nodo, dict):
+            return nodo.get('src') or nodo.get('url') or nodo.get('desktop') or ''
+        elif isinstance(nodo, list) and len(nodo) > 0:
+            return extraer_url_imagen(nodo[0])
         return ''
 
-    FRECUENCIA_MINUTOS = 240  # 4 Horas
+    # FRECUENCIA: 240 Minutos (4 Horas) para optimizar consumo de ScraperAPI
+    FRECUENCIA_MINUTOS = 240 
     
     try:
         res_check = supabase.table("radares")\
@@ -51,27 +63,31 @@ def motor_adidas(url, limite):
                 minutos_transcurridos = (ahora - ultima_fecha).total_seconds() / 60
 
                 if minutos_transcurridos < FRECUENCIA_MINUTOS:
-                    safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Omitiendo...", "caption")
+                    safe_log(f"⏳ [Adidas] Esta URL se escaneó hace {int(minutos_transcurridos)} min. Omitiendo...", "info")
                     return []
     except Exception as e:
-        safe_log(f"⚠️ No se pudo verificar el temporizador de Adidas en radares: {e}", "caption")
+        safe_log(f"⚠️ No se pudo verificar el temporizador de Adidas en radares: {e}", "warning")
 
     productos_map = {}
     texto_html = ""
 
+    # Recolección de claves de ScraperAPI (Streamlit Secrets + Variables de Entorno)
     lista_keys = []
     try:
         if hasattr(st, "secrets"):
             for key_name in ["SCRAPERAPI_KEY", "SCRAPERAPI_KEY_2", "SCRAPERAPI_KEY_3"]:
                 if key_name in st.secrets and st.secrets[key_name]:
                     val = str(st.secrets[key_name]).strip()
-                    if val and val not in lista_keys: lista_keys.append(val)
-    except Exception: pass
+                    if val and val not in lista_keys:
+                        lista_keys.append(val)
+    except Exception:
+        pass
     
     for key_name in ["SCRAPERAPI_KEY", "SCRAPERAPI_KEY_2", "SCRAPERAPI_KEY_3"]:
         if key_name in os.environ and os.environ[key_name]:
             val = str(os.environ[key_name]).strip()
-            if val and val not in lista_keys: lista_keys.append(val)
+            if val and val not in lista_keys:
+                lista_keys.append(val)
 
     if not lista_keys:
         lista_keys.append("4cd72a5cadb77297cd9f41f11dc632c0")
@@ -103,6 +119,7 @@ def motor_adidas(url, limite):
     texto_html = texto_html.replace('\xa0', ' ').replace('&nbsp;', ' ')
     soup = BeautifulSoup(texto_html, 'html.parser')
 
+    # Capa 1: Extracción JSON (__NEXT_DATA__)
     next_script = soup.find('script', id='__NEXT_DATA__')
     if next_script:
         try:
@@ -116,11 +133,13 @@ def motor_adidas(url, limite):
                                 return nodo[k]
                     for v in nodo.values():
                         res = buscar_productos_next(v)
-                        if res: return res
+                        if res:
+                            return res
                 elif isinstance(nodo, list):
                     for x in nodo:
                         res = buscar_productos_next(x)
-                        if res: return res
+                        if res:
+                            return res
                 return []
 
             items_json = buscar_productos_next(json_data)
@@ -128,11 +147,13 @@ def motor_adidas(url, limite):
                 for prod_j in items_json:
                     try:
                         nombre = str(prod_j.get('name') or prod_j.get('title') or prod_j.get('displayName') or "").strip().upper()
-                        if len(nombre) < 3: continue
+                        if len(nombre) < 3:
+                            continue
 
                         p_o = limpiar_precio_adidas(prod_j.get('salePrice') or prod_j.get('price'))
                         p_r = limpiar_precio_adidas(prod_j.get('originalPrice') or prod_j.get('price'))
-                        if p_r == 0: p_r = p_o
+                        if p_r == 0:
+                            p_r = p_o
 
                         if 0 < p_o <= limite:
                             link_rel = prod_j.get('url') or prod_j.get('link') or prod_j.get('href') or ""
@@ -146,9 +167,12 @@ def motor_adidas(url, limite):
                                 "link": link_final,
                                 "img": img_url
                             }
-                    except Exception: continue
-        except Exception: pass
+                    except Exception:
+                        continue
+        except Exception:
+            pass
 
+    # Capa 2: Extracción HTML Fallback si falla el JSON
     if not productos_map:
         titulos_testid = soup.find_all(attrs={"data-testid": "product-card-title"})
         for tit_el in titulos_testid:
@@ -159,11 +183,16 @@ def motor_adidas(url, limite):
                 oferta_el, regular_el, enlace_el, img_el = None, None, None, None
                 for _ in range(5):
                     ancestor = ancestor.parent
-                    if not ancestor: break
-                    if not oferta_el: oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
-                    if not regular_el: regular_el = ancestor.find(attrs={"data-testid": "original-price"})
-                    if not enlace_el: enlace_el = ancestor.find('a', href=True)
-                    if not img_el: img_el = ancestor.find('img')
+                    if not ancestor:
+                        break
+                    if not oferta_el:
+                        oferta_el = ancestor.find(attrs={"data-testid": "main-price"})
+                    if not regular_el:
+                        regular_el = ancestor.find(attrs={"data-testid": "original-price"})
+                    if not enlace_el:
+                        enlace_el = ancestor.find('a', href=True)
+                    if not img_el:
+                        img_el = ancestor.find('img')
 
                 if oferta_el:
                     precio_oferta = limpiar_precio_adidas(oferta_el.text)
@@ -180,7 +209,8 @@ def motor_adidas(url, limite):
                             "link": link_final,
                             "img": img_url
                         }
-            except Exception: continue
+            except Exception:
+                continue
 
     productos_list = list(productos_map.values())
     if productos_list:
