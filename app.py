@@ -10,6 +10,7 @@ from supabase import create_client, Client
 # Importaciones ajustadas a la arquitectura modular
 from patrol import revisar_ofertas
 from health_monitor import renderizar_dashboard_salud
+from scrapers import escanear_tienda
 
 try:
     from streamlit.runtime.scriptrunner import add_script_run_ctx
@@ -57,7 +58,9 @@ menu = st.sidebar.radio("Sección:", [
     "🎟️ Cupones de Descuento", 
     "🏥 Salud de Scrapers (Health Check)",
     "🛠️ Configurar Radares y URLs", 
-    "💥 Forzar Escaneo Intensivo"
+    "💥 Forzar Escaneo Intensivo",
+    "📊 Métricas visuales de Health Check (Gráficos)",
+    "🧪 Validador de Radares (\"Probar URL\")"
 ])
 
 if "mod_id" not in st.session_state: st.session_state.mod_id = None
@@ -201,7 +204,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 precio_venta = float(raw_precio) if raw_precio is not None else 0.0
                 if precio_venta <= 0: continue
 
-                # 🟢 FIX 1: Deduplicar por URL única del producto (NO por identificador de radar)
                 link_p = str(reg.get("link_producto", "")).strip()
                 if not link_p or link_p in proc_urls: continue
                 proc_urls.add(link_p)
@@ -235,7 +237,6 @@ if menu == "📈 Ver Dashboard / Ofertas":
         st.warning(f"Sincronizando: {e}")
 
     if lista_dashboard:
-        # 🟢 FIX 2: Mantener el orden cronológico estricto del escaneo
         df_dash = pd.DataFrame(lista_dashboard)
         st.dataframe(
             df_dash, 
@@ -471,7 +472,6 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                 p_o = float(reg.get("precio") or 0.0)
                 p_r = float(reg.get("precio_regular") or p_o)
                 
-                # 🟢 FIX 3: Deduplicar por URL única del producto (NO por identificador de radar)
                 link_p = str(reg.get("link_producto", "#")).strip()
                 if not link_p or link_p in vistos_ui or p_o <= 0:
                     continue
@@ -528,7 +528,6 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                                 
                                 st.markdown(f"🛒 [**IR A LA OFERTA**]({item['Link']})")
                 else:
-                    # 🟢 FIX 4: Conservar el orden cronológico del escaneo (sin reordenar por Ahorro)
                     df_reporte = pd.DataFrame(reporte_items)
                     st.dataframe(
                         df_reporte,
@@ -555,10 +554,138 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         try:
             with open(debug_path, "r", encoding="utf-8") as fh:
                 data_debug = json.load(fh)
-                
                 st.write("---")
                 st.subheader("🛠️ Diagnóstico del Patrullaje")
                 with st.expander("📄 Ver Registro JSON Guardado", expanded=False):
                     st.json(data_debug)
         except Exception:
             pass
+
+# ---------------------------
+# Métricas Visuales de Health Check (Gráficos)
+# ---------------------------
+elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
+    st.title("📊 Monitor Visual de Salud de Scrapers")
+    st.caption("Análisis cuantitativo de la efectividad y rendimiento de cada motor de extracción.")
+    st.write("---")
+
+    try:
+        res = supabase.table("salud_scrapers")\
+            .select("*")\
+            .order("fecha", desc=True)\
+            .limit(1000)\
+            .execute()
+
+        data = res.data if res and res.data else []
+
+        if not data:
+            st.info("ℹ️ No hay suficientes registros en la tabla 'salud_scrapers' aún. Se irán acumulando con cada patrullaje.")
+        else:
+            df_salud = pd.DataFrame(data)
+
+            total_escaneos = len(df_salud)
+            escaneos_exitosos = len(df_salud[df_salud["productos_extraidos"] > 0])
+            tasa_exito_global = (escaneos_exitosos / total_escaneos * 100) if total_escaneos > 0 else 0.0
+            total_prods_capturados = df_salud["productos_extraidos"].sum()
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total de Escaneos", f"{total_escaneos}")
+            m2.metric("Tasa de Éxito Global", f"{tasa_exito_global:.1f}%")
+            m3.metric("Escaneos Efectivos", f"{escaneos_exitosos}")
+            m4.metric("Productos Capturados", f"{total_prods_capturados}")
+
+            st.divider()
+
+            if "tienda" in df_salud.columns and "productos_extraidos" in df_salud.columns:
+                resumen = df_salud.groupby("tienda").agg(
+                    Total_Escaneos=("productos_extraidos", "count"),
+                    Escaneos_Exitosos=("productos_extraidos", lambda x: (x > 0).sum()),
+                    Promedio_Productos=("productos_extraidos", "mean")
+                ).reset_index()
+
+                resumen["Tasa_Exito_%"] = (resumen["Escaneos_Exitosos"] / resumen["Total_Escaneos"] * 100).round(1)
+                resumen["Promedio_Productos"] = resumen["Promedio_Productos"].round(1)
+
+                col_graf, col_tabla = st.columns([1.2, 1])
+
+                with col_graf:
+                    st.markdown("#### 📊 Tasa de Éxito por Tienda (%)")
+                    st.bar_chart(data=resumen, x="tienda", y="Tasa_Exito_%", color="#00C853")
+
+                with col_tabla:
+                    st.markdown("#### 📋 Diagnóstico por Tienda")
+
+                    def evaluar_estado(row):
+                        if row["Tasa_Exito_%"] >= 80:
+                            return "🟢 Estable"
+                        elif row["Tasa_Exito_%"] >= 40:
+                            return "⚠️ Inestable"
+                        else:
+                            return "🔴 Caído / Bloqueado"
+
+                    resumen["Estado"] = resumen.apply(evaluar_estado, axis=1)
+
+                    st.dataframe(
+                        resumen.rename(columns={
+                            "tienda": "Tienda",
+                            "Total_Escaneos": "Escaneos",
+                            "Escaneos_Exitosos": "Éxitos",
+                            "Tasa_Exito_%": "Éxito %",
+                            "Promedio_Productos": "Prom. Prods"
+                        })[["Tienda", "Estado", "Éxito %", "Prom. Prods", "Escaneos"]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+    except Exception as e:
+        st.error(f"🚨 Error al generar reporte visual de salud: {e}")
+
+# ---------------------------
+# Validador de Radares ("Probar URL")
+# ---------------------------
+elif menu == "🧪 Validador de Radares (\"Probar URL\")":
+    st.title("🧪 Probador de Radares en Tiempo Real")
+    st.caption("Verifica si una URL extrae productos de forma correcta antes de guardarla en la base de datos.")
+    st.write("---")
+
+    lista_tiendas_val = obtener_tiendas_dinamicas()
+
+    col1, col2, col3 = st.columns([3, 1.5, 1])
+    with col1:
+        test_url = st.text_input("URL del radar a probar:", placeholder="https://www.falabella.com.pe/...")
+    with col2:
+        test_tienda = st.selectbox("Tienda:", lista_tiendas_val)
+    with col3:
+        test_limite = st.number_input("Precio Máx (S/.):", value=500.0, step=50.0)
+
+    btn_probar = st.button("🚀 Probar Scraper Ahora", type="primary", use_container_width=True)
+
+    if btn_probar:
+        if not test_url or not test_url.startswith("http"):
+            st.warning("⚠️ Por favor ingresa una URL válida (debe empezar con http:// o https://).")
+        else:
+            with st.spinner(f"⏳ Escaneando {test_tienda}... Por favor espera unos segundos..."):
+                try:
+                    productos_test = escanear_tienda(test_url, test_tienda, test_limite)
+                    
+                    if productos_test:
+                        st.success(f"✅ ¡Éxito! Se encontraron {len(productos_test)} productos válidos por debajo de S/. {test_limite:.2f}")
+                        st.markdown("#### 📦 Previsualización de Productos Extraídos:")
+                        cols = st.columns(3)
+                        for idx, p in enumerate(productos_test[:6]):
+                            with cols[idx % 3]:
+                                with st.container(border=True):
+                                    img_src = p.get("img")
+                                    if img_src and len(img_src) > 10:
+                                        st.image(img_src, use_container_width=True)
+                                    else:
+                                        st.caption("🖼️ Sin imagen")
+                                    st.markdown(f"**{p.get('nombre')}**")
+                                    st.markdown(f"🏷️ **S/. {p.get('precio'):.2f}** *(Reg: S/. {p.get('precio_regular', 0):.2f})*")
+                                    st.markdown(f"🛒 [Ver en Tienda]({p.get('link')})")
+
+                        if len(productos_test) > 6:
+                            st.info(f"ℹ️ Y {len(productos_test) - 6} productos más extraídos...")
+                    else:
+                        st.error("❌ El scraper finalizó pero no devolvió ningún producto válido. Revisa si la URL o el precio máximo son correctos.")
+                except Exception as e:
+                    st.error(f"🚨 Error ejecutando el scraper de prueba: {e}")
