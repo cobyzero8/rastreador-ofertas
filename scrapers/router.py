@@ -72,7 +72,7 @@ def escanear_tienda(url: str, tienda: str = "GENERAL", precio_max: float = 99999
             return motor_footloose(url, precio_max)
         elif "tiendabelcorp.com.pe" in domain or tienda_upper in ["CYZONE", "ESIKA", "LBEL", "BELCORP"]:
             return motor_belcorp(url, precio_max)
-        elif "JBL" in tienda_clean or "jbl.com.pe" in url:
+        elif "jbl.com.pe" in domain or "JBL" in tienda_upper:
             return motor_jbl(url, precio_max)
         else:
             return motor_tradicional_general(url, precio_max)
