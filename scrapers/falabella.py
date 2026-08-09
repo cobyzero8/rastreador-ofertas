@@ -12,8 +12,7 @@ from config import LISTA_USER_AGENTS
 def motor_falabella(url, limite=999999.0, headers=None):
     """
     Scraper optimizado para Falabella Perú.
-    Extrae estrictamente tarjetas de productos de 'searchResult.content.results',
-    evitando la lectura accidental de facetas/filtros de búsqueda.
+    Extrae estrictamente tarjetas de productos evitando la lectura de filtros/facetas.
     """
     if headers is None:
         user_agent = random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -53,7 +52,6 @@ def motor_falabella(url, limite=999999.0, headers=None):
                 data = json.loads(next_data_script.string)
                 page_props = data.get("props", {}).get("pageProps", {})
                 
-                # 🎯 OBTENER ÚNICAMENTE LA LISTA DE RESULTADOS REALES (IGNORA FACETS Y FILTROS)
                 results = []
                 if "searchResult" in page_props and isinstance(page_props["searchResult"], dict):
                     results = page_props["searchResult"].get("content", {}).get("results", [])
@@ -65,24 +63,23 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     if not isinstance(item, dict):
                         continue
                     
-                    # 1. FILTRO ANTI-FACET: Debe ser un producto real con enlace hacia /product/
+                    # 1. Debe ser un producto real con enlace hacia /product/
                     link_rel = item.get('url') or item.get('link') or item.get('href') or ''
                     if not link_rel or '/product/' not in link_rel:
                         continue
                     
-                    # 2. Debe tener un productId o skuId válido de producto
                     prod_id = item.get('productId') or item.get('skuId') or item.get('id')
                     if not prod_id:
                         continue
 
-                    # 3. Validar Nombre Completo (Mínimo 8 caracteres para descartar palabras clave sueltas)
+                    # 2. Validar Nombre Completo
                     nombre = str(item.get('displayName') or item.get('title') or item.get('productName') or '').strip().upper()
                     if len(nombre) < 8:
                         continue
 
                     link_final = urljoin("https://www.falabella.com.pe", link_rel)
 
-                    # 4. Extracción ESTRICTA de Precios desde la lista 'prices'
+                    # 3. Extracción de Precios desde la lista 'prices'
                     prices_list = item.get('prices') or []
                     if isinstance(prices_list, dict):
                         prices_list = [prices_list]
@@ -126,11 +123,11 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     if precio_regular == 0.0:
                         precio_regular = precio_oferta
 
-                    # Filtro de seguridad: Descartar precios basura o superiores al límite
-                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta) or precio_oferta > limite:
+                    # 🟢 LLAMADA CORREGIDA: Se pasan los 3 parámetros posicionales
+                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta, precio_regular, precio_regular) or precio_oferta > limite:
                         continue
 
-                    # 5. Extracción e Imagen HD del Producto
+                    # 4. Extracción de Imagen HD
                     img_url = ""
                     media_list = item.get("mediaUrls") or item.get("media") or item.get("images") or []
                     if isinstance(media_list, list) and len(media_list) > 0:
@@ -142,7 +139,6 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     elif isinstance(media_list, dict):
                         img_url = media_list.get("url") or media_list.get("src") or ""
 
-                    # Reconstrucción mediante CDN oficial usando el ID de Falabella si viene vacía
                     if not img_url or len(img_url) < 15 or 'data:image' in img_url:
                         clean_url = link_final.split('?')[0].split('#')[0]
                         match_id = [t for t in clean_url.split('/') if t.isdigit() and len(t) >= 7]
@@ -183,11 +179,12 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
                     precio_oferta = safe_float(el_event.get('data-event-price')) if el_event else 0.0
 
-                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta) or precio_oferta > limite:
-                        continue
-
                     el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
                     precio_regular = safe_float(el_normal.get('data-normal-price')) if el_normal else precio_oferta
+
+                    # 🟢 LLAMADA CORREGIDA
+                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta, precio_regular, precio_regular) or precio_oferta > limite:
+                        continue
 
                     img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img')
                     img_url = ""
@@ -217,7 +214,6 @@ def motor_falabella(url, limite=999999.0, headers=None):
                 except Exception:
                     continue
 
-        # Filtrar duplicados
         vistos = set()
         productos_unicos = []
         for p in productos:
