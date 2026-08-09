@@ -81,13 +81,19 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
                 precio_oferta = safe_float(prod.get("precio"))
                 precio_regular = safe_float(prod.get("precio_regular", precio_oferta))
-                link_prod = str(prod.get("link", url)).strip()
+                
+                # 🟢 NORMALIZACIÓN ESTRICTA DE URL (Elimina parámetros GET ?, fragmentos # y slashes finales)
+                link_raw = str(prod.get("link", url)).strip()
+                if not link_raw or not link_raw.startswith("http"):
+                    continue
+                link_prod = link_raw.split('?')[0].split('#')[0].rstrip('/')
+
                 imagen = str(prod.get("img", "")).strip()
 
-                if precio_oferta <= 0 or not link_prod:
+                if precio_oferta <= 0:
                     continue
 
-                # Consultar si el producto ya existe en la BD por su URL
+                # Consultar si el producto ya existe en la BD por su URL limpia
                 res_existente = supabase.table("historial_precios")\
                     .select("id, precio, precio_regular, nombre_producto, imagen_producto")\
                     .eq("link_producto", link_prod)\
