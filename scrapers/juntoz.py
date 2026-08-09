@@ -2,12 +2,34 @@ import re
 import json
 import random
 import requests
+import urllib.parse
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from config import LISTA_USER_AGENTS
 from utils import sanitizar_url, safe_log
 
-def motor_juntoz(url, limite, headers=None):
+def limpiar_url_imagen_juntoz(img_url):
+    """
+    Extrae la URL real del contenedor de Azure Blob de Juntoz
+    evitando el bloqueo de Cloudflare en /_next/image.
+    """
+    if not img_url:
+        return ""
+        
+    img_str = str(img_url).strip()
+    
+    if "_next/image" in img_str and "url=" in img_str:
+        try:
+            parsed = urllib.parse.urlparse(img_str)
+            qs = urllib.parse.parse_qs(parsed.query)
+            if "url" in qs and qs["url"]:
+                return urllib.parse.unquote(qs["url"][0])
+        except Exception:
+            pass
+
+    return img_str
+
+def motor_juntoz(url, limite=999999.0, headers=None):
     productos_map = {}
     url = sanitizar_url(url)
     
@@ -47,6 +69,7 @@ def motor_juntoz(url, limite, headers=None):
         texto_html = resp.text
         soup = BeautifulSoup(texto_html, 'html.parser')
 
+        # --- CAPA 1: EXTRACCIÓN JSON-LD ---
         scripts_json = soup.find_all('script', type='application/ld+json')
         for s in scripts_json:
             try:
@@ -80,6 +103,9 @@ def motor_juntoz(url, limite, headers=None):
                         if isinstance(img_url, list) and len(img_url) > 0:
                             img_url = img_url[0]
 
+                        # 🟢 LIMPIEZA DE IMAGEN (EVITA CLOUDFLARE)
+                        img_url = limpiar_url_imagen_juntoz(img_url)
+
                         if 0 < p_o <= limite:
                             productos_map[link_final] = {
                                 "nombre": f"Juntoz - {nombre}",
@@ -90,6 +116,7 @@ def motor_juntoz(url, limite, headers=None):
                             }
             except Exception: continue
 
+        # --- CAPA 2: FALLBACK HTML ---
         if not productos_map:
             enlaces_productos = []
             for a in soup.find_all('a', href=True):
@@ -153,6 +180,9 @@ def motor_juntoz(url, limite, headers=None):
                     elif img_url and not img_url.startswith('http'): img_url = urljoin("https://juntoz.com", img_url)
 
                     if 'data:image' in img_url.lower() or 'pixel' in img_url.lower(): img_url = ""
+
+                    # 🟢 LIMPIEZA DE IMAGEN (EVITA CLOUDFLARE)
+                    img_url = limpiar_url_imagen_juntoz(img_url)
 
                     if 0 < p_o <= limite:
                         if link_final in productos_map:
