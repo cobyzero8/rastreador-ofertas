@@ -1,7 +1,6 @@
 from urllib.parse import urlparse
 from utils import safe_log
 
-# Importar scrapers individuales desde la carpeta scrapers
 from .falabella import motor_falabella
 from .oechsle import motor_oechsle
 from .hiraoka import motor_hiraoka
@@ -34,7 +33,12 @@ def escanear_tienda(url: str, tienda: str = "GENERAL", precio_max: float = 99999
     safe_log(f"🔎 [Enrutador] Analizando URL: {url} | Tienda: {tienda_upper}", "info")
 
     try:
-        if "falabella.com" in domain or tienda_upper == "FALABELLA":
+        # 🟢 1. CURACAO y EFE (Conecta Retail)
+        if "lacuracao.pe" in domain or "efe.com.pe" in domain or tienda_upper in ["CURACAO", "EFE", "CONECTA_RETAIL"]:
+            return motor_conecta_retail(url, precio_max)
+
+        # 2. Demás tiendas individuales
+        elif "falabella.com" in domain or tienda_upper == "FALABELLA":
             return motor_falabella(url, precio_max)
         elif "oechsle.pe" in domain or tienda_upper == "OECHSLE":
             return motor_oechsle(url, precio_max)
@@ -64,8 +68,6 @@ def escanear_tienda(url: str, tienda: str = "GENERAL", precio_max: float = 99999
             return motor_triathlon(url, precio_max)
         elif "footloose.pe" in domain or tienda_upper == "FOOTLOOSE":
             return motor_footloose(url, precio_max)
-        elif "tiendabelcorp.com.pe" in domain or tienda_upper in ["CYZONE", "ESIKA", "LBEL"]:
-            return  motor_conecta_retail(url, precio_max)
         else:
             return motor_tradicional_general(url, precio_max)
             
