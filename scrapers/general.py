@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from utils import sanitizar_url, limpiar_precio_pnp
 
-def motor_tradicional_general(url, limite, headers):
+def motor_tradicional_general(url, limite=999999.0, headers=None):
     productos = []
     url = sanitizar_url(url)
     try:
