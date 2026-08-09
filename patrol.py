@@ -11,10 +11,10 @@ from utils import safe_log, es_error_de_precio, safe_float
 
 def revisar_ofertas(filtro_categoria="TODOS"):
     """
-    Recorre los radares en Supabase y ejecuta estrictamente las 3 reglas:
-    1. Si NO existe en BD -> Guarda en BD + Envía notificación a Telegram (NUEVO PRODUCTO).
-    2. Si EXISTE en BD y el precio es MENOR -> Actualiza precio/fecha en BD + Envía notificación a Telegram (BAJA DE PRECIO).
-    3. Si EXISTE en BD y el precio es IGUAL O MAYOR -> Solo actualiza fecha/hora en BD (SILENCIOSO / SIN TELEGRAM).
+    Recorre los radares en Supabase y ejecuta las 3 reglas de negocio:
+    1. Si NO existe en BD -> Guarda en BD + Notifica en Telegram (NUEVO PRODUCTO).
+    2. Si EXISTE en BD y el precio es MENOR -> Actualiza BD + Notifica en Telegram (BAJA DE PRECIO).
+    3. Si EXISTE en BD y el precio es IGUAL O MAYOR -> Solo actualiza fecha/hora en BD (SILENCIOSO).
     """
     if not supabase:
         safe_log("🛑 No hay conexión con Supabase. Revisa SUPABASE_URL y SUPABASE_KEY.", "error")
@@ -82,7 +82,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 precio_oferta = safe_float(prod.get("precio"))
                 precio_regular = safe_float(prod.get("precio_regular", precio_oferta))
                 
-                # 🟢 NORMALIZACIÓN ESTRICTA DE URL (Elimina parámetros GET ?, fragmentos # y slashes finales)
+                # Normalización estricta de URL (elimina parámetros ?, fragmentos # y slashes finales)
                 link_raw = str(prod.get("link", url)).strip()
                 if not link_raw or not link_raw.startswith("http"):
                     continue
@@ -93,7 +93,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 if precio_oferta <= 0:
                     continue
 
-                # Consultar si el producto ya existe en la BD por su URL limpia
+                # Consultar en Supabase por la URL normalizada
                 res_existente = supabase.table("historial_precios")\
                     .select("id, precio, precio_regular, nombre_producto, imagen_producto")\
                     .eq("link_producto", link_prod)\
@@ -101,40 +101,40 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     .execute()
 
                 if not res_existente.data:
-    # 🔴 CASO 1: PRODUCTO NUEVO
-    datos_insert = {
-        "identificador": f"{tienda}-{categoria}",
-        "nombre_producto": nombre_real,
-        "precio": precio_oferta,
-        "precio_regular": precio_regular,
-        "imagen_producto": imagen,
-        "link_producto": link_prod,
-        "fecha": fecha_actual
-    }
-    
-    res_ins = supabase.table("historial_precios").insert(datos_insert).execute()
-    
-    if res_ins and res_ins.data:
-        total_productos_procesados += 1
-        
-        # Enviar alerta a Telegram
-        exito_telegram = enviar_alerta_telegram(
-            tienda=tienda,
-            nombre=nombre_real,
-            precio_oferta=precio_oferta,
-            precio_regular=precio_regular,
-            link=link_prod,
-            imagen=imagen,
-            tipo_alerta="NUEVO_PRODUCTO"
-        )
-        
-        if exito_telegram:
-            total_ofertas_notificadas += 1
-            safe_log(f"🆕 Producto nuevo notificado: {nombre_real}", "success")
-            # 🟢 PAUSA DE 1.5 SEGUNDOS PARA EVITAR BLOQUEOS DE TELEGRAM
-            time.sleep(1.5)
-        else:
-            safe_log(f"⚠️ Guardado en BD pero Telegram limitó el envío: {nombre_real}", "warning")
+                    # =========================================================
+                    # 🔴 REGLA 1: PRODUCTO NUEVO (NO EXISTE EN BD)
+                    # =========================================================
+                    datos_insert = {
+                        "identificador": f"{tienda}-{categoria}",
+                        "nombre_producto": nombre_real,
+                        "precio": precio_oferta,
+                        "precio_regular": precio_regular,
+                        "imagen_producto": imagen,
+                        "link_producto": link_prod,
+                        "fecha": fecha_actual
+                    }
+                    
+                    res_ins = supabase.table("historial_precios").insert(datos_insert).execute()
+                    
+                    if res_ins and res_ins.data:
+                        total_productos_procesados += 1
+
+                        exito_telegram = enviar_alerta_telegram(
+                            tienda=tienda,
+                            nombre=nombre_real,
+                            precio_oferta=precio_oferta,
+                            precio_regular=precio_regular,
+                            link=link_prod,
+                            imagen=imagen,
+                            tipo_alerta="NUEVO_PRODUCTO"
+                        )
+                        
+                        if exito_telegram:
+                            total_ofertas_notificadas += 1
+                            safe_log(f"🆕 Producto nuevo notificado: {nombre_real} -> Alerta enviada", "success")
+                            time.sleep(1.5)  # Pausa anti-bloqueo (Rate Limit Telegram)
+                        else:
+                            safe_log(f"⚠️ Guardado en BD pero Telegram limitó la entrega: {nombre_real}", "warning")
 
                 else:
                     # El producto SÍ existe en la BD
@@ -145,7 +145,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     if precio_oferta < precio_guardado:
                         # =========================================================
                         # 🟢 REGLA 2: PRODUCTO EXISTENTE CON MENOR PRECIO
-                        # ACCIÓN: Se actualiza BD + Se envía alerta de baja a Telegram
                         # =========================================================
                         datos_update = {
                             "nombre_producto": nombre_real,
@@ -156,7 +155,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         }
                         supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
 
-                        enviar_alerta_telegram(
+                        exito_telegram = enviar_alerta_telegram(
                             tienda=tienda,
                             nombre=nombre_real,
                             precio_oferta=precio_oferta,
@@ -165,14 +164,19 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             imagen=imagen,
                             tipo_alerta="BAJA_PRECIO"
                         )
-                        total_ofertas_notificadas += 1
+                        
                         total_productos_procesados += 1
-                        safe_log(f"📉 Baja de precio (BD: S/. {precio_guardado:.2f} ➔ Nuevo: S/. {precio_oferta:.2f}): {nombre_real} -> Alerta enviada", "success")
+                        
+                        if exito_telegram:
+                            total_ofertas_notificadas += 1
+                            safe_log(f"📉 Baja de precio (BD: S/. {precio_guardado:.2f} ➔ Nuevo: S/. {precio_oferta:.2f}): {nombre_real}", "success")
+                            time.sleep(1.5)  # Pausa anti-bloqueo (Rate Limit Telegram)
+                        else:
+                            safe_log(f"⚠️ Actualizado en BD pero Telegram limitó la entrega: {nombre_real}", "warning")
 
                     else:
                         # =========================================================
                         # 🟡 REGLA 3: PRODUCTO EXISTENTE CON PRECIO IGUAL O MAYOR
-                        # ACCIÓN: Solo actualiza fecha/hora en BD (SILENCIOSO, SIN TELEGRAM)
                         # =========================================================
                         datos_update = {"fecha": fecha_actual}
                         if not reg_guardado.get("nombre_producto"):
@@ -180,7 +184,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
                         supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                         total_productos_procesados += 1
-                        safe_log(f"🕒 Producto en BD con precio igual/mayor (S/. {precio_oferta:.2f}). Fecha actualizada en silencio.", "info")
+                        safe_log(f"🕒 Producto en BD con precio constante (S/. {precio_oferta:.2f}). Fecha actualizada silenciosamente.", "info")
 
             except Exception as ex_prod:
                 safe_log(f"⚠️ Error procesando producto individual: {ex_prod}", "warning")
