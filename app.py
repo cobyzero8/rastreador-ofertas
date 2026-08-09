@@ -462,7 +462,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         if target_escaneado and target_escaneado != "TODOS":
             q = q.ilike("identificador", f"%{target_escaneado}%")
         
-        res_recientes = q.limit(500).execute()
+        res_recientes = q.limit(60).execute()
         
         if res_recientes.data:
             reporte_items = []
