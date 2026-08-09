@@ -11,13 +11,13 @@ from utils import safe_log, es_error_de_precio, safe_float
 
 def revisar_ofertas(filtro_categoria="TODOS"):
     """
-    Recorre los radares activos en Supabase, ejecuta los scrapers por tienda,
-    actualiza la base de datos 'historial_precios' y la tabla 'health_checks',
-    y envía alertas a Telegram según la lógica de negocio.
+    Recorre los radares en Supabase y ejecuta estrictamente las 3 reglas:
+    1. Si NO existe en BD -> Guarda en BD + Envía notificación a Telegram (NUEVO PRODUCTO).
+    2. Si EXISTE en BD y el precio es MENOR -> Actualiza precio/fecha en BD + Envía notificación a Telegram (BAJA DE PRECIO).
+    3. Si EXISTE en BD y el precio es IGUAL O MAYOR -> Solo actualiza fecha/hora en BD (SILENCIOSO / SIN TELEGRAM).
     """
-    # 1. Validar conexión previa con Supabase
     if not supabase:
-        safe_log("🛑 No hay conexión con Supabase. Revisa SUPABASE_URL y SUPABASE_KEY en las variables de entorno/Secrets.", "error")
+        safe_log("🛑 No hay conexión con Supabase. Revisa SUPABASE_URL y SUPABASE_KEY.", "error")
         return "Fallo de conexión con Supabase: Credenciales faltantes."
 
     safe_log(f"🕵️‍♂️ Iniciando patrullaje con filtro: '{filtro_categoria}'", "info")
@@ -56,7 +56,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
         safe_log(f"🔍 Escaneando radar [{tienda}] -> {url} (Límite S/. {precio_max:.2f})", "info")
         
-        # 2. Ejecutar Scraper de la tienda
         productos_encontrados = []
         try:
             productos_encontrados = escanear_tienda(url, tienda, precio_max)
@@ -66,7 +65,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         cant_prods = len(productos_encontrados) if productos_encontrados else 0
         safe_log(f"📊 [{tienda}] Productos válidos extraídos: {cant_prods}", "info")
 
-        # 3. Registrar métrica de salud en 'health_checks'
         try:
             registrar_resultado_salud(supabase, tienda, cant_prods, url)
         except Exception as ex_health:
@@ -75,7 +73,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         if not productos_encontrados:
             continue
 
-        # 4. Procesar y evaluar cada producto extraído
         for prod in productos_encontrados:
             try:
                 nombre_real = str(prod.get("nombre", "")).strip()
@@ -98,10 +95,10 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     .execute()
 
                 if not res_existente.data:
-                    # -------------------------------------------------------------
-                    # 🔴 CASO 1: ARTÍCULO NUEVO (NO EXISTE EN BD)
-                    # ACCIÓN: Guardar en BD + Alerta Telegram "¡NUEVO ARTÍCULO ENCONTRADO!"
-                    # -------------------------------------------------------------
+                    # =========================================================
+                    # 🔴 REGLA 1: PRODUCTO NUEVO (NO EXISTE EN BD)
+                    # ACCIÓN: Se guarda en BD + Se envía SIEMPRE alerta a Telegram
+                    # =========================================================
                     datos_insert = {
                         "identificador": f"{tienda}-{categoria}",
                         "nombre_producto": nombre_real,
@@ -127,19 +124,19 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             imagen=imagen,
                             tipo_alerta="NUEVO_PRODUCTO"
                         )
-                        safe_log(f"🆕 Artículo nuevo registrado y notificado: {nombre_real} (S/. {precio_oferta:.2f})", "success")
+                        safe_log(f"🆕 Producto nuevo (no estaba en BD): {nombre_real} -> Alerta enviada a Telegram", "success")
 
                 else:
-                    # El producto SÍ existe en la base de datos
+                    # El producto SÍ existe en la BD
                     reg_guardado = res_existente.data[0]
                     precio_guardado = safe_float(reg_guardado.get("precio"))
                     id_bd = reg_guardado.get("id")
 
                     if precio_oferta < precio_guardado:
-                        # -------------------------------------------------------------
-                        # 🟢 CASO 2: PRECIO MENOR AL GUARDADO
-                        # ACCIÓN: Actualizar BD + Alerta Telegram "¡BAJA DE PRECIO DETECTADA!"
-                        # -------------------------------------------------------------
+                        # =========================================================
+                        # 🟢 REGLA 2: PRODUCTO EXISTENTE CON MENOR PRECIO
+                        # ACCIÓN: Se actualiza BD + Se envía alerta de baja a Telegram
+                        # =========================================================
                         datos_update = {
                             "nombre_producto": nombre_real,
                             "precio": precio_oferta,
@@ -160,23 +157,23 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         )
                         total_ofertas_notificadas += 1
                         total_productos_procesados += 1
-                        safe_log(f"📉 Baja de precio (S/. {precio_guardado:.2f} ➔ S/. {precio_oferta:.2f}): {nombre_real}", "success")
+                        safe_log(f"📉 Baja de precio (BD: S/. {precio_guardado:.2f} ➔ Nuevo: S/. {precio_oferta:.2f}): {nombre_real} -> Alerta enviada", "success")
 
                     else:
-                        # -------------------------------------------------------------
-                        # 🟡 CASO 3: PRECIO IGUAL O MAYOR
-                        # ACCIÓN: Solo actualizar fecha/hora en BD (SILENCIOSO, SIN TELEGRAM)
-                        # -------------------------------------------------------------
+                        # =========================================================
+                        # 🟡 REGLA 3: PRODUCTO EXISTENTE CON PRECIO IGUAL O MAYOR
+                        # ACCIÓN: Solo actualiza fecha/hora en BD (SILENCIOSO, SIN TELEGRAM)
+                        # =========================================================
                         datos_update = {"fecha": fecha_actual}
                         if not reg_guardado.get("nombre_producto"):
                             datos_update["nombre_producto"] = nombre_real
 
                         supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                         total_productos_procesados += 1
-                        safe_log(f"🕒 Precio constante (S/. {precio_oferta:.2f}). Horario actualizado para: {nombre_real}", "info")
+                        safe_log(f"🕒 Producto en BD con precio igual/mayor (S/. {precio_oferta:.2f}). Fecha actualizada en silencio.", "info")
 
             except Exception as ex_prod:
-                safe_log(f"⚠️ Error procesando artículo individual: {ex_prod}", "warning")
+                safe_log(f"⚠️ Error procesando producto individual: {ex_prod}", "warning")
                 continue
 
     resumen = f"Patrullaje finalizado. Procesados: {total_productos_procesados} productos | Notificaciones enviadas: {total_ofertas_notificadas}."
