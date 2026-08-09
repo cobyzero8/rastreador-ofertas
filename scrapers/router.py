@@ -14,7 +14,7 @@ from .thn import motor_thn
 from .juntoz import motor_juntoz
 from .estilos import motor_estilos
 from .promart import motor_promart
-from .carsas import motor_carsa
+from .carsa import motor_carsa
 from .triathlon import motor_triathlon
 from .footloose import motor_footloose
 from .belcorp import motor_conecta_retail
