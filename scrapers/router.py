@@ -2,7 +2,7 @@ from urllib.parse import urlparse
 from utils import safe_log
 
 # Importar scrapers individuales desde la carpeta scrapers
-from .falabella import escanear_falabella
+from .falabella import motor_falabella
 from .oechsle import escanear_oechsle
 from .hiraoka import escanear_hiraoka
 from .plazavea import escanear_plazavea
