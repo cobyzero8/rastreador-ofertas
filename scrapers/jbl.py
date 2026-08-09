@@ -1,6 +1,6 @@
+import os
 import re
 import json
-import random
 import requests
 import urllib3
 from bs4 import BeautifulSoup
@@ -8,12 +8,90 @@ from urllib.parse import urljoin
 from config import LISTA_USER_AGENTS
 from utils import sanitizar_url, safe_log
 
-# Desactivar advertencias de SSL deshabilitado
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def obtener_keys_jbl():
+    """
+    Recopila las claves de ScraperAPI exclusivas para JBL en orden secuencial.
+    """
+    keys = []
+    nombres_keys = ["SCRAPERAPI_JBL_KEY", "SCRAPERAPI_JBL_KEY_2", "SCRAPERAPI_JBL_KEY_3"]
+
+    # 1. Buscar en Streamlit Secrets
+    try:
+        import streamlit as st
+        for name in nombres_keys:
+            if name in st.secrets and st.secrets[name]:
+                val = str(st.secrets[name]).strip()
+                if len(val) > 10 and "tu_clave" not in val:
+                    keys.append(val)
+    except Exception:
+        pass
+
+    # 2. Buscar en variables de entorno (GitHub Actions o servidor local)
+    if not keys:
+        for name in nombres_keys:
+            val = os.environ.get(name, "").strip()
+            if val and len(val) > 10 and "tu_clave" not in val:
+                keys.append(val)
+
+    return keys
+
+def consultar_jbl_con_cascada(url_destino):
+    """
+    1. Intenta petición directa (0 créditos).
+    2. Si falla (HTTP 403/401), usa SCRAPERAPI_JBL_KEY.
+    3. Si la Key 1 se agota, pasa a SCRAPERAPI_JBL_KEY_2, luego a SCRAPERAPI_JBL_KEY_3.
+    """
+    session = requests.Session()
+    headers_directos = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9",
+        "Referer": "https://www.jbl.com.pe/"
+    }
+
+    # 🟢 PASO 1: Conexión directa gratuita
+    try:
+        safe_log(f"📡 [JBL] Intentando conexión directa gratis...", "info")
+        r = session.get(url_destino, headers=headers_directos, timeout=12, verify=False)
+        if r.status_code == 200 and len(r.text) > 1000:
+            safe_log("✅ [JBL] Conexión directa exitosa (0 créditos consumidos).", "success")
+            return r
+        else:
+            safe_log(f"⚠️ [JBL] Conexión directa rebotó con HTTP {r.status_code}.", "warning")
+    except Exception as ex:
+        safe_log(f"⚠️ [JBL] Error en conexión directa: {ex}", "warning")
+
+    # 🛡️ PASO 2: Cascada secuencial de Keys dedicadas para JBL
+    keys = obtener_keys_jbl()
+
+    if not keys:
+        safe_log("🛑 [JBL] No se encontraron claves SCRAPERAPI_JBL_KEY en los secretos.", "error")
+        return None
+
+    for idx, key in enumerate(keys, start=1):
+        try:
+            safe_log(f"🛡️ [JBL] Probando ScraperAPI Key JBL #{idx} ({key[:6]}...)", "info")
+            payload = {'api_key': key, 'url': url_destino, 'render': 'false'}
+            r_sc = session.get('http://api.scraperapi.com', params=payload, timeout=30)
+            
+            if r_sc.status_code == 200 and len(r_sc.text) > 1000:
+                safe_log(f"✅ [JBL] Petición exitosa usando Key JBL #{idx}.", "success")
+                return r_sc
+            elif r_sc.status_code in [401, 403, 429]:
+                safe_log(f"⚠️ [JBL] Key #{idx} sin créditos o bloqueada (HTTP {r_sc.status_code}). Saltando a la siguiente...", "warning")
+            else:
+                safe_log(f"⚠️ [JBL] Key #{idx} devolvió HTTP {r_sc.status_code}", "warning")
+        except Exception as e:
+            safe_log(f"⚠️ [JBL] Error con Key #{idx}: {e}", "warning")
+
+    safe_log("🛑 [JBL] Se agotaron todas las claves de ScraperAPI registradas para JBL.", "error")
+    return None
 
 def motor_jbl(url, limite=999999.0, headers=None):
     """
-    Motor extractor para JBL Perú (jbl.com.pe) optimizado contra bloqueos Akamai/SFCC
+    Motor extractor principal para la tienda JBL Perú
     """
     productos_map = {}
     url_base = sanitizar_url(url)
@@ -34,55 +112,7 @@ def motor_jbl(url, limite=999999.0, headers=None):
             except ValueError: return 0.0
         return 0.0
 
-    # Cabeceras completas de un navegador Chrome real para evitar HTTP 403
-    headers_navegador = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Referer": "https://www.jbl.com.pe/"
-    }
-
-    if headers:
-        headers_navegador.update(headers)
-
-    session = requests.Session()
-    resp = None
-
-    # Intento directo a la URL de catálogo
-    try:
-        safe_log(f"📡 [JBL] Consultando catálogo en directo...", "info")
-        r = session.get(url_base, headers=headers_navegador, timeout=20, verify=False)
-        
-        if r.status_code == 200:
-            resp = r
-        else:
-            safe_log(f"🛑 [JBL] El servidor respondió con HTTP {r.status_code}", "error")
-            
-            # Reintento alternativo con parámetro AJAX de Salesforce Commerce Cloud
-            sep = "&" if "?" in url_base else "?"
-            url_ajax = f"{url_base}{sep}format=ajax"
-            headers_ajax = headers_navegador.copy()
-            headers_ajax["X-Requested-With"] = "XMLHttpRequest"
-            
-            safe_log(f"🔄 [JBL] Reintentando vía endpoint AJAX...", "info")
-            r_ajax = session.get(url_ajax, headers=headers_ajax, timeout=20, verify=False)
-            if r_ajax.status_code == 200:
-                resp = r_ajax
-            else:
-                safe_log(f"🛑 [JBL] Reintento AJAX falló con HTTP {r_ajax.status_code}", "error")
-
-    except Exception as ex:
-        safe_log(f"🚨 [JBL] Error de conexión: {ex}", "error")
+    resp = consultar_jbl_con_cascada(url_base)
 
     if not resp or resp.status_code != 200 or not resp.text:
         return []
@@ -138,7 +168,7 @@ def motor_jbl(url, limite=999999.0, headers=None):
         except Exception: continue
 
     # ==============================================================================
-    # CAPA 2: SCANNER HTML POR CONTENEDORES DE PRODUCTO
+    # CAPA 2: SCANNER HTML DE PRODUCTOS
     # ==============================================================================
     if not productos_map:
         for a in soup.find_all('a', href=True):
