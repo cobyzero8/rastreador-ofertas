@@ -70,24 +70,26 @@ def limpiar_precio_pnp(texto):
             return 0.0
     return 0.0
 
-def es_error_de_precio(precio_actual, precio_regular, precio_anterior, categoria="OTROS"):
-    """Determina si una baja de precio califica como error de sistema / bug."""
-    if precio_regular <= 0 or precio_actual <= 0:
-        return False, 0.0
-    
-    descuento_pct = ((precio_regular - precio_actual) / precio_regular) * 100.0
-    
-    umbrales = {
-        "TV": 70.0,
-        "CELULAR": 70.0,
-        "PC": 70.0,
-        "PERFUMES": 80.0,
-        "ZAPATILLAS": 75.0
-    }
-    umbral_aplicar = umbrales.get(categoria, 75.0)
-    
-    es_bug = descuento_pct >= umbral_aplicar
-    return es_bug, descuento_pct
+def es_error_de_precio(precio, precio_regular=0.0, precio_anterior=0.0):
+    """
+    Valida si un precio es un error evidente (ej. S/. 1.00) 
+    o si representa un descuento sospechoso e irreal (> 95% de caída).
+    """
+    try:
+        p_oferta = safe_float(precio)
+        p_reg = safe_float(precio_regular)
+        
+        # 1. Precios ridículamente bajos
+        if p_oferta <= 0 or p_oferta < 5.0:
+            return True
+            
+        # 2. Descuentos extremos sospechosos (> 95% de descuento)
+        if p_reg > 0 and (p_oferta / p_reg) < 0.05:
+            return True
+            
+        return False
+    except Exception:
+        return False
 
 def extraer_productos_json_universal(data):
     """Recorre recursivamente un objeto JSON buscando estructuras de productos."""
