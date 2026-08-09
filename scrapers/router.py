@@ -17,7 +17,7 @@ from .promart import motor_promart
 from .carsa import motor_carsa
 from .triathlon import motor_triathlon
 from .footloose import motor_footloose
-from .belcorp import motor_conecta_retail
+from .conecta_retail import motor_conecta_retail
 from .general import motor_tradicional_general
 
 
