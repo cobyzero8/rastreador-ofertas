@@ -10,6 +10,11 @@ from utils import sanitizar_url, safe_float, es_error_de_precio, safe_log
 from config import LISTA_USER_AGENTS
 
 def motor_falabella(url, limite=999999.0, headers=None):
+    """
+    Scraper optimizado para Falabella Perú.
+    Extrae estrictamente tarjetas de productos de 'searchResult.content.results',
+    evitando la lectura accidental de facetas/filtros de búsqueda.
+    """
     if headers is None:
         user_agent = random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         headers = {
@@ -46,33 +51,38 @@ def motor_falabella(url, limite=999999.0, headers=None):
         if next_data_script and next_data_script.string:
             try:
                 data = json.loads(next_data_script.string)
-                results = (
-                    data.get("props", {})
-                    .get("pageProps", {})
-                    .get("searchResult", {})
-                    .get("content", {})
-                    .get("results", [])
-                )
-                if not results:
-                    results = data.get("props", {}).get("pageProps", {}).get("results", [])
+                page_props = data.get("props", {}).get("pageProps", {})
+                
+                # 🎯 OBTENER ÚNICAMENTE LA LISTA DE RESULTADOS REALES (IGNORA FACETS Y FILTROS)
+                results = []
+                if "searchResult" in page_props and isinstance(page_props["searchResult"], dict):
+                    results = page_props["searchResult"].get("content", {}).get("results", [])
+                
+                if not results and "results" in page_props:
+                    results = page_props.get("results", [])
 
                 for item in results:
                     if not isinstance(item, dict):
                         continue
                     
-                    # 1. Validar enlace de producto REAL (descarta marcas y filtros de búsqueda)
+                    # 1. FILTRO ANTI-FACET: Debe ser un producto real con enlace hacia /product/
                     link_rel = item.get('url') or item.get('link') or item.get('href') or ''
-                    if not link_rel or ('/product/' not in link_rel and '/p/' not in link_rel):
+                    if not link_rel or '/product/' not in link_rel:
                         continue
                     
-                    link_final = urljoin("https://www.falabella.com.pe", link_rel)
-
-                    # 2. Validar Nombre Completo (No solo la marca vacía)
-                    nombre = str(item.get('displayName') or item.get('title') or item.get('productName') or '').strip().upper()
-                    if len(nombre) < 6 or nombre in ["ADIDAS", "PUMA", "REEBOK", "LA MARTINA", "NIKE", "DIADORA"]:
+                    # 2. Debe tener un productId o skuId válido de producto
+                    prod_id = item.get('productId') or item.get('skuId') or item.get('id')
+                    if not prod_id:
                         continue
 
-                    # 3. Extracción ESTRICTA de precios desde la lista de Falabella (sin números aleatorios)
+                    # 3. Validar Nombre Completo (Mínimo 8 caracteres para descartar palabras clave sueltas)
+                    nombre = str(item.get('displayName') or item.get('title') or item.get('productName') or '').strip().upper()
+                    if len(nombre) < 8:
+                        continue
+
+                    link_final = urljoin("https://www.falabella.com.pe", link_rel)
+
+                    # 4. Extracción ESTRICTA de Precios desde la lista 'prices'
                     prices_list = item.get('prices') or []
                     if isinstance(prices_list, dict):
                         prices_list = [prices_list]
@@ -80,25 +90,35 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     precio_oferta = 0.0
                     precio_regular = 0.0
 
-                    for p in prices_list:
-                        if not isinstance(p, dict):
-                            continue
-                        p_type = str(p.get("type", "")).lower()
-                        raw_val = p.get("price") or p.get("value")
-                        if isinstance(raw_val, list) and raw_val:
-                            raw_val = raw_val[0]
-                        val = safe_float(raw_val)
-                        
-                        if val <= 0:
-                            continue
+                    if isinstance(prices_list, list):
+                        for p in prices_list:
+                            if not isinstance(p, dict):
+                                continue
+                            p_type = str(p.get("type", "")).lower()
+                            raw_val = p.get("price") or p.get("value")
+                            
+                            if isinstance(raw_val, list) and len(raw_val) > 0:
+                                raw_val = raw_val[0]
+                            
+                            val = safe_float(raw_val)
+                            if val <= 0:
+                                continue
 
-                        if any(x in p_type for x in ["sale", "event", "oferta", "internet", "current", "cmr", "card", "eventprice"]):
-                            precio_oferta = val if (precio_oferta == 0 or val < precio_oferta) else precio_oferta
-                        elif any(x in p_type for x in ["list", "original", "regular", "normal", "normalprice"]):
-                            precio_regular = val if (precio_regular == 0 or val > precio_regular) else precio_regular
+                            if any(x in p_type for x in ["sale", "event", "oferta", "internet", "current", "cmr", "card", "eventprice"]):
+                                precio_oferta = val if (precio_oferta == 0 or val < precio_oferta) else precio_oferta
+                            elif any(x in p_type for x in ["list", "original", "regular", "normal", "normalprice"]):
+                                precio_regular = val if (precio_regular == 0 or val > precio_regular) else precio_regular
 
                     if precio_oferta == 0.0 and prices_list:
-                        valid_p = [safe_float(p.get("price") or p.get("value")) for p in prices_list if safe_float(p.get("price") or p.get("value")) > 0]
+                        valid_p = []
+                        for p in prices_list:
+                            if isinstance(p, dict):
+                                rv = p.get("price") or p.get("value")
+                                if isinstance(rv, list) and rv:
+                                    rv = rv[0]
+                                v = safe_float(rv)
+                                if v > 0:
+                                    valid_p.append(v)
                         if valid_p:
                             precio_oferta = min(valid_p)
                             precio_regular = max(valid_p)
@@ -106,26 +126,26 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     if precio_regular == 0.0:
                         precio_regular = precio_oferta
 
-                    # 🚨 FILTRO ANTI-BASURA: Descartar precios < S/ 10.00 o erróneos
+                    # Filtro de seguridad: Descartar precios basura o superiores al límite
                     if precio_oferta < 10.0 or es_error_de_precio(precio_oferta) or precio_oferta > limite:
                         continue
 
-                    # 4. Extracción / Reconstrucción de la IMAGEN HD
+                    # 5. Extracción e Imagen HD del Producto
                     img_url = ""
-                    media = item.get("media") or item.get("images") or []
-                    if isinstance(media, list) and media:
-                        first_media = media[0]
-                        if isinstance(first_media, dict):
-                            img_url = first_media.get("url") or first_media.get("src") or ""
-                        else:
-                            img_url = str(first_media)
-                    elif isinstance(media, dict):
-                        img_url = media.get("url") or media.get("src") or ""
+                    media_list = item.get("mediaUrls") or item.get("media") or item.get("images") or []
+                    if isinstance(media_list, list) and len(media_list) > 0:
+                        first_m = media_list[0]
+                        if isinstance(first_m, dict):
+                            img_url = first_m.get("url") or first_m.get("src") or ""
+                        elif isinstance(first_m, str):
+                            img_url = first_m
+                    elif isinstance(media_list, dict):
+                        img_url = media_list.get("url") or media_list.get("src") or ""
 
-                    # Reconstrucción de fallback usando el ID de Falabella si no viene URL de imagen
+                    # Reconstrucción mediante CDN oficial usando el ID de Falabella si viene vacía
                     if not img_url or len(img_url) < 15 or 'data:image' in img_url:
-                        url_limpia = link_final.split('?')[0].split('#')[0]
-                        match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                        clean_url = link_final.split('?')[0].split('#')[0]
+                        match_id = [t for t in clean_url.split('/') if t.isdigit() and len(t) >= 7]
                         if match_id:
                             img_url = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
 
@@ -144,20 +164,20 @@ def motor_falabella(url, limite=999999.0, headers=None):
             except Exception as ex_json:
                 safe_log(f"⚠️ Error procesando JSON Falabella: {ex_json}", "warning")
 
-        # --- CAPA 2: FALLBACK HTML (Si no se encontraron datos en el JSON) ---
+        # --- CAPA 2: FALLBACK HTML ---
         if not productos:
             items = soup.find_all(['div', 'li', 'article'], class_=re.compile(r'(pod|card|product-item)', re.I))
             for t in items:
                 try:
                     a_el = t.find('a', href=True)
-                    if not a_el or ('/product/' not in a_el['href'] and '/p/' not in a_el['href']):
+                    if not a_el or '/product/' not in a_el['href']:
                         continue
 
                     link_final = urljoin("https://www.falabella.com.pe", a_el['href'])
 
                     tit_el = t.find(['b', 'span', 'p', 'h3', 'h4'], class_=re.compile(r'(title|name|displayName)', re.I))
                     nombre_txt = tit_el.text.strip().upper() if tit_el else ""
-                    if len(nombre_txt) < 6 or nombre_txt in ["ADIDAS", "PUMA", "REEBOK", "LA MARTINA", "NIKE", "DIADORA"]:
+                    if len(nombre_txt) < 8:
                         continue
 
                     el_event = t.find(attrs={"data-event-price": True}) or t.select_one('[data-event-price]')
@@ -179,8 +199,8 @@ def motor_falabella(url, limite=999999.0, headers=None):
                                 break
 
                     if not img_url or len(img_url) < 15:
-                        url_limpia = link_final.split('?')[0].split('#')[0]
-                        match_id = [t for t in url_limpia.split('/') if t.isdigit() and len(t) >= 7]
+                        clean_url = link_final.split('?')[0].split('#')[0]
+                        match_id = [t for t in clean_url.split('/') if t.isdigit() and len(t) >= 7]
                         if match_id:
                             img_url = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
 
