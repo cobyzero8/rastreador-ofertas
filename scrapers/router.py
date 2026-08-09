@@ -14,7 +14,7 @@ from .thn import motor_thn
 from .juntoz import motor_juntoz
 from .estilos import motor_estilos
 from .promart import motor_promart
-from .carsas import motor_carsas
+from .carsas import motor_carsa
 from .triathlon import motor_triathlon
 from .footloose import motor_footloose
 from .belcorp import motor_conecta_retail
@@ -59,7 +59,7 @@ def escanear_tienda(url: str, tienda: str = "GENERAL", precio_max: float = 99999
         elif "promart.pe" in domain or tienda_upper == "PROMART":
             return motor_promart(url, precio_max)
         elif "carsa.pe" in domain or tienda_upper == "CARSA":
-            return motor_carsas(url, precio_max)
+            return motor_carsa(url, precio_max)
         elif "triathlon.com.pe" in domain or tienda_upper == "TRIATHLON":
             return motor_triathlon(url, precio_max)
         elif "footloose.pe" in domain or tienda_upper == "FOOTLOOSE":
