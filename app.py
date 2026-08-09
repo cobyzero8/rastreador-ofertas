@@ -195,16 +195,18 @@ if menu == "📈 Ver Dashboard / Ofertas":
         res_h = query.limit(1000).execute()
 
         if res_h.data:
-            proc = set()
+            proc_urls = set()
             for reg in res_h.data:
                 raw_precio = reg.get('precio')
                 precio_venta = float(raw_precio) if raw_precio is not None else 0.0
                 if precio_venta <= 0: continue
 
-                id_p = str(reg.get("identificador", "")).strip().upper()
-                if not id_p or id_p in proc: continue
-                proc.add(id_p)
+                # 🟢 FIX 1: Deduplicar por URL única del producto (NO por identificador de radar)
+                link_p = str(reg.get("link_producto", "")).strip()
+                if not link_p or link_p in proc_urls: continue
+                proc_urls.add(link_p)
 
+                id_p = str(reg.get("identificador", "")).strip().upper()
                 parts = id_p.split("-")
                 tnd_txt = parts[0].upper() if len(parts) > 0 else "GENERAL"
 
@@ -213,30 +215,28 @@ if menu == "📈 Ver Dashboard / Ofertas":
                     prd_txt = str(raw_nombre).strip().title()
                 elif len(parts) >= 4:
                     prd_txt = "-".join(parts[2:-1]).replace("_", " ").title()
-                elif len(parts) == 3:
-                    if len(parts[2]) == 12 and all(c in '0123456789ABCDEF' for c in parts[2]):
-                        prd_txt = parts[1].replace("_", " ").title()
-                    else:
-                        prd_txt = parts[2].replace("_", " ").title()
                 else:
                     prd_txt = id_p.replace("_", " ").title()
 
                 raw_regular = reg.get('precio_regular')
                 precio_regular = float(raw_regular) if raw_regular is not None else precio_venta
+                
                 lista_dashboard.append({
                     "Tienda": tnd_txt,
                     "Nombre del Producto": prd_txt,
                     "Imagen del Producto": reg.get('imagen_producto', ''),
                     "Precio Real": precio_regular,
                     "Precio de Venta": precio_venta,
-                    "Descuento": precio_regular - precio_venta,
-                    "Link": reg.get('link_producto', '#')
+                    "Descuento": max(0.0, precio_regular - precio_venta),
+                    "Fecha Scan": reg.get('fecha', ''),
+                    "Link": link_p
                 })
     except Exception as e:
         st.warning(f"Sincronizando: {e}")
 
     if lista_dashboard:
-        df_dash = pd.DataFrame(lista_dashboard).sort_values(by="Descuento", ascending=False)
+        # 🟢 FIX 2: Mantener el orden cronológico estricto del escaneo
+        df_dash = pd.DataFrame(lista_dashboard)
         st.dataframe(
             df_dash, 
             column_config={
@@ -246,6 +246,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
                 "Precio Real": st.column_config.NumberColumn("💰 Precio Real", format="S/. %.2f"), 
                 "Precio de Venta": st.column_config.NumberColumn("🏷️ Precio de Venta", format="S/. %.2f"), 
                 "Descuento": st.column_config.NumberColumn("📉 Descuento", format="S/. %.2f"), 
+                "Fecha Scan": "📅 Fecha Scan",
                 "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver")
             }, 
             hide_index=True, 
@@ -461,7 +462,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
         if target_escaneado and target_escaneado != "TODOS":
             q = q.ilike("identificador", f"%{target_escaneado}%")
         
-        res_recientes = q.limit(60).execute()
+        res_recientes = q.limit(500).execute()
         
         if res_recientes.data:
             reporte_items = []
@@ -469,12 +470,14 @@ elif menu == "💥 Forzar Escaneo Intensivo":
             for reg in res_recientes.data:
                 p_o = float(reg.get("precio") or 0.0)
                 p_r = float(reg.get("precio_regular") or p_o)
-                id_p = str(reg.get("identificador", "")).upper()
                 
-                if not id_p or id_p in vistos_ui or p_o <= 0:
+                # 🟢 FIX 3: Deduplicar por URL única del producto (NO por identificador de radar)
+                link_p = str(reg.get("link_producto", "#")).strip()
+                if not link_p or link_p in vistos_ui or p_o <= 0:
                     continue
-                vistos_ui.add(id_p)
+                vistos_ui.add(link_p)
                 
+                id_p = str(reg.get("identificador", "")).upper()
                 parts = id_p.split("-")
                 tienda = parts[0] if len(parts) > 0 else "GENERAL"
                 
@@ -493,7 +496,8 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                     "Precio Regular": p_r,
                     "Precio Oferta": p_o,
                     "Ahorro": max(0.0, p_r - p_o),
-                    "Link": reg.get("link_producto", "#")
+                    "Fecha": reg.get("fecha", ""),
+                    "Link": link_p
                 })
 
             if reporte_items:
@@ -524,7 +528,8 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                                 
                                 st.markdown(f"🛒 [**IR A LA OFERTA**]({item['Link']})")
                 else:
-                    df_reporte = pd.DataFrame(reporte_items).sort_values(by="Ahorro", ascending=False)
+                    # 🟢 FIX 4: Conservar el orden cronológico del escaneo (sin reordenar por Ahorro)
+                    df_reporte = pd.DataFrame(reporte_items)
                     st.dataframe(
                         df_reporte,
                         column_config={
@@ -534,6 +539,7 @@ elif menu == "💥 Forzar Escaneo Intensivo":
                             "Precio Regular": st.column_config.NumberColumn("💰 P. Regular", format="S/. %.2f"),
                             "Precio Oferta": st.column_config.NumberColumn("🏷️ P. Oferta", format="S/. %.2f"),
                             "Ahorro": st.column_config.NumberColumn("📉 Ahorro", format="S/. %.2f"),
+                            "Fecha": "📅 Fecha",
                             "Link": st.column_config.LinkColumn("🛒 Enlace", display_text="Ver Oferta")
                         },
                         hide_index=True,
