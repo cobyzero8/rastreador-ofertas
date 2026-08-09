@@ -2,24 +2,21 @@ import re
 import json
 import random
 import requests
+import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from config import LISTA_USER_AGENTS
 from utils import sanitizar_url, safe_log
 
+# Desactivar advertencias de SSL deshabilitado
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 def motor_jbl(url, limite=999999.0, headers=None):
     """
-    Motor extractor de productos optimizado para JBL Perú (Salesforce Commerce Cloud)
+    Motor extractor para JBL Perú (jbl.com.pe) optimizado contra bloqueos Akamai/SFCC
     """
     productos_map = {}
     url_base = sanitizar_url(url)
-    
-    # Inyectar parámetro format=ajax si no existe para forzar la entrega del catálogo en HTML
-    if "format=ajax" not in url_base:
-        sep = "&" if "?" in url_base else "?"
-        url_fetch = f"{url_base}{sep}format=ajax"
-    else:
-        url_fetch = url_base
 
     def limpiar_num_jbl(texto):
         if not texto: return 0.0
@@ -37,32 +34,57 @@ def motor_jbl(url, limite=999999.0, headers=None):
             except ValueError: return 0.0
         return 0.0
 
-    headers_base = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8",
-        "Referer": "https://www.jbl.com.pe/",
-        "X-Requested-With": "XMLHttpRequest"
+    # Cabeceras completas de un navegador Chrome real para evitar HTTP 403
+    headers_navegador = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Ch-Ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Referer": "https://www.jbl.com.pe/"
     }
+
     if headers:
-        headers_base.update(headers)
+        headers_navegador.update(headers)
 
     session = requests.Session()
     resp = None
 
-    # Probar con URL AJAX primero y luego con la URL normal si no responde
-    for target_url in [url_fetch, url_base]:
-        try:
-            safe_log(f"📡 [JBL] Consultando catálogo desde: {target_url}", "info")
-            r = session.get(target_url, headers=headers_base, timeout=20, verify=False)
-            if r.status_code == 200 and len(r.text) > 1000:
-                resp = r
-                break
-        except Exception as ex:
-            safe_log(f"⚠️ [JBL] Error conectando a {target_url}: {ex}", "warning")
+    # Intento directo a la URL de catálogo
+    try:
+        safe_log(f"📡 [JBL] Consultando catálogo en directo...", "info")
+        r = session.get(url_base, headers=headers_navegador, timeout=20, verify=False)
+        
+        if r.status_code == 200:
+            resp = r
+        else:
+            safe_log(f"🛑 [JBL] El servidor respondió con HTTP {r.status_code}", "error")
+            
+            # Reintento alternativo con parámetro AJAX de Salesforce Commerce Cloud
+            sep = "&" if "?" in url_base else "?"
+            url_ajax = f"{url_base}{sep}format=ajax"
+            headers_ajax = headers_navegador.copy()
+            headers_ajax["X-Requested-With"] = "XMLHttpRequest"
+            
+            safe_log(f"🔄 [JBL] Reintentando vía endpoint AJAX...", "info")
+            r_ajax = session.get(url_ajax, headers=headers_ajax, timeout=20, verify=False)
+            if r_ajax.status_code == 200:
+                resp = r_ajax
+            else:
+                safe_log(f"🛑 [JBL] Reintento AJAX falló con HTTP {r_ajax.status_code}", "error")
 
-    if not resp or resp.status_code != 200:
-        safe_log(f"🛑 [JBL] No se obtuvo respuesta válida (HTTP 200) de JBL.", "error")
+    except Exception as ex:
+        safe_log(f"🚨 [JBL] Error de conexión: {ex}", "error")
+
+    if not resp or resp.status_code != 200 or not resp.text:
         return []
 
     soup = BeautifulSoup(resp.text, 'html.parser')
@@ -116,7 +138,7 @@ def motor_jbl(url, limite=999999.0, headers=None):
         except Exception: continue
 
     # ==============================================================================
-    # CAPA 2: SCANNER HTML DE ENLACES .HTML DE PRODUCTO
+    # CAPA 2: SCANNER HTML POR CONTENEDORES DE PRODUCTO
     # ==============================================================================
     if not productos_map:
         for a in soup.find_all('a', href=True):
@@ -124,7 +146,7 @@ def motor_jbl(url, limite=999999.0, headers=None):
                 href = a['href'].strip()
                 if not href or not href.lower().endswith('.html'):
                     continue
-                if any(x in href.lower() for x in ['/cart', '/checkout', '/account', '/servicio', '/ayuda', '/login', '/atencion']):
+                if any(x in href.lower() for x in ['/cart', '/checkout', '/account', '/servicio', '/ayuda', '/login']):
                     continue
 
                 link_final = urljoin("https://www.jbl.com.pe", href).split('?')[0].split('#')[0]
@@ -135,7 +157,7 @@ def motor_jbl(url, limite=999999.0, headers=None):
                     if not contenedor or contenedor.name in ['body', 'html']:
                         break
                     texto_cont = contenedor.get_text()
-                    if ('S/' in texto_cont or 'PEN' in texto_cont or '$' in texto_cont) and re.search(r'\d+', texto_cont):
+                    if ('S/' in texto_cont or 'PEN' in texto_cont) and re.search(r'\d+', texto_cont):
                         encontrado = True
                         break
                     contenedor = contenedor.parent
@@ -148,10 +170,8 @@ def motor_jbl(url, limite=999999.0, headers=None):
                     img_in = contenedor.find('img')
                     if img_in and img_in.get('alt'):
                         nombre = img_in['alt'].strip().upper()
-                    elif img_in and img_in.get('title'):
-                        nombre = img_in['title'].strip().upper()
 
-                if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR', 'VER DETALLES', 'JBL']:
+                if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR', 'VER DETALLES']:
                     continue
 
                 nombre = re.sub(r'\s+', ' ', nombre)
@@ -160,10 +180,6 @@ def motor_jbl(url, limite=999999.0, headers=None):
                 precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_tarjeta)
                 
                 precios_numeros = [limpiar_num_jbl(p) for p in precios_encontrados if limpiar_num_jbl(p) > 0]
-                if not precios_numeros:
-                    precios_encontrados = re.findall(r'\b\d{2,5}(?:\.\d{2})?\b', texto_tarjeta)
-                    precios_numeros = [limpiar_num_jbl(p) for p in precios_encontrados if 10 <= limpiar_num_jbl(p) <= 20000]
-
                 if not precios_numeros: continue
 
                 precios_unicos = sorted(list(set(precios_numeros)))
