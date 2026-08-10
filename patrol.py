@@ -9,17 +9,15 @@ from notifications import enviar_alerta_telegram
 from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
-# Configuración de horas mínimas entre escaneos para proteger créditos de ScraperAPI
+# Configuración de horas mínimas entre escaneos por tienda
 TIENDAS_CON_ENFRIAMIENTO = {
-    "JBL": 4.0,      # Mínimo 4 horas entre escaneos
-    "ADIDAS": 4.0    # Mínimo 4 horas entre escaneos
+    "JBL": 4.0,      # Mínimo 4 horas de espera
+    "ADIDAS": 4.0    # Mínimo 4 horas de espera
 }
 
 def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float = 4.0) -> bool:
     """
-    Verifica en la tabla 'health_checks' si han transcurrido suficientes horas 
-    desde el último escaneo exitoso/intentado de la tienda.
-    Retorna True si debe escanearse, o False si debe omitirse para cuidar créditos.
+    Verifica si han pasado 'horas_espera' desde el último patrullaje registrado en health_checks.
     """
     tienda_clean = str(tienda).upper().strip()
     try:
@@ -31,11 +29,8 @@ def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float
         if res.data and len(res.data) > 0:
             raw_fecha = res.data[0].get("ultimo_escaneo")
             if raw_fecha:
-                # Convertir timestamp ISO de Supabase a datetime consciente de zona horaria (UTC)
                 str_fecha = str(raw_fecha).replace("Z", "+00:00")
                 ultimo_scan = datetime.fromisoformat(str_fecha)
-                
-                # Si viene sin zona horaria, asignar UTC
                 if ultimo_scan.tzinfo is None:
                     ultimo_scan = ultimo_scan.replace(tzinfo=timezone.utc)
                 
@@ -56,12 +51,6 @@ def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float
 
 
 def revisar_ofertas(filtro_categoria="TODOS"):
-    """
-    Recorre los radares en Supabase y ejecuta las 3 reglas de negocio:
-    1. Si NO existe en BD -> Guarda en BD + Notifica en Telegram (NUEVO PRODUCTO).
-    2. Si EXISTE en BD y el precio es MENOR -> Actualiza BD + Notifica en Telegram (BAJA DE PRECIO).
-    3. Si EXISTE en BD y el precio es IGUAL O MAYOR -> Solo actualiza fecha/hora en BD (SILENCIOSO).
-    """
     if not supabase:
         safe_log("🛑 No hay conexión con Supabase. Revisa SUPABASE_URL y SUPABASE_KEY.", "error")
         return "Fallo de conexión con Supabase: Credenciales faltantes."
@@ -79,6 +68,14 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     except Exception as e:
         safe_log(f"🚨 Error leyendo la tabla 'radares': {e}", "error")
         return f"Error leyendo radares desde Supabase: {e}"
+
+    # =========================================================================
+    # 🟢 EVALUACIÓN PREVIA DE ENFRIAMIENTO (A Nivel de Lote/Batch)
+    # Evalúa al inicio qué tiendas están habilitadas para esta corrida completa.
+    # =========================================================================
+    tiendas_permitidas = {}
+    for t_nombre, t_horas in TIENDAS_CON_ENFRIAMIENTO.items():
+        tiendas_permitidas[t_nombre] = tienda_necesita_patrullaje(supabase, t_nombre, horas_espera=t_horas)
 
     zona_peru = timezone(timedelta(hours=-5))
     fecha_actual = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
@@ -100,11 +97,9 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         tienda = parts[0] if parts else "GENERAL"
         categoria = parts[1] if len(parts) > 1 else "OTROS"
 
-        # 🟢 CONTROL DE ENFRIAMIENTO (Ahorro de ScraperAPI para JBL y ADIDAS)
-        if tienda in TIENDAS_CON_ENFRIAMIENTO:
-            horas_limite = TIENDAS_CON_ENFRIAMIENTO[tienda]
-            if not tienda_necesita_patrullaje(supabase, tienda, horas_espera=horas_limite):
-                continue  # Salta esta tienda y ahorra la ejecución del scraper
+        # 🟢 Verificar si la tienda completa fue omitida por enfriamiento en este lote
+        if tienda in tiendas_permitidas and not tiendas_permitidas[tienda]:
+            continue  # Salta la URL sin gastar créditos
 
         safe_log(f"🔍 Escaneando radar [{tienda}] -> {url} (Límite S/. {precio_max:.2f})", "info")
         
@@ -134,7 +129,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 precio_oferta = safe_float(prod.get("precio"))
                 precio_regular = safe_float(prod.get("precio_regular", precio_oferta))
                 
-                # Normalización estricta de URL (elimina parámetros ?, fragmentos # y slashes finales)
                 link_raw = str(prod.get("link", url)).strip()
                 if not link_raw or not link_raw.startswith("http"):
                     continue
@@ -145,7 +139,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 if precio_oferta <= 0:
                     continue
 
-                # Consultar en Supabase por la URL normalizada
                 res_existente = supabase.table("historial_precios")\
                     .select("id, precio, precio_regular, nombre_producto, imagen_producto")\
                     .eq("link_producto", link_prod)\
@@ -153,9 +146,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     .execute()
 
                 if not res_existente.data:
-                    # =========================================================
-                    # 🔴 REGLA 1: PRODUCTO NUEVO (NO EXISTE EN BD)
-                    # =========================================================
                     datos_insert = {
                         "identificador": f"{tienda}-{categoria}",
                         "nombre_producto": nombre_real,
@@ -184,20 +174,16 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         if exito_telegram:
                             total_ofertas_notificadas += 1
                             safe_log(f"🆕 Producto nuevo notificado: {nombre_real} -> Alerta enviada", "success")
-                            time.sleep(1.5)  # Pausa anti-bloqueo (Rate Limit Telegram)
+                            time.sleep(1.5)
                         else:
                             safe_log(f"⚠️ Guardado en BD pero Telegram limitó la entrega: {nombre_real}", "warning")
 
                 else:
-                    # El producto SÍ existe en la BD
                     reg_guardado = res_existente.data[0]
                     precio_guardado = safe_float(reg_guardado.get("precio"))
                     id_bd = reg_guardado.get("id")
 
                     if precio_oferta < precio_guardado:
-                        # =========================================================
-                        # 🟢 REGLA 2: PRODUCTO EXISTENTE CON MENOR PRECIO
-                        # =========================================================
                         datos_update = {
                             "nombre_producto": nombre_real,
                             "precio": precio_oferta,
@@ -221,22 +207,19 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         
                         if exito_telegram:
                             total_ofertas_notificadas += 1
-                            safe_log(f"📉 Baja de precio (BD: S/. {precio_guardado:.2f} ➔ Nuevo: S/. {precio_oferta:.2f}): {nombre_real}", "success")
-                            time.sleep(1.5)  # Pausa anti-bloqueo (Rate Limit Telegram)
+                            safe_log(f"📉 Baja de precio: {nombre_real}", "success")
+                            time.sleep(1.5)
                         else:
                             safe_log(f"⚠️ Actualizado en BD pero Telegram limitó la entrega: {nombre_real}", "warning")
 
                     else:
-                        # =========================================================
-                        # 🟡 REGLA 3: PRODUCTO EXISTENTE CON PRECIO IGUAL O MAYOR
-                        # =========================================================
                         datos_update = {"fecha": fecha_actual}
                         if not reg_guardado.get("nombre_producto"):
                             datos_update["nombre_producto"] = nombre_real
 
                         supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                         total_productos_procesados += 1
-                        safe_log(f"🕒 Producto en BD con precio constante (S/. {precio_oferta:.2f}). Fecha actualizada silenciosamente.", "info")
+                        safe_log(f"🕒 Producto en BD constante (S/. {precio_oferta:.2f}). Fecha actualizada.", "info")
 
             except Exception as ex_prod:
                 safe_log(f"⚠️ Error procesando producto individual: {ex_prod}", "warning")
