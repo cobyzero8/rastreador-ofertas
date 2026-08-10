@@ -1,15 +1,86 @@
+import os
 import re
 import json
+import requests
+import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from utils import sanitizar_url, safe_log
 
-try:
-    from curl_cffi import requests as curl_requests
-    CURL_DISPONIBLE = True
-except ImportError:
-    import requests as curl_requests
-    CURL_DISPONIBLE = False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def obtener_keys_ripley():
+    """
+    Obtiene las claves de ScraperAPI exclusivas para Ripley en orden secuencial.
+    """
+    keys = []
+    nombres_keys = ["SCRAPERAPI_RIPLEY_KEY", "SCRAPERAPI_RIPLEY_KEY_2", "SCRAPERAPI_RIPLEY_KEY_3"]
+
+    try:
+        import streamlit as st
+        for name in nombres_keys:
+            if name in st.secrets and st.secrets[name]:
+                val = str(st.secrets[name]).strip()
+                if len(val) > 10 and "tu_clave" not in val:
+                    keys.append(val)
+    except Exception:
+        pass
+
+    if not keys:
+        for name in nombres_keys:
+            val = os.environ.get(name, "").strip()
+            if val and len(val) > 10 and "tu_clave" not in val:
+                keys.append(val)
+
+    return keys
+
+def consultar_ripley_con_cascada(url_destino):
+    """
+    1. Intenta conexión directa gratis.
+    2. Si Ripley rebota con HTTP 403 / Akamai, activa ScraperAPI en cascada con claves dedicadas.
+    """
+    session = requests.Session()
+    headers_directos = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-PE,es;q=0.9",
+        "Referer": "https://simple.ripley.com.pe/"
+    }
+
+    try:
+        safe_log(f"📡 [RIPLEY] Intentando conexión directa gratis...", "info")
+        r = session.get(url_destino, headers=headers_directos, timeout=12, verify=False)
+        if r.status_code == 200 and len(r.text) > 2000 and any(x in r.text.lower() for x in ['catalog-product-item', '__preloaded_state__']):
+            safe_log("✅ [RIPLEY] Conexión directa exitosa (0 créditos consumidos).", "success")
+            return r
+        else:
+            safe_log(f"⚠️ [RIPLEY] Conexión directa rebotó o incompleta (HTTP {r.status_code}).", "warning")
+    except Exception as ex:
+        safe_log(f"⚠️ [RIPLEY] Error en conexión directa: {ex}", "warning")
+
+    keys = obtener_keys_ripley()
+    if not keys:
+        safe_log("🛑 [RIPLEY] No se encontraron claves SCRAPERAPI_RIPLEY_KEY en los secretos.", "error")
+        return None
+
+    for idx, key in enumerate(keys, start=1):
+        try:
+            safe_log(f"🛡️ [RIPLEY] Probando ScraperAPI Key Ripley #{idx} ({key[:6]}...)", "info")
+            payload = {'api_key': key, 'url': url_destino, 'render': 'false'}
+            r_sc = session.get('http://api.scraperapi.com', params=payload, timeout=35)
+            
+            if r_sc.status_code == 200 and len(r_sc.text) > 1000:
+                safe_log(f"✅ [RIPLEY] Petición exitosa usando Key Ripley #{idx}.", "success")
+                return r_sc
+            elif r_sc.status_code in [401, 403, 429]:
+                safe_log(f"⚠️ [RIPLEY] Key #{idx} sin créditos o bloqueada (HTTP {r_sc.status_code}). Saltando...", "warning")
+            else:
+                safe_log(f"⚠️ [RIPLEY] Key #{idx} devolvió HTTP {r_sc.status_code}", "warning")
+        except Exception as e:
+            safe_log(f"⚠️ [RIPLEY] Error con Key #{idx}: {e}", "warning")
+
+    safe_log("🛑 [RIPLEY] Se agotaron todas las claves de ScraperAPI registradas para Ripley.", "error")
+    return None
 
 def limpiar_num_ripley(texto):
     if not texto: return 0.0
@@ -29,161 +100,128 @@ def limpiar_num_ripley(texto):
 
 def motor_ripley(url, limite=999999.0, headers=None):
     """
-    Motor extractor gratuito para Ripley Perú usando sesión persistente con curl_cffi
+    Motor extractor de productos para Ripley Perú (simple.ripley.com.pe)
     """
     productos_map = {}
     url_base = sanitizar_url(url)
 
-    if not CURL_DISPONIBLE:
-        safe_log("🛑 [RIPLEY] 'curl_cffi' no está instalado. Agrega 'curl_cffi' a requirements.txt", "error")
+    resp = consultar_ripley_con_cascada(url_base)
+    if not resp or resp.status_code != 200 or not resp.text:
         return []
 
-    headers_base = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "accept-language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
-        "cache-control": "max-age=0",
-        "referer": "https://simple.ripley.com.pe/",
-        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "sec-fetch-dest": "document",
-        "sec-fetch-mode": "navigate",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-user": "?1",
-        "upgrade-insecure-requests": "1"
-    }
+    texto_html = resp.text
+    soup = BeautifulSoup(texto_html, 'html.parser')
 
-    try:
-        safe_log(f"📡 [RIPLEY] Creando sesión de navegación en Ripley...", "info")
-        session = curl_requests.Session(impersonate="chrome120")
-        
-        # 🟢 Paso 1: Generar cookies navegando primero a la portada de Ripley
+    # ==============================================================================
+    # CAPA 1: EXTRACCIÓN VÍA ESTADO JSON PRECARGADO (window.__PRELOADED_STATE__)
+    # ==============================================================================
+    match_state = re.search(r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});', texto_html, re.DOTALL)
+    if match_state:
         try:
-            session.get("https://simple.ripley.com.pe/", headers=headers_base, timeout=12)
-        except Exception:
-            pass
+            data_json = json.loads(match_state.group(1))
+            catalog_products = []
 
-        # 🟢 Paso 2: Consultar la URL objetivo conservando las cookies de sesión
-        resp = session.get(url_base, headers=headers_base, timeout=20)
+            if isinstance(data_json, dict):
+                catalog_products = data_json.get('catalog', {}).get('products', []) or \
+                                   data_json.get('products', []) or []
 
-        if resp.status_code != 200:
-            safe_log(f"🛑 [RIPLEY] El servidor devolvió HTTP {resp.status_code}.", "error")
-            return []
+            for p in catalog_products:
+                if not isinstance(p, dict): continue
+                
+                nombre = str(p.get('name') or p.get('fullTitle') or '').strip().upper()
+                if not nombre or len(nombre) < 3: continue
 
-        texto_html = resp.text
-        soup = BeautifulSoup(texto_html, 'html.parser')
+                link_rel = p.get('url') or p.get('singleProductUrl') or ''
+                if not link_rel and p.get('partNumber'):
+                    link_rel = f"/p/{p.get('partNumber')}"
 
-        # ==============================================================================
-        # CAPA 1: EXTRACCIÓN VÍA ESTADO JSON PRECARGADO (window.__PRELOADED_STATE__)
-        # ==============================================================================
-        match_state = re.search(r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});', texto_html, re.DOTALL)
-        if match_state:
+                if not link_rel: continue
+                link_final = urljoin("https://simple.ripley.com.pe", link_rel).split('?')[0].split('#')[0]
+
+                # Precios
+                prices = p.get('prices', {}) or {}
+                p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or 0.0)
+                p_r = float(prices.get('listPrice') or prices.get('normalPrice') or p_o)
+
+                if p_o <= 0:
+                    p_o = float(p.get('price', 0.0))
+                    p_r = max(p_r, p_o)
+
+                # Imagen
+                img_url = p.get('thumbnail') or p.get('fullImage') or ""
+                if not img_url and isinstance(p.get('images'), list) and len(p.get('images')) > 0:
+                    img_first = p.get('images')[0]
+                    img_url = img_first.get('url', '') if isinstance(img_first, dict) else str(img_first)
+
+                if img_url and not img_url.startswith('http'):
+                    img_url = urljoin("https:", img_url) if img_url.startswith('//') else urljoin("https://simple.ripley.com.pe", img_url)
+
+                if 0 < p_o <= limite:
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": str(img_url)
+                    }
+        except Exception as ex_json:
+            safe_log(f"⚠️ [RIPLEY] Error leyendo datos precargados: {ex_json}", "warning")
+
+    # ==============================================================================
+    # CAPA 2: FALLBACK TARJETAS HTML (.catalog-product-item)
+    # ==============================================================================
+    if not productos_map:
+        tarjetas = soup.find_all(['a', 'div', 'article'], class_=lambda c: c and any(x in str(c).lower() for x in ['catalog-product-item', 'product-item', 'catalog-item']))
+
+        for card in tarjetas:
             try:
-                data_json = json.loads(match_state.group(1))
-                catalog_products = []
+                a_tag = card if card.name == 'a' and card.get('href') else card.find('a', href=True)
+                if not a_tag: continue
 
-                if isinstance(data_json, dict):
-                    catalog_products = data_json.get('catalog', {}).get('products', []) or \
-                                       data_json.get('products', []) or []
+                href = a_tag['href'].strip()
+                if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/account']):
+                    continue
 
-                for p in catalog_products:
-                    if not isinstance(p, dict): continue
-                    
-                    nombre = str(p.get('name') or p.get('fullTitle') or '').strip().upper()
-                    if not nombre or len(nombre) < 3: continue
+                link_final = urljoin("https://simple.ripley.com.pe", href).split('?')[0].split('#')[0]
 
-                    link_rel = p.get('url') or p.get('singleProductUrl') or ''
-                    if not link_rel and p.get('partNumber'):
-                        link_rel = f"/p/{p.get('partNumber')}"
+                nombre_el = card.find(class_=lambda c: c and any(x in str(c).lower() for x in ['catalog-product-details__name', 'product-title', 'name']))
+                nombre = nombre_el.get_text(strip=True).upper() if nombre_el else a_tag.get_text(strip=True).upper()
+                nombre = re.sub(r'\s+', ' ', nombre).strip()
 
-                    if not link_rel: continue
-                    link_final = urljoin("https://simple.ripley.com.pe", link_rel).split('?')[0].split('#')[0]
+                if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR']: continue
 
-                    prices = p.get('prices', {}) or {}
-                    p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or 0.0)
-                    p_r = float(prices.get('listPrice') or prices.get('normalPrice') or p_o)
+                texto_card = card.get_text()
+                precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
+                precios_numeros = [limpiar_num_ripley(p) for p in precios_encontrados if limpiar_num_ripley(p) > 0]
 
-                    if p_o <= 0:
-                        p_o = float(p.get('price', 0.0))
-                        p_r = max(p_r, p_o)
+                if not precios_numeros: continue
 
-                    img_url = p.get('thumbnail') or p.get('fullImage') or ""
-                    if not img_url and isinstance(p.get('images'), list) and len(p.get('images')) > 0:
-                        img_first = p.get('images')[0]
-                        img_url = img_first.get('url', '') if isinstance(img_first, dict) else str(img_first)
+                precios_unicos = sorted(list(set(precios_numeros)))
+                p_o = precios_unicos[0]
+                p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                    if img_url and not img_url.startswith('http'):
-                        img_url = urljoin("https:", img_url) if img_url.startswith('//') else urljoin("https://simple.ripley.com.pe", img_url)
+                img_el = card.find('img')
+                img_url = ""
+                if img_el:
+                    img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
 
-                    if 0 < p_o <= limite:
-                        productos_map[link_final] = {
-                            "nombre": f"RIPLEY - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": str(img_url)
-                        }
-            except Exception as ex_json:
-                safe_log(f"⚠️ [RIPLEY] Error parseando datos precargados: {ex_json}", "warning")
+                if img_url:
+                    if ',' in img_url: img_url = img_url.split(',')[0].split(' ')[0]
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+                    elif not img_url.startswith('http'): img_url = urljoin("https://simple.ripley.com.pe", img_url)
 
-        # ==============================================================================
-        # CAPA 2: FALLBACK TARJETAS HTML (.catalog-product-item)
-        # ==============================================================================
-        if not productos_map:
-            tarjetas = soup.find_all(['a', 'div', 'article'], class_=lambda c: c and any(x in str(c).lower() for x in ['catalog-product-item', 'product-item', 'catalog-item']))
-
-            for card in tarjetas:
-                try:
-                    a_tag = card if card.name == 'a' and card.get('href') else card.find('a', href=True)
-                    if not a_tag: continue
-
-                    href = a_tag['href'].strip()
-                    if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/account']):
-                        continue
-
-                    link_final = urljoin("https://simple.ripley.com.pe", href).split('?')[0].split('#')[0]
-
-                    nombre_el = card.find(class_=lambda c: c and any(x in str(c).lower() for x in ['catalog-product-details__name', 'product-title', 'name']))
-                    nombre = nombre_el.get_text(strip=True).upper() if nombre_el else a_tag.get_text(strip=True).upper()
-                    nombre = re.sub(r'\s+', ' ', nombre).strip()
-
-                    if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR']: continue
-
-                    texto_card = card.get_text()
-                    precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
-                    precios_numeros = [limpiar_num_ripley(p) for p in precios_encontrados if limpiar_num_ripley(p) > 0]
-
-                    if not precios_numeros: continue
-
-                    precios_unicos = sorted(list(set(precios_numeros)))
-                    p_o = precios_unicos[0]
-                    p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
-
-                    img_el = card.find('img')
+                if 'data:image' in img_url.lower() or 'pixel' in img_url.lower():
                     img_url = ""
-                    if img_el:
-                        img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
 
-                    if img_url:
-                        if ',' in img_url: img_url = img_url.split(',')[0].split(' ')[0]
-                        if img_url.startswith('//'): img_url = 'https:' + img_url
-                        elif not img_url.startswith('http'): img_url = urljoin("https://simple.ripley.com.pe", img_url)
-
-                    if 'data:image' in img_url.lower() or 'pixel' in img_url.lower():
-                        img_url = ""
-
-                    if 0 < p_o <= limite:
-                        productos_map[link_final] = {
-                            "nombre": f"RIPLEY - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url
-                        }
-                except Exception: continue
-
-    except Exception as e:
-        safe_log(f"🚨 [RIPLEY] Error en conexión: {e}", "error")
+                if 0 < p_o <= limite:
+                    productos_map[link_final] = {
+                        "nombre": f"RIPLEY - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url
+                    }
+            except Exception: continue
 
     productos_finales = list(productos_map.values())
     if productos_finales:
