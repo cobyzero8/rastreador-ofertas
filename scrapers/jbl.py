@@ -11,13 +11,9 @@ from utils import sanitizar_url, safe_log
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def obtener_keys_jbl():
-    """
-    Recopila las claves de ScraperAPI exclusivas para JBL en orden secuencial.
-    """
     keys = []
     nombres_keys = ["SCRAPERAPI_JBL_KEY", "SCRAPERAPI_JBL_KEY_2", "SCRAPERAPI_JBL_KEY_3"]
 
-    # 1. Buscar en Streamlit Secrets
     try:
         import streamlit as st
         for name in nombres_keys:
@@ -28,7 +24,6 @@ def obtener_keys_jbl():
     except Exception:
         pass
 
-    # 2. Buscar en variables de entorno (GitHub Actions o servidor local)
     if not keys:
         for name in nombres_keys:
             val = os.environ.get(name, "").strip()
@@ -38,11 +33,6 @@ def obtener_keys_jbl():
     return keys
 
 def consultar_jbl_con_cascada(url_destino):
-    """
-    1. Intenta petición directa (0 créditos).
-    2. Si falla (HTTP 403/401), usa SCRAPERAPI_JBL_KEY.
-    3. Si la Key 1 se agota, pasa a SCRAPERAPI_JBL_KEY_2, luego a SCRAPERAPI_JBL_KEY_3.
-    """
     session = requests.Session()
     headers_directos = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -51,7 +41,6 @@ def consultar_jbl_con_cascada(url_destino):
         "Referer": "https://www.jbl.com.pe/"
     }
 
-    # 🟢 PASO 1: Conexión directa gratuita
     try:
         safe_log(f"📡 [JBL] Intentando conexión directa gratis...", "info")
         r = session.get(url_destino, headers=headers_directos, timeout=12, verify=False)
@@ -63,9 +52,7 @@ def consultar_jbl_con_cascada(url_destino):
     except Exception as ex:
         safe_log(f"⚠️ [JBL] Error en conexión directa: {ex}", "warning")
 
-    # 🛡️ PASO 2: Cascada secuencial de Keys dedicadas para JBL
     keys = obtener_keys_jbl()
-
     if not keys:
         safe_log("🛑 [JBL] No se encontraron claves SCRAPERAPI_JBL_KEY en los secretos.", "error")
         return None
@@ -89,35 +76,41 @@ def consultar_jbl_con_cascada(url_destino):
     safe_log("🛑 [JBL] Se agotaron todas las claves de ScraperAPI registradas para JBL.", "error")
     return None
 
+def limpiar_num_jbl(texto):
+    if not texto: return 0.0
+    texto = str(texto).replace('S/.', '').replace('S/', '').replace('PEN', '').replace('S', '').strip()
+    
+    # Manejar formato de miles con punto (ej. 1.099 -> 1099)
+    match_miles = re.search(r'\b(\d{1,3})\.(\d{3})\b', texto)
+    if match_miles:
+        texto = texto.replace('.', '')
+
+    match = re.search(r'\d+(?:[.,]\d+)*', texto)
+    if match:
+        raw = match.group(0)
+        if ',' in raw and '.' in raw:
+            raw = raw.replace(',', '')
+        elif ',' in raw and len(raw.split(',')[-1]) == 2:
+            raw = raw.replace(',', '.')
+        else:
+            raw = raw.replace(',', '')
+        try: return float(raw)
+        except ValueError: return 0.0
+    return 0.0
+
 def motor_jbl(url, limite=999999.0, headers=None):
-    """
-    Motor extractor principal para la tienda JBL Perú
-    """
     productos_map = {}
     url_base = sanitizar_url(url)
 
-    def limpiar_num_jbl(texto):
-        if not texto: return 0.0
-        texto = str(texto).replace('S/.', '').replace('S/', '').replace('PEN', '').replace('S', '').strip()
-        match = re.search(r'\d+(?:[.,]\d+)*', texto)
-        if match:
-            raw = match.group(0)
-            if ',' in raw and '.' in raw:
-                raw = raw.replace(',', '')
-            elif ',' in raw and len(raw.split(',')[-1]) == 2:
-                raw = raw.replace(',', '.')
-            else:
-                raw = raw.replace(',', '')
-            try: return float(raw)
-            except ValueError: return 0.0
-        return 0.0
-
     resp = consultar_jbl_con_cascada(url_base)
-
     if not resp or resp.status_code != 200 or not resp.text:
         return []
 
     soup = BeautifulSoup(resp.text, 'html.parser')
+
+    # Limpiar textos ocultos que contaminan el nombre
+    for oculto in soup.find_all(class_=lambda c: c and any(x in str(c).lower() for x in ['sr-only', 'visually-hidden'])):
+        oculto.decompose()
 
     # ==============================================================================
     # CAPA 1: DATOS ESTRUCTURADOS JSON-LD
@@ -168,58 +161,70 @@ def motor_jbl(url, limite=999999.0, headers=None):
         except Exception: continue
 
     # ==============================================================================
-    # CAPA 2: SCANNER HTML DE PRODUCTOS
+    # CAPA 2: SCANNER HTML DEDICADO A CONTENEDORES JBL
     # ==============================================================================
     if not productos_map:
-        for a in soup.find_all('a', href=True):
+        tarjetas = soup.find_all(['div', 'article'], class_=lambda c: c and any(x in str(c).lower() for x in ['tile-body', 'product-tile', 'grid-tile']))
+
+        for card in tarjetas:
             try:
-                href = a['href'].strip()
-                if not href or not href.lower().endswith('.html'):
-                    continue
-                if any(x in href.lower() for x in ['/cart', '/checkout', '/account', '/servicio', '/ayuda', '/login']):
+                # 1. Enlace y Nombre Limpio
+                pdp_link = card.find(class_=lambda c: c and 'pdp-link' in str(c).lower())
+                a_tag = pdp_link.find('a', href=True) if pdp_link else card.find('a', href=True)
+                if not a_tag: continue
+
+                href = a_tag['href'].strip()
+                if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/account', '/servicio']):
                     continue
 
                 link_final = urljoin("https://www.jbl.com.pe", href).split('?')[0].split('#')[0]
-                
-                contenedor = a.parent
-                encontrado = False
-                for _ in range(6):
-                    if not contenedor or contenedor.name in ['body', 'html']:
-                        break
-                    texto_cont = contenedor.get_text()
-                    if ('S/' in texto_cont or 'PEN' in texto_cont) and re.search(r'\d+', texto_cont):
-                        encontrado = True
-                        break
-                    contenedor = contenedor.parent
 
-                if not encontrado or not contenedor:
-                    continue
+                # Nombre prioritario desde pdp-link
+                if pdp_link:
+                    nombre = pdp_link.get_text(strip=True).upper()
+                else:
+                    nombre = a_tag.get_text(strip=True).upper()
 
-                nombre = a.get_text(strip=True).upper()
-                if not nombre or len(nombre) < 3:
-                    img_in = contenedor.find('img')
-                    if img_in and img_in.get('alt'):
-                        nombre = img_in['alt'].strip().upper()
+                # Limpieza de textos o extensiones de URL agregadas al nombre
+                nombre = re.sub(r'^/.*?\.(HTML|PHP)\s*', '', nombre, flags=re.IGNORECASE)
+                nombre = re.sub(r'\s+', ' ', nombre).strip()
 
                 if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR', 'VER DETALLES']:
                     continue
 
-                nombre = re.sub(r'\s+', ' ', nombre)
+                # 2. Extracción de Precios desde atributos de JBL (content="799.00")
+                p_o = 0.0
+                p_r = 0.0
 
-                texto_tarjeta = contenedor.get_text()
-                precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_tarjeta)
-                
-                precios_numeros = [limpiar_num_jbl(p) for p in precios_encontrados if limpiar_num_jbl(p) > 0]
-                if not precios_numeros: continue
+                # Buscar en etiquetas <span class="value" content="799.00">
+                spans_value = card.find_all('span', class_=lambda c: c and 'value' in str(c).lower())
+                precios_attr = []
+                for sp in spans_value:
+                    if sp.get('content'):
+                        val_num = limpiar_num_jbl(sp['content'])
+                        if val_num > 0: precios_attr.append(val_num)
 
-                precios_unicos = sorted(list(set(precios_numeros)))
-                p_o = precios_unicos[0]
-                p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
+                if precios_attr:
+                    precios_attr = sorted(list(set(precios_attr)))
+                    p_o = precios_attr[0]
+                    p_r = precios_attr[-1] if len(precios_attr) > 1 else p_o
+                else:
+                    # Fallback por texto si no están los atributos
+                    texto_tarjeta = card.get_text()
+                    precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_tarjeta)
+                    precios_numeros = [limpiar_num_jbl(p) for p in precios_encontrados if limpiar_num_jbl(p) > 0]
+                    if precios_numeros:
+                        precios_unicos = sorted(list(set(precios_numeros)))
+                        p_o = precios_unicos[0]
+                        p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                img_el = contenedor.find('img')
+                if p_o <= 0: continue
+
+                # 3. Imagen del producto
+                img_el = card.find('img')
                 img_url = ""
                 if img_el:
-                    img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-srcset') or img_el.get('srcset') or ""
+                    img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
 
                 if img_url:
                     if ',' in img_url: img_url = img_url.split(',')[0].split(' ')[0]
@@ -230,24 +235,13 @@ def motor_jbl(url, limite=999999.0, headers=None):
                     img_url = ""
 
                 if 0 < p_o <= limite:
-                    if link_final in productos_map:
-                        prod_exist = productos_map[link_final]
-                        if len(nombre) > len(prod_exist['nombre']) or (img_url and not prod_exist['img']):
-                            productos_map[link_final] = {
-                                "nombre": f"JBL - {nombre}",
-                                "precio": p_o,
-                                "precio_regular": max(p_r, p_o),
-                                "link": link_final,
-                                "img": img_url or prod_exist['img']
-                            }
-                    else:
-                        productos_map[link_final] = {
-                            "nombre": f"JBL - {nombre}",
-                            "precio": p_o,
-                            "precio_regular": max(p_r, p_o),
-                            "link": link_final,
-                            "img": img_url
-                        }
+                    productos_map[link_final] = {
+                        "nombre": f"JBL - {nombre}",
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url
+                    }
             except Exception: continue
 
     productos_finales = list(productos_map.values())
