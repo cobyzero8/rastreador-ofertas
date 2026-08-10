@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from utils import sanitizar_url, safe_log
 
-# Importación segura de curl_cffi para imitar la huella TLS de Google Chrome
 try:
     from curl_cffi import requests as curl_requests
     CURL_DISPONIBLE = True
@@ -30,37 +29,45 @@ def limpiar_num_ripley(texto):
 
 def motor_ripley(url, limite=999999.0, headers=None):
     """
-    Motor extractor directo y 100% gratuito para Ripley Perú (simple.ripley.com.pe)
-    Utiliza impersonación de huella Chrome TLS vía curl_cffi para evitar HTTP 403.
+    Motor extractor gratuito para Ripley Perú usando sesión persistente con curl_cffi
     """
     productos_map = {}
     url_base = sanitizar_url(url)
 
-    headers_directos = {
+    if not CURL_DISPONIBLE:
+        safe_log("🛑 [RIPLEY] 'curl_cffi' no está instalado. Agrega 'curl_cffi' a requirements.txt", "error")
+        return []
+
+    headers_base = {
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "accept-language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
-        "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "accept-language": "es-PE,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "cache-control": "max-age=0",
+        "referer": "https://simple.ripley.com.pe/",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
         "sec-fetch-dest": "document",
         "sec-fetch-mode": "navigate",
-        "sec-fetch-site": "none",
+        "sec-fetch-site": "same-origin",
         "sec-fetch-user": "?1",
         "upgrade-insecure-requests": "1"
     }
 
     try:
-        safe_log(f"📡 [RIPLEY] Consultando con imitación TLS de Chrome...", "info")
+        safe_log(f"📡 [RIPLEY] Creando sesión de navegación en Ripley...", "info")
+        session = curl_requests.Session(impersonate="chrome120")
         
-        if CURL_DISPONIBLE:
-            resp = curl_requests.get(url_base, headers=headers_directos, impersonate="chrome120", timeout=20)
-        else:
-            safe_log("⚠️ 'curl_cffi' no está instalado. Añádelo a requirements.txt", "warning")
-            import requests
-            resp = requests.get(url_base, headers=headers_directos, timeout=15)
+        # 🟢 Paso 1: Generar cookies navegando primero a la portada de Ripley
+        try:
+            session.get("https://simple.ripley.com.pe/", headers=headers_base, timeout=12)
+        except Exception:
+            pass
+
+        # 🟢 Paso 2: Consultar la URL objetivo conservando las cookies de sesión
+        resp = session.get(url_base, headers=headers_base, timeout=20)
 
         if resp.status_code != 200:
-            safe_log(f"🛑 [RIPLEY] El servidor devolvió HTTP {resp.status_code}", "error")
+            safe_log(f"🛑 [RIPLEY] El servidor devolvió HTTP {resp.status_code}.", "error")
             return []
 
         texto_html = resp.text
@@ -92,7 +99,6 @@ def motor_ripley(url, limite=999999.0, headers=None):
                     if not link_rel: continue
                     link_final = urljoin("https://simple.ripley.com.pe", link_rel).split('?')[0].split('#')[0]
 
-                    # Precios
                     prices = p.get('prices', {}) or {}
                     p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or 0.0)
                     p_r = float(prices.get('listPrice') or prices.get('normalPrice') or p_o)
@@ -101,7 +107,6 @@ def motor_ripley(url, limite=999999.0, headers=None):
                         p_o = float(p.get('price', 0.0))
                         p_r = max(p_r, p_o)
 
-                    # Imagen
                     img_url = p.get('thumbnail') or p.get('fullImage') or ""
                     if not img_url and isinstance(p.get('images'), list) and len(p.get('images')) > 0:
                         img_first = p.get('images')[0]
@@ -182,7 +187,7 @@ def motor_ripley(url, limite=999999.0, headers=None):
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [RIPLEY] ¡Éxito! Se indexaron {len(productos_finales)} ofertas de forma gratuita.", "success")
+        safe_log(f"✅ [RIPLEY] ¡Éxito! Se indexaron {len(productos_finales)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [RIPLEY] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
