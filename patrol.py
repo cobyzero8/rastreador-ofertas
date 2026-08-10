@@ -9,6 +9,52 @@ from notifications import enviar_alerta_telegram
 from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
+# Configuración de horas mínimas entre escaneos para proteger créditos de ScraperAPI
+TIENDAS_CON_ENFRIAMIENTO = {
+    "JBL": 4.0,      # Mínimo 4 horas entre escaneos
+    "ADIDAS": 4.0    # Mínimo 4 horas entre escaneos
+}
+
+def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float = 4.0) -> bool:
+    """
+    Verifica en la tabla 'health_checks' si han transcurrido suficientes horas 
+    desde el último escaneo exitoso/intentado de la tienda.
+    Retorna True si debe escanearse, o False si debe omitirse para cuidar créditos.
+    """
+    tienda_clean = str(tienda).upper().strip()
+    try:
+        res = supabase_client.table("health_checks")\
+            .select("ultimo_escaneo")\
+            .eq("tienda", tienda_clean)\
+            .execute()
+
+        if res.data and len(res.data) > 0:
+            raw_fecha = res.data[0].get("ultimo_escaneo")
+            if raw_fecha:
+                # Convertir timestamp ISO de Supabase a datetime consciente de zona horaria (UTC)
+                str_fecha = str(raw_fecha).replace("Z", "+00:00")
+                ultimo_scan = datetime.fromisoformat(str_fecha)
+                
+                # Si viene sin zona horaria, asignar UTC
+                if ultimo_scan.tzinfo is None:
+                    ultimo_scan = ultimo_scan.replace(tzinfo=timezone.utc)
+                
+                ahora = datetime.now(timezone.utc)
+                horas_pasadas = (ahora - ultimo_scan).total_seconds() / 3600.0
+
+                if horas_pasadas < horas_espera:
+                    safe_log(
+                        f"⏳ [{tienda_clean}] Omitido: Se escaneó hace {horas_pasadas:.1f}h "
+                        f"(esperando mínimo {horas_espera}h para cuidar créditos de ScraperAPI).", 
+                        "info"
+                    )
+                    return False
+    except Exception as e:
+        safe_log(f"⚠️ No se pudo verificar timestamp de enfriamiento para {tienda_clean}: {e}", "warning")
+
+    return True
+
+
 def revisar_ofertas(filtro_categoria="TODOS"):
     """
     Recorre los radares en Supabase y ejecuta las 3 reglas de negocio:
@@ -53,6 +99,12 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         parts = identificador_base.split("-")
         tienda = parts[0] if parts else "GENERAL"
         categoria = parts[1] if len(parts) > 1 else "OTROS"
+
+        # 🟢 CONTROL DE ENFRIAMIENTO (Ahorro de ScraperAPI para JBL y ADIDAS)
+        if tienda in TIENDAS_CON_ENFRIAMIENTO:
+            horas_limite = TIENDAS_CON_ENFRIAMIENTO[tienda]
+            if not tienda_necesita_patrullaje(supabase, tienda, horas_espera=horas_limite):
+                continue  # Salta esta tienda y ahorra la ejecución del scraper
 
         safe_log(f"🔍 Escaneando radar [{tienda}] -> {url} (Límite S/. {precio_max:.2f})", "info")
         
