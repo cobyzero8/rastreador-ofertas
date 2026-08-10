@@ -80,7 +80,6 @@ def limpiar_num_jbl(texto):
     if not texto: return 0.0
     texto = str(texto).replace('S/.', '').replace('S/', '').replace('PEN', '').replace('S', '').strip()
     
-    # Manejar formato de miles con punto (ej. 1.099 -> 1099)
     match_miles = re.search(r'\b(\d{1,3})\.(\d{3})\b', texto)
     if match_miles:
         texto = texto.replace('.', '')
@@ -108,7 +107,7 @@ def motor_jbl(url, limite=999999.0, headers=None):
 
     soup = BeautifulSoup(resp.text, 'html.parser')
 
-    # Limpiar textos ocultos que contaminan el nombre
+    # Eliminar etiquetas con texto accesible que ensucian el nombre
     for oculto in soup.find_all(class_=lambda c: c and any(x in str(c).lower() for x in ['sr-only', 'visually-hidden'])):
         oculto.decompose()
 
@@ -161,13 +160,21 @@ def motor_jbl(url, limite=999999.0, headers=None):
         except Exception: continue
 
     # ==============================================================================
-    # CAPA 2: SCANNER HTML DEDICADO A CONTENEDORES JBL
+    # CAPA 2: SCANNER HTML CONTENEDOR RAIZ (.product-tile)
     # ==============================================================================
     if not productos_map:
-        tarjetas = soup.find_all(['div', 'article'], class_=lambda c: c and any(x in str(c).lower() for x in ['tile-body', 'product-tile', 'grid-tile']))
+        # Priorizar la selección del contenedor principal product-tile
+        tarjetas = soup.find_all(['div', 'article'], class_=lambda c: c and 'product-tile' in str(c).lower())
+        if not tarjetas:
+            tarjetas = soup.find_all(['div', 'article'], class_=lambda c: c and any(x in str(c).lower() for x in ['tile-body', 'grid-tile']))
 
         for card in tarjetas:
             try:
+                # Subir al padre si se capturó únicamente tile-body
+                if card.get('class') and 'tile-body' in card.get('class') and card.parent:
+                    if card.parent.name in ['div', 'article']:
+                        card = card.parent
+
                 # 1. Enlace y Nombre Limpio
                 pdp_link = card.find(class_=lambda c: c and 'pdp-link' in str(c).lower())
                 a_tag = pdp_link.find('a', href=True) if pdp_link else card.find('a', href=True)
@@ -179,24 +186,21 @@ def motor_jbl(url, limite=999999.0, headers=None):
 
                 link_final = urljoin("https://www.jbl.com.pe", href).split('?')[0].split('#')[0]
 
-                # Nombre prioritario desde pdp-link
                 if pdp_link:
                     nombre = pdp_link.get_text(strip=True).upper()
                 else:
                     nombre = a_tag.get_text(strip=True).upper()
 
-                # Limpieza de textos o extensiones de URL agregadas al nombre
                 nombre = re.sub(r'^/.*?\.(HTML|PHP)\s*', '', nombre, flags=re.IGNORECASE)
                 nombre = re.sub(r'\s+', ' ', nombre).strip()
 
                 if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR', 'VER DETALLES']:
                     continue
 
-                # 2. Extracción de Precios desde atributos de JBL (content="799.00")
+                # 2. Extracción de Precios desde atributo content="799.00"
                 p_o = 0.0
                 p_r = 0.0
 
-                # Buscar en etiquetas <span class="value" content="799.00">
                 spans_value = card.find_all('span', class_=lambda c: c and 'value' in str(c).lower())
                 precios_attr = []
                 for sp in spans_value:
@@ -209,7 +213,6 @@ def motor_jbl(url, limite=999999.0, headers=None):
                     p_o = precios_attr[0]
                     p_r = precios_attr[-1] if len(precios_attr) > 1 else p_o
                 else:
-                    # Fallback por texto si no están los atributos
                     texto_tarjeta = card.get_text()
                     precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_tarjeta)
                     precios_numeros = [limpiar_num_jbl(p) for p in precios_encontrados if limpiar_num_jbl(p) > 0]
@@ -220,8 +223,8 @@ def motor_jbl(url, limite=999999.0, headers=None):
 
                 if p_o <= 0: continue
 
-                # 3. Imagen del producto
-                img_el = card.find('img')
+                # 3. Extracción de Imagen desde image-container o etiqueta img.tile-image
+                img_el = card.find('img', class_=lambda c: c and 'tile-image' in str(c).lower()) or card.find('img')
                 img_url = ""
                 if img_el:
                     img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
