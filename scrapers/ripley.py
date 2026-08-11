@@ -44,10 +44,11 @@ def consultar_ripley_con_cascada(url_destino):
         "Referer": "https://simple.ripley.com.pe/"
     }
 
+    # 🟢 Paso 1: Intento directo gratuito
     try:
         safe_log(f"📡 [RIPLEY] Intentando conexión directa gratis...", "info")
         r = session.get(url_destino, headers=headers_directos, timeout=12, verify=False)
-        if r.status_code == 200 and len(r.text) > 2000 and any(x in r.text.lower() for x in ['product-item', '__next_data__']):
+        if r.status_code == 200 and len(r.text) > 2000 and any(x in r.text.lower() for x in ['product-item', 'catalog-product-item', '__next_data__', '__preloaded_state__']):
             safe_log("✅ [RIPLEY] Conexión directa exitosa (0 créditos consumidos).", "success")
             return r
         else:
@@ -55,6 +56,7 @@ def consultar_ripley_con_cascada(url_destino):
     except Exception as ex:
         safe_log(f"⚠️ [RIPLEY] Error en conexión directa: {ex}", "warning")
 
+    # 🛡️ Paso 2: Cascada ScraperAPI
     keys = obtener_keys_ripley()
     if not keys:
         safe_log("🛑 [RIPLEY] No se encontraron claves SCRAPERAPI_RIPLEY_KEY en los secretos.", "error")
@@ -90,9 +92,16 @@ def consultar_ripley_con_cascada(url_destino):
     safe_log("🛑 [RIPLEY] Se agotaron todas las claves de ScraperAPI registradas para Ripley.", "error")
     return None
 
-def limpiar_num_ripley(texto):
-    if not texto: return 0.0
-    texto = str(texto).replace('\xa0', ' ').replace('S/.', '').replace('S/', '').replace('PEN', '').replace('S', '').strip()
+def limpiar_num_ripley(val):
+    """
+    Limpia y convierte cualquier valor (str, int, float) a float numérico seguro.
+    """
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    texto = str(val).replace('\xa0', ' ').replace('&nbsp;', ' ')
+    texto = str(texto).replace('S/.', '').replace('S/', '').replace('PEN', '').replace('S', '').strip()
     match = re.search(r'\d+(?:[.,]\d+)*', texto)
     if match:
         raw = match.group(0)
@@ -102,23 +111,26 @@ def limpiar_num_ripley(texto):
             raw = raw.replace(',', '.')
         else:
             raw = raw.replace(',', '')
-        try: return float(raw)
-        except ValueError: return 0.0
+        try:
+            return float(raw)
+        except ValueError:
+            return 0.0
     return 0.0
 
 def extraer_productos_de_json_recursivo(data):
     """
-    Busca de forma recursiva objetos que tengan estructura de producto en JSON de Next.js
+    Recorre recursivamente los nodos JSON de Next.js para hallar objetos de productos.
     """
     prods = []
     def buscar(obj):
         if isinstance(obj, dict):
-            es_prod = ('name' in obj or 'fullTitle' in obj or 'partNumber' in obj) and \
+            es_prod = ('name' in obj or 'fullTitle' in obj or 'partNumber' in obj or 'shortDescription' in obj) and \
                       ('prices' in obj or 'price' in obj or 'singleProductUrl' in obj or 'url' in obj)
             if es_prod:
                 prods.append(obj)
-            for v in obj.values():
-                buscar(v)
+            else:
+                for v in obj.values():
+                    buscar(v)
         elif isinstance(obj, list):
             for item in obj:
                 buscar(item)
@@ -140,7 +152,7 @@ def motor_ripley(url, limite=999999.0, headers=None):
     soup = BeautifulSoup(texto_html, 'html.parser')
 
     # ==============================================================================
-    # CAPA 1: EXTRACCIÓN VÍA JSON DE NEXT.JS (__NEXT_DATA__) O STATE
+    # CAPA 1: EXTRACCIÓN VÍA JSON DE NEXT.JS (__NEXT_DATA__)
     # ==============================================================================
     script_next = soup.find('script', id='__NEXT_DATA__')
     if script_next and script_next.text:
@@ -151,8 +163,15 @@ def motor_ripley(url, limite=999999.0, headers=None):
             for p in catalog_products:
                 if not isinstance(p, dict): continue
                 
-                nombre = str(p.get('name') or p.get('fullTitle') or p.get('shortDescription') or '').strip().upper()
-                if not nombre or len(nombre) < 3: continue
+                brand = str(p.get('brand') or '').strip().upper()
+                raw_name = str(p.get('name') or p.get('fullTitle') or p.get('shortDescription') or '').strip().upper()
+                
+                if not raw_name or len(raw_name) < 3: continue
+
+                if brand and brand not in raw_name:
+                    nombre = f"{brand} {raw_name}"
+                else:
+                    nombre = raw_name
 
                 link_rel = p.get('url') or p.get('singleProductUrl') or ''
                 if not link_rel and p.get('partNumber'):
@@ -161,17 +180,32 @@ def motor_ripley(url, limite=999999.0, headers=None):
                 if not link_rel: continue
                 link_final = urljoin("https://simple.ripley.com.pe", link_rel).split('?')[0].split('#')[0]
 
-                prices = p.get('prices', {}) or {}
+                # Extracción segura de precios
+                prices = p.get('prices') or p.get('price') or {}
+                p_o = 0.0
+                p_r = 0.0
+
                 if isinstance(prices, dict):
-                    p_o = float(prices.get('offerPrice') or prices.get('cardPrice') or prices.get('salePrice') or 0.0)
-                    p_r = float(prices.get('listPrice') or prices.get('normalPrice') or p_o)
+                    po_candidates = [
+                        prices.get('offerPrice'), prices.get('cardPrice'), prices.get('salePrice'),
+                        prices.get('formattedOfferPrice'), prices.get('formattedCardPrice'), prices.get('price')
+                    ]
+                    pr_candidates = [
+                        prices.get('listPrice'), prices.get('normalPrice'), prices.get('regularPrice'),
+                        prices.get('formattedListPrice')
+                    ]
+                    
+                    po_nums = [limpiar_num_ripley(c) for c in po_candidates if limpiar_num_ripley(c) > 0]
+                    pr_nums = [limpiar_num_ripley(c) for c in pr_candidates if limpiar_num_ripley(c) > 0]
+
+                    if po_nums: p_o = min(po_nums)
+                    if pr_nums: p_r = max(pr_nums)
+                    else: p_r = p_o
                 else:
-                    p_o = float(p.get('price', 0.0))
+                    p_o = limpiar_num_ripley(prices)
                     p_r = p_o
 
-                if p_o <= 0:
-                    p_o = float(p.get('price', 0.0))
-                    p_r = max(p_r, p_o)
+                if p_o <= 0: continue
 
                 img_url = p.get('thumbnail') or p.get('fullImage') or ""
                 if not img_url and isinstance(p.get('images'), list) and len(p.get('images')) > 0:
@@ -190,14 +224,13 @@ def motor_ripley(url, limite=999999.0, headers=None):
                         "img": str(img_url)
                     }
         except Exception as ex_json:
-            safe_log(f"⚠️ [RIPLEY] Error parseando datos de __NEXT_DATA__: {ex_json}", "warning")
+            safe_log(f"⚠️ [RIPLEY] Error leyendo JSON de Next.js: {ex_json}", "warning")
 
     # ==============================================================================
-    # CAPA 2: SCANNER HTML BASADO EN EL DOM DE TU CAPTURA DE PANTALLA
+    # CAPA 2: SCANNER HTML DE CONTENEDORES (CATALOG PRODUCT ITEM)
     # ==============================================================================
     if not productos_map:
-        # Buscar contenedores con clases product-item o catalog-product-item
-        tarjetas = soup.find_all(['div', 'article', 'a'], class_=lambda c: c and any(x in str(c).lower() for x in ['product-item', 'catalog-product-item']))
+        tarjetas = soup.find_all(['div', 'article', 'li', 'a'], class_=lambda c: c and any(x in str(c).lower() for x in ['product-item', 'catalog-product-item', 'catalog-item']))
 
         for card in tarjetas:
             try:
@@ -210,8 +243,12 @@ def motor_ripley(url, limite=999999.0, headers=None):
 
                 link_final = urljoin("https://simple.ripley.com.pe", href).split('?')[0].split('#')[0]
 
-                # 1. Extraer nombre desde product-item-name o atributo title
-                nombre_el = card.find(class_=lambda c: c and 'product-item-name' in str(c).lower()) or \
+                # Marca
+                brand_el = card.find(class_=lambda c: c and any(x in str(c).lower() for x in ['brand', 'product-item--brand']))
+                brand_txt = brand_el.get_text(strip=True).upper() if brand_el else ""
+
+                # Nombre
+                nombre_el = card.find(class_=lambda c: c and any(x in str(c).lower() for x in ['product-item--name', 'product-item-name', 'catalog-product-details__name', 'product-title'])) or \
                             card.find(['p', 'span', 'div'], title=True)
                 
                 if nombre_el:
@@ -219,11 +256,16 @@ def motor_ripley(url, limite=999999.0, headers=None):
                 else:
                     nombre = a_tag.get_text(strip=True).upper()
 
+                if brand_txt and brand_txt not in nombre:
+                    nombre = f"{brand_txt} {nombre}"
+
+                nombre = re.sub(r'S/\.?\s*\d+[\d\.,]*', '', nombre)
                 nombre = re.sub(r'\s+', ' ', nombre).strip()
+
                 if not nombre or len(nombre) < 3 or nombre in ['VER MÁS', 'COMPRAR']: continue
 
-                # 2. Extraer precios desde product-price-wrapper
-                texto_card = card.get_text()
+                # Precios
+                texto_card = card.get_text().replace('\xa0', ' ')
                 precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
                 precios_numeros = [limpiar_num_ripley(p) for p in precios_encontrados if limpiar_num_ripley(p) > 0]
 
@@ -233,11 +275,11 @@ def motor_ripley(url, limite=999999.0, headers=None):
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                # 3. Extraer imagen
+                # Imagen
                 img_el = card.find('img')
                 img_url = ""
                 if img_el:
-                    img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
+                    img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or img_el.get('data-srcset') or ""
 
                 if img_url:
                     if ',' in img_url: img_url = img_url.split(',')[0].split(' ')[0]
