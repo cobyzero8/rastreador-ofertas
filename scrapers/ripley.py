@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import requests
 import urllib3
 from bs4 import BeautifulSoup
@@ -37,7 +38,7 @@ def obtener_keys_ripley():
 def consultar_ripley_con_cascada(url_destino):
     """
     1. Intenta conexión directa gratis.
-    2. Si Ripley rebota con HTTP 403 / Akamai, activa ScraperAPI en cascada con claves dedicadas.
+    2. Si Ripley rebota con HTTP 403 / Akamai, activa ScraperAPI en cascada con ruteo de encabezados y reintentos.
     """
     session = requests.Session()
     headers_directos = {
@@ -47,6 +48,7 @@ def consultar_ripley_con_cascada(url_destino):
         "Referer": "https://simple.ripley.com.pe/"
     }
 
+    # 🟢 Paso 1: Conexión directa gratuita
     try:
         safe_log(f"📡 [RIPLEY] Intentando conexión directa gratis...", "info")
         r = session.get(url_destino, headers=headers_directos, timeout=12, verify=False)
@@ -58,26 +60,38 @@ def consultar_ripley_con_cascada(url_destino):
     except Exception as ex:
         safe_log(f"⚠️ [RIPLEY] Error en conexión directa: {ex}", "warning")
 
+    # 🛡️ Paso 2: Cascada con ScraperAPI optimizado
     keys = obtener_keys_ripley()
     if not keys:
         safe_log("🛑 [RIPLEY] No se encontraron claves SCRAPERAPI_RIPLEY_KEY en los secretos.", "error")
         return None
 
     for idx, key in enumerate(keys, start=1):
-        try:
-            safe_log(f"🛡️ [RIPLEY] Probando ScraperAPI Key Ripley #{idx} ({key[:6]}...)", "info")
-            payload = {'api_key': key, 'url': url_destino, 'render': 'false'}
-            r_sc = session.get('http://api.scraperapi.com', params=payload, timeout=35)
-            
-            if r_sc.status_code == 200 and len(r_sc.text) > 1000:
-                safe_log(f"✅ [RIPLEY] Petición exitosa usando Key Ripley #{idx}.", "success")
-                return r_sc
-            elif r_sc.status_code in [401, 403, 429]:
-                safe_log(f"⚠️ [RIPLEY] Key #{idx} sin créditos o bloqueada (HTTP {r_sc.status_code}). Saltando...", "warning")
-            else:
-                safe_log(f"⚠️ [RIPLEY] Key #{idx} devolvió HTTP {r_sc.status_code}", "warning")
-        except Exception as e:
-            safe_log(f"⚠️ [RIPLEY] Error con Key #{idx}: {e}", "warning")
+        for intento in range(1, 3):
+            try:
+                safe_log(f"🛡️ [RIPLEY] Probando ScraperAPI Key Ripley #{idx} (Intento {intento})...", "info")
+                payload = {
+                    'api_key': key, 
+                    'url': url_destino, 
+                    'country_code': 'us',
+                    'keep_headers': 'true'
+                }
+                r_sc = session.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=35)
+                
+                if r_sc.status_code == 200 and len(r_sc.text) > 1000:
+                    safe_log(f"✅ [RIPLEY] Petición exitosa usando Key Ripley #{idx}.", "success")
+                    return r_sc
+                elif r_sc.status_code in [500, 502, 504]:
+                    safe_log(f"⚠️ [RIPLEY] ScraperAPI devolvió HTTP {r_sc.status_code} (bloqueo proxy temporal). Reintentando...", "warning")
+                    time.sleep(2)
+                elif r_sc.status_code in [401, 403, 429]:
+                    safe_log(f"⚠️ [RIPLEY] Key #{idx} sin créditos o restringida (HTTP {r_sc.status_code}). Saltando a siguiente Key...", "warning")
+                    break
+                else:
+                    safe_log(f"⚠️ [RIPLEY] Key #{idx} devolvió HTTP {r_sc.status_code}", "warning")
+            except Exception as e:
+                safe_log(f"⚠️ [RIPLEY] Error con Key #{idx}: {e}", "warning")
+                time.sleep(1.5)
 
     safe_log("🛑 [RIPLEY] Se agotaron todas las claves de ScraperAPI registradas para Ripley.", "error")
     return None
