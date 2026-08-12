@@ -1,11 +1,14 @@
 import re
-import requests
-import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from utils import sanitizar_url, safe_log
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+try:
+    from curl_cffi import requests as curl_requests
+    CURL_DISPONIBLE = True
+except ImportError:
+    import requests as curl_requests
+    CURL_DISPONIBLE = False
 
 def limpiar_num_platanitos(texto):
     if not texto: return 0.0
@@ -27,23 +30,36 @@ def limpiar_num_platanitos(texto):
 def motor_platanitos(url, limite=999999.0, headers=None):
     """
     Motor extractor de productos para Platanitos Perú (platanitos.com)
+    Utiliza impersonación TLS de Chrome para evadir el HTTP 403 de Cloudflare.
     """
     productos_map = {}
     url_base = sanitizar_url(url)
 
     headers_base = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://platanitos.com/"
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "accept-language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
+        "cache-control": "max-age=0",
+        "referer": "https://platanitos.com/",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1"
     }
-    if headers:
-        headers_base.update(headers)
 
     try:
-        safe_log(f"📡 [PLATANITOS] Consultando catálogo...", "info")
-        session = requests.Session()
-        resp = session.get(url_base, headers=headers_base, timeout=15, verify=False)
+        safe_log(f"📡 [PLATANITOS] Consultando catálogo con imitación TLS...", "info")
+        
+        if CURL_DISPONIBLE:
+            session = curl_requests.Session(impersonate="chrome120")
+            resp = session.get(url_base, headers=headers_base, timeout=20)
+        else:
+            safe_log("⚠️ 'curl_cffi' no está disponible, intentando con requests directo...", "warning")
+            import requests
+            resp = requests.get(url_base, headers=headers_base, timeout=15)
 
         if resp.status_code != 200:
             safe_log(f"🛑 [PLATANITOS] El servidor devolvió HTTP {resp.status_code}", "error")
@@ -51,7 +67,7 @@ def motor_platanitos(url, limite=999999.0, headers=None):
 
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # Buscar enlaces a /pe/producto/
+        # Buscar contenedores o enlaces a /pe/producto/
         enlaces_prod = soup.find_all('a', href=lambda h: h and '/pe/producto/' in str(h).lower())
 
         for a_tag in enlaces_prod:
@@ -116,7 +132,7 @@ def motor_platanitos(url, limite=999999.0, headers=None):
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [PLATANITOS] ¡Éxito! Se indexaron {len(productos_finales)} ofertas.", "success")
+        safe_log(f"✅ [PLATANITOS] ¡Éxito! Se indexaron {len(productos_finales)} ofertas de forma gratuita.", "success")
     else:
         safe_log(f"⚠️ [PLATANITOS] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
