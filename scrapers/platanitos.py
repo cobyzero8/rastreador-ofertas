@@ -23,8 +23,7 @@ def obtener_keys_platanitos():
     """
     keys = []
     nombres_keys = [
-        "SCRAPERAPI_PLATANITOS_KEY", "SCRAPERAPI_KEY", 
-        "SCRAPERAPI_RIPLEY_KEY", "SCRAPERAPI_RIPLEY_KEY_2"
+        "SCRAPERAPI_PLATANITOS_KEY"
     ]
 
     try:
@@ -99,7 +98,8 @@ def consultar_platanitos_con_cascada(url_destino):
                     'api_key': key,
                     'url': url_destino,
                     'country_code': 'us',
-                    'keep_headers': 'true'
+                    'keep_headers': 'true',
+                    'render': 'false'  # 👈 Mantiene el costo en solo 1 crédito por llamada
                 }
                 r_sc = session_std.get('http://api.scraperapi.com', params=payload, headers=headers_base, timeout=35)
 
