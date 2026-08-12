@@ -2,7 +2,8 @@ import re
 import random
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from utils import sanitizar_url, safe_log, LISTA_USER_AGENTS
+from utils import sanitizar_url, safe_log
+from config import LISTA_USER_AGENTS
 
 try:
     from curl_cffi import requests as curl_requests
@@ -30,14 +31,17 @@ def limpiar_precio_pnp(texto):
 
 def motor_platanitos(url, limite=999999.0, headers=None):
     """
-    Motor Platanitos con tu lógica flexible de tarjetas/precios 
+    Motor Platanitos con parseo flexible de tarjetas/precios 
     + Conexión protegida contra HTTP 403.
     """
     productos = []
     url_base = sanitizar_url(url)
 
+    # Selección segura de User-Agent desde config
+    user_agent = random.choice(LISTA_USER_AGENTS) if ('LISTA_USER_AGENTS' in globals() and LISTA_USER_AGENTS) else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
     headers_base = {
-        "User-Agent": random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "User-Agent": user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
         "Referer": "https://platanitos.com/pe"
@@ -65,7 +69,7 @@ def motor_platanitos(url, limite=999999.0, headers=None):
             safe_log("⚠️ [PLATANITOS] Respuesta vacía o rebotada por servidor.", "warning")
             return []
 
-        # 🎯 Tu Lógica de Parseo Original (Rápida y Efectiva)
+        # 🎯 Parseo flexible de HTML
         soup = BeautifulSoup(texto_html, 'html.parser')
         tarjetas = soup.find_all(['div', 'article', 'a'], class_=re.compile(r'(product|card|item|col|grid)', re.I))
 
