@@ -29,20 +29,20 @@ def limpiar_num_platanitos(texto):
 
 def motor_platanitos(url, limite=999999.0, headers=None):
     """
-    Motor extractor de productos para Platanitos Perú (platanitos.com)
-    Utiliza impersonación TLS de Chrome para evadir el HTTP 403 de Cloudflare.
+    Motor extractor para Platanitos Perú (platanitos.com)
+    Utiliza sesión de calentamiento de cookies previa con curl_cffi para evadir el HTTP 403.
     """
     productos_map = {}
     url_base = sanitizar_url(url)
 
+    if not CURL_DISPONIBLE:
+        safe_log("🛑 [PLATANITOS] 'curl_cffi' no está instalado en requirements.txt", "error")
+        return []
+
     headers_base = {
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "accept-language": "es-PE,es-419;q=0.9,es;q=0.8,en;q=0.7",
-        "cache-control": "max-age=0",
-        "referer": "https://platanitos.com/",
-        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
+        "referer": "https://platanitos.com/pe",
         "sec-fetch-dest": "document",
         "sec-fetch-mode": "navigate",
         "sec-fetch-site": "same-origin",
@@ -51,15 +51,17 @@ def motor_platanitos(url, limite=999999.0, headers=None):
     }
 
     try:
-        safe_log(f"📡 [PLATANITOS] Consultando catálogo con imitación TLS...", "info")
-        
-        if CURL_DISPONIBLE:
-            session = curl_requests.Session(impersonate="chrome120")
-            resp = session.get(url_base, headers=headers_base, timeout=20)
-        else:
-            safe_log("⚠️ 'curl_cffi' no está disponible, intentando con requests directo...", "warning")
-            import requests
-            resp = requests.get(url_base, headers=headers_base, timeout=15)
+        safe_log(f"📡 [PLATANITOS] Iniciando sesión TLS y generando cookies de navegación...", "info")
+        session = curl_requests.Session(impersonate="chrome120")
+
+        # 1. Paso de Calentamiento: Visitar la portada para obtener cookies válidas
+        try:
+            session.get("https://platanitos.com/pe", headers=headers_base, timeout=12)
+        except Exception:
+            pass
+
+        # 2. Consultar el catálogo con la sesión autenticada
+        resp = session.get(url_base, headers=headers_base, timeout=20)
 
         if resp.status_code != 200:
             safe_log(f"🛑 [PLATANITOS] El servidor devolvió HTTP {resp.status_code}", "error")
@@ -67,8 +69,8 @@ def motor_platanitos(url, limite=999999.0, headers=None):
 
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # Buscar contenedores o enlaces a /pe/producto/
-        enlaces_prod = soup.find_all('a', href=lambda h: h and '/pe/producto/' in str(h).lower())
+        # Buscar contenedores o enlaces a productos
+        enlaces_prod = soup.find_all('a', href=lambda h: h and ('/pe/producto/' in str(h).lower() or '/producto/' in str(h).lower()))
 
         for a_tag in enlaces_prod:
             try:
@@ -128,7 +130,7 @@ def motor_platanitos(url, limite=999999.0, headers=None):
                 continue
 
     except Exception as e:
-        safe_log(f"🚨 [PLATANITOS] Error en petición: {e}", "error")
+        safe_log(f"🚨 [PLATANITOS] Error en conexión: {e}", "error")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
