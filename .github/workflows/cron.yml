@@ -2,7 +2,7 @@ name: Patrullero de Ofertas Coby 24/7
 
 on:
   schedule:
-    - cron: '*/45 * * * *'
+    - cron: '0 */2 * * *'
   push:
     branches: [ "main" ]
   workflow_dispatch:
