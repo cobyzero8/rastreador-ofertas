@@ -25,9 +25,12 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
         safe_log("⚠️ Credenciales de Telegram faltantes.", "warning")
         return False
 
+    # Sanitizar el nombre para evitar que caracteres < o > rompan el parseo HTML de Telegram
+    nombre_clean = str(nombre).replace("<", "&lt;").replace(">", "&gt;")
+
     # 🎯 ENCABEZADOS Y TEXTO SEGÚN EL TIPO DE EVENTO
     if tipo_alerta == "BAJA_PRECIO":
-        header = "📉 <b>¡LE PRODUCTO BAJO DE PRECIO APROVECHA <COBY>!</b> 📉"
+        header = "📉 <b>¡EL PRODUCTO BAJÓ DE PRECIO APROVECHA COBY!</b> 📉"
         label_precio = "💰 <b>Nuevo Precio Menor:</b>"
     else:
         header = "🆕 <b>¡NUEVO ARTÍCULO ENCONTRADO!</b> 🆕"
@@ -35,7 +38,7 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
 
     mensaje = (
         f"{header}\n\n"
-        f"📦 <b>Producto:</b> {nombre}\n"
+        f"📦 <b>Producto:</b> {nombre_clean}\n"
         f"🏪 <b>Tienda:</b> {tienda}\n"
         f"{label_precio} S/. {precio_oferta:.2f}\n"
     )
@@ -65,7 +68,11 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
             }
 
         resp = requests.post(url_api, json=payload, timeout=12)
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            return True
+        else:
+            safe_log(f"🚨 Telegram rechazó el mensaje (HTTP {resp.status_code}): {resp.text}", "error")
+            return False
 
     except Exception as e:
         safe_log(f"🚨 Error enviando a Telegram: {e}", "error")
