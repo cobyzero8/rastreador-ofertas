@@ -705,7 +705,7 @@ elif menu == "🔍 Diagnóstico de Bajas de Precio":
     with col1:
         precio_limite = st.number_input("Precio límite (S/.):", value=999999.0, step=100.0)
     with col2:
-        tienda_nombre = st.text_input("Nombre de la tienda (ej. JBL, ADIDAS, FALABELLA):", value="JBL").strip().upper()
+        tienda_nombre = st.text_input("Nombre de la tienda (ej. JBL, ADIDAS, PLATANITOS):", value="JBL").strip().upper()
 
     if st.button("🚀 Diagnosticar URL y Comparar con Supabase", type="primary"):
         if not url_test:
@@ -728,7 +728,7 @@ elif menu == "🔍 Diagnóstico de Bajas de Precio":
                 prods = escanear_tienda(url_test, tienda_nombre, precio_limite)
                 
                 if not prods:
-                    st.error("No se extrajo ningún producto de la URL. Revisa la consola/log.")
+                    st.error("No se extrajo ningún producto de la URL. Revisa la consola/log o el scraper de la tienda.")
                 else:
                     st.success(f"Se extrajeron {len(prods)} productos de la web.")
                     
