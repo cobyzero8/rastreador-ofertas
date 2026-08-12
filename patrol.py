@@ -13,7 +13,6 @@ from utils import safe_log, es_error_de_precio, safe_float
 TIENDAS_CON_ENFRIAMIENTO = {
     "JBL": 4.0,      # Mínimo 4 horas de espera
     "ADIDAS": 4.0    # Mínimo 4 horas de espera
-    
 }
 
 def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float = 4.0) -> bool:
@@ -72,7 +71,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
     # =========================================================================
     # 🟢 EVALUACIÓN PREVIA DE ENFRIAMIENTO (A Nivel de Lote/Batch)
-    # Evalúa al inicio qué tiendas están habilitadas para esta corrida completa.
     # =========================================================================
     tiendas_permitidas = {}
     for t_nombre, t_horas in TIENDAS_CON_ENFRIAMIENTO.items():
@@ -98,9 +96,9 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         tienda = parts[0] if parts else "GENERAL"
         categoria = parts[1] if len(parts) > 1 else "OTROS"
 
-        # 🟢 Verificar si la tienda completa fue omitida por enfriamiento en este lote
+        # Verificar enfriamiento
         if tienda in tiendas_permitidas and not tiendas_permitidas[tienda]:
-            continue  # Salta la URL sin gastar créditos
+            continue
 
         safe_log(f"🔍 Escaneando radar [{tienda}] -> {url} (Límite S/. {precio_max:.2f})", "info")
         
@@ -147,6 +145,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     .execute()
 
                 if not res_existente.data:
+                    # REGLA 1: PRODUCTO NUEVO
                     datos_insert = {
                         "identificador": f"{tienda}-{categoria}",
                         "nombre_producto": nombre_real,
@@ -180,20 +179,13 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             safe_log(f"⚠️ Guardado en BD pero Telegram limitó la entrega: {nombre_real}", "warning")
 
                 else:
+                    # PRODUCTO EXISTENTE
                     reg_guardado = res_existente.data[0]
                     precio_guardado = safe_float(reg_guardado.get("precio"))
                     id_bd = reg_guardado.get("id")
 
                     if precio_oferta < precio_guardado:
-                        datos_update = {
-                            "nombre_producto": nombre_real,
-                            "precio": precio_oferta,
-                            "precio_regular": max(precio_regular, precio_guardado),
-                            "imagen_producto": imagen if imagen else reg_guardado.get("imagen_producto", ""),
-                            "fecha": fecha_actual
-                        }
-                        supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
-
+                        # REGLA 2: BAJA DE PRECIO
                         exito_telegram = enviar_alerta_telegram(
                             tienda=tienda,
                             nombre=nombre_real,
@@ -204,16 +196,25 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             tipo_alerta="BAJA_PRECIO"
                         )
                         
+                        datos_update = {
+                            "nombre_producto": nombre_real,
+                            "precio": precio_oferta,
+                            "precio_regular": max(precio_regular, precio_guardado),
+                            "imagen_producto": imagen if imagen else reg_guardado.get("imagen_producto", ""),
+                            "fecha": fecha_actual
+                        }
+                        supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                         total_productos_procesados += 1
                         
                         if exito_telegram:
                             total_ofertas_notificadas += 1
-                            safe_log(f"📉 Baja de precio: {nombre_real}", "success")
+                            safe_log(f"📉 Baja de precio (S/. {precio_guardado:.2f} ➔ S/. {precio_oferta:.2f}): {nombre_real}", "success")
                             time.sleep(1.5)
                         else:
-                            safe_log(f"⚠️ Actualizado en BD pero Telegram limitó la entrega: {nombre_real}", "warning")
+                            safe_log(f"⚠️ Actualizado en BD pero Telegram no entregó el mensaje: {nombre_real}", "warning")
 
                     else:
+                        # REGLA 3: PRECIO IGUAL O MAYOR
                         datos_update = {"fecha": fecha_actual}
                         if not reg_guardado.get("nombre_producto"):
                             datos_update["nombre_producto"] = nombre_real
