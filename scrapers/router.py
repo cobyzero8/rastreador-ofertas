@@ -51,7 +51,7 @@ def escanear_tienda(url: str, tienda: str = "GENERAL", precio_max: float = 99999
             return motor_plazavea(url, precio_max)
         elif "coolbox.pe" in domain or tienda_upper == "COOLBOX":
             return motor_coolbox(url, precio_max)
-        elif "platanitos.com" in domain or tienda_upper == "PLATANITOS":
+        elif "platanitos.com" in domain or "PLATANITOS" in tienda_upper:
             return motor_platanitos(url, precio_max)
         elif "adidas.pe" in domain or tienda_upper == "ADIDAS":
             return motor_adidas(url, precio_max)
