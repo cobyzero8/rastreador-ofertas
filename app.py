@@ -60,7 +60,8 @@ menu = st.sidebar.radio("Sección:", [
     "🛠️ Configurar Radares y URLs", 
     "💥 Forzar Escaneo Intensivo",
     "📊 Métricas visuales de Health Check (Gráficos)",
-    "🧪 Validador de Radares (\"Probar URL\")"
+    "🧪 Validador de Radares (\"Probar URL\")",
+    "🔍 Diagnóstico de Bajas de Precio"
 ])
 
 if "mod_id" not in st.session_state: st.session_state.mod_id = None
@@ -564,16 +565,12 @@ elif menu == "💥 Forzar Escaneo Intensivo":
 # ---------------------------
 # Métricas Visuales de Health Check (Gráficos)
 # ---------------------------
-# ---------------------------
-# Métricas Visuales de Health Check (Gráficos)
-# ---------------------------
 elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
     st.title("📊 Monitor Visual de Salud de Scrapers")
     st.caption("Estado actual, historial de fallos y rendimiento de extracción por tienda.")
     st.write("---")
 
     try:
-        # Consulta con todos los campos reales de health_checks
         res = supabase.table("health_checks")\
             .select("tienda, estado, fallos_consecutivos, ultimo_escaneo, ultimos_productos_count, ultimo_error")\
             .order("fallos_consecutivos", desc=True)\
@@ -586,7 +583,6 @@ elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
         else:
             df_salud = pd.DataFrame(data)
 
-            # Métricas KPi Principales
             total_tiendas = len(df_salud)
             operativas = len(df_salud[df_salud["estado"].str.upper() == "OPERATIVO"])
             caidas = len(df_salud[df_salud["estado"].str.upper() == "CAIDO"])
@@ -600,7 +596,6 @@ elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
 
             st.divider()
 
-            # Gráficos Visuales Lado a Lado
             col_g1, col_g2 = st.columns(2)
 
             with col_g1:
@@ -614,7 +609,6 @@ elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
             st.divider()
             st.markdown("#### 📋 Detalle Completo de Diagnóstico")
 
-            # Formato estético del estado
             def dar_formato_estado(est):
                 e = str(est).upper() if est else "DESCONOCIDO"
                 if "OPERATIVO" in e:
@@ -628,7 +622,6 @@ elif menu == "📊 Métricas visuales de Health Check (Gráficos)":
             df_salud["Estado"] = df_salud["estado"].apply(dar_formato_estado)
             df_salud["ultimo_error"] = df_salud["ultimo_error"].fillna("Sin errores registrados")
 
-            # Renombrar columnas para la interfaz
             df_mostrar = df_salud.rename(columns={
                 "tienda": "Tienda",
                 "fallos_consecutivos": "Fallos Consecutivos",
@@ -695,3 +688,129 @@ elif menu == "🧪 Validador de Radares (\"Probar URL\")":
                         st.error("❌ El scraper finalizó pero no devolvió ningún producto válido. Revisa si la URL o el precio máximo son correctos.")
                 except Exception as e:
                     st.error(f"🚨 Error ejecutando el scraper de prueba: {e}")
+
+# ---------------------------
+# Diagnóstico de Bajas de Precio
+# ---------------------------
+elif menu == "🔍 Diagnóstico de Bajas de Precio":
+    st.title("🔍 Diagnóstico y Probador de Bajas de Precio")
+    st.markdown(
+        "Ingresa la URL de una tienda que ya funciona para analizar sus productos en vivo, "
+        "compararlos contra Supabase y **probar la notificación de baja de precio en Telegram**."
+    )
+
+    url_test = st.text_input("Ingresa la URL a diagnosticar:", placeholder="https://www.jbl.com.pe/audio-para-hogar")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        precio_limite = st.number_input("Precio límite (S/.):", value=999999.0, step=100.0)
+    with col2:
+        tienda_nombre = st.text_input("Nombre de la tienda (ej. JBL, ADIDAS, FALABELLA):", value="JBL").strip().upper()
+
+    if st.button("🚀 Diagnosticar URL y Comparar con Supabase", type="primary"):
+        if not url_test:
+            st.error("Por favor ingresa una URL válida.")
+        else:
+            with st.spinner("Analizando productos y consultando la base de datos..."):
+                from patrol import TIENDAS_CON_ENFRIAMIENTO, tienda_necesita_patrullaje
+                from utils import safe_float
+
+                # 1. Verificar Enfriamiento
+                if tienda_nombre in TIENDAS_CON_ENFRIAMIENTO:
+                    horas = TIENDAS_CON_ENFRIAMIENTO[tienda_nombre]
+                    puede = tienda_necesita_patrullaje(supabase, tienda_nombre, horas_espera=horas)
+                    if not puede:
+                        st.warning(f"⏳ **Atención:** La tienda **{tienda_nombre}** está en modo Enfriamiento (espera de {horas}h). El patrullaje automático omitirá esta tienda para no gastar créditos.")
+                    else:
+                        st.success(f"✅ La tienda **{tienda_nombre}** está libre y lista para patrullar.")
+
+                # 2. Escanear productos de la URL
+                prods = escanear_tienda(url_test, tienda_nombre, precio_limite)
+                
+                if not prods:
+                    st.error("No se extrajo ningún producto de la URL. Revisa la consola/log.")
+                else:
+                    st.success(f"Se extrajeron {len(prods)} productos de la web.")
+                    
+                    resultados = []
+
+                    for p in prods:
+                        link_raw = str(p.get("link", url_test)).strip()
+                        link_clean = link_raw.split('?')[0].split('#')[0].rstrip('/')
+                        precio_web = safe_float(p.get("precio"))
+                        nombre = p.get("nombre", "Sin nombre")
+                        img = p.get("img", "")
+
+                        # Consultar Supabase
+                        res_bd = supabase.table("historial_precios")\
+                            .select("id, precio, fecha")\
+                            .eq("link_producto", link_clean)\
+                            .limit(1)\
+                            .execute()
+
+                        if not res_bd.data:
+                            estado = "🆕 NUEVO (No existe en BD)"
+                            precio_bd_txt = "No registrado"
+                            precio_bd_num = None
+                        else:
+                            reg = res_bd.data[0]
+                            precio_bd_num = safe_float(reg.get("precio"))
+                            precio_bd_txt = f"S/. {precio_bd_num:.2f}"
+                            
+                            if precio_web < precio_bd_num:
+                                estado = "📉 BAJÓ DE PRECIO (Disparará Alerta)"
+                            elif precio_web > precio_bd_num:
+                                estado = "📈 SUBIÓ DE PRECIO (Silencioso)"
+                            else:
+                                estado = "🕒 PRECIO IGUAL (Silencioso)"
+
+                        resultados.append({
+                            "Producto": nombre,
+                            "Precio Web": f"S/. {precio_web:.2f}",
+                            "Precio BD": precio_bd_txt,
+                            "Estado Detectado": estado,
+                            "Link Clean": link_clean,
+                            "Imagen": img,
+                            "Precio Web Raw": precio_web,
+                            "Precio BD Raw": precio_bd_num
+                        })
+
+                    st.subheader("📊 Comparativa en Tiempo Real (Web vs Supabase)")
+                    st.dataframe(resultados)
+
+                    st.session_state["diag_resultados"] = resultados
+                    st.session_state["diag_tienda"] = tienda_nombre
+
+    # 3. Módulo para forzar el envío de una alerta de baja de precio a Telegram
+    if "diag_resultados" in st.session_state and st.session_state["diag_resultados"]:
+        st.divider()
+        st.subheader("🧪 Probador de Alerta 'BAJA DE PRECIO' en Telegram")
+        st.markdown("Selecciona uno de los productos analizados arriba para simular una oferta y enviar la alerta a Telegram:")
+
+        opciones_prods = [f"{r['Producto']} ({r['Precio Web']})" for r in st.session_state["diag_resultados"]]
+        prod_idx = st.selectbox("Selecciona producto a probar:", range(len(opciones_prods)), format_func=lambda x: opciones_prods[x])
+        
+        prod_sel = st.session_state["diag_resultados"][prod_idx]
+        tienda_sel = st.session_state["diag_tienda"]
+
+        precio_anterior_simulado = st.number_input("Simular precio regular/anterior (S/.):", value=prod_sel["Precio Web Raw"] + 250.0, step=50.0)
+
+        if st.button("📲 Probar Alerta 'BAJA DE PRECIO' en Telegram AHORA", type="primary"):
+            from notifications import enviar_alerta_telegram
+            
+            with st.spinner("Enviando mensaje de prueba a Telegram..."):
+                exito = enviar_alerta_telegram(
+                    tienda=tienda_sel,
+                    nombre=prod_sel["Producto"],
+                    precio_oferta=prod_sel["Precio Web Raw"],
+                    precio_regular=precio_anterior_simulado,
+                    link=prod_sel["Link Clean"],
+                    imagen=prod_sel["Imagen"],
+                    tipo_alerta="BAJA_PRECIO"
+                )
+
+                if exito:
+                    st.balloons()
+                    st.success("✅ ¡Excelente! La alerta de 'BAJA DE PRECIO' fue enviada correctamente a tu Telegram.")
+                else:
+                    st.error("❌ Falló el envío a Telegram. Revisa las credenciales `TELEGRAM_TOKEN` y `TELEGRAM_CHAT_ID`.")
