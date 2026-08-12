@@ -12,7 +12,8 @@ from utils import safe_log, es_error_de_precio, safe_float
 # Configuración de horas mínimas entre escaneos por tienda
 TIENDAS_CON_ENFRIAMIENTO = {
     "JBL": 4.0,      # Mínimo 4 horas de espera
-    "ADIDAS": 4.0    # Mínimo 4 horas de espera
+    "ADIDAS": 4.0,    # Mínimo 4 horas de espera
+    "PLATANITOS": 12.0
 }
 
 def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float = 4.0) -> bool:
