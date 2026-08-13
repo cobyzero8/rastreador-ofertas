@@ -39,7 +39,7 @@ def consultar_natura_con_cascada(url_destino):
     try:
         safe_log(f"📡 [NATURA] Intentando conexión directa...", "info")
         resp = requests.get(url_destino, headers=headers_directos, timeout=12, verify=False)
-        if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['natura', 'product', 'vtex', 'ld+json', '__next_data__']):
+        if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['product-price-por', '/p/', 'natura']):
             safe_log("✅ [NATURA] Conexión directa exitosa (0 créditos consumidos).", "success")
             return resp
         else:
@@ -91,7 +91,8 @@ def limpiar_precio_natura(texto):
 
 def motor_natura(url, limite=999999.0, headers=None):
     """
-    Motor extractor de productos para Natura Perú (natura.com.pe) - VTEX IO Compatible
+    Motor extractor de productos para Natura Perú (natura.com.pe)
+    Ajustado al DOM real (product-price-por, product-price-de, /p/).
     """
     productos_map = {}
     url_base = sanitizar_url(url)
@@ -102,93 +103,48 @@ def motor_natura(url, limite=999999.0, headers=None):
 
     soup = BeautifulSoup(resp.text, 'html.parser')
 
-    # ==============================================================================
-    # CAPA 1: PARSEO VÍA ESTRUCTURA JSON-LD (VTEX ItemList)
-    # ==============================================================================
-    scripts_ld = soup.find_all('script', type='application/ld+json')
-    for script in scripts_ld:
-        if not script.text: continue
+    # Buscar enlaces a producto que contienen /p/
+    enlaces_p = soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
+
+    for a_tag in enlaces_p:
         try:
-            data_ld = json.loads(script.text)
-            items_list = []
-            
-            if isinstance(data_ld, dict):
-                if data_ld.get('@type') == 'ItemList':
-                    items_list = data_ld.get('itemListElement', [])
-                elif 'itemListElement' in data_ld:
-                    items_list = data_ld.get('itemListElement', [])
-            elif isinstance(data_ld, list):
-                items_list = data_ld
+            href = a_tag['href'].strip()
+            if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']):
+                continue
 
-            for elem in items_list:
-                item = elem.get('item', {}) if isinstance(elem, dict) else elem
-                if not isinstance(item, dict): continue
+            link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
 
-                nombre = str(item.get('name') or item.get('productName') or '').strip().upper()
-                if not nombre or len(nombre) < 3: continue
+            # Contenedor padre de la tarjeta
+            card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
 
-                link_rel = item.get('url') or item.get('@id') or ''
-                if not link_rel: continue
-                link_final = urljoin("https://www.natura.com.pe", link_rel).split('?')[0].split('#')[0]
+            # 1. Nombre del producto (prioridad: atributo alt de la imagen o texto del título)
+            img_el = card.find('img')
+            nombre = ""
+            if img_el and img_el.get('alt'):
+                nombre = img_el['alt'].strip().upper()
 
-                offers = item.get('offers', {})
-                p_o = 0.0
-                p_r = 0.0
-
-                if isinstance(offers, dict):
-                    p_o = float(offers.get('price') or offers.get('lowPrice') or 0.0)
-                    p_r = float(offers.get('highPrice') or p_o)
-                elif isinstance(offers, list) and len(offers) > 0:
-                    p_o = float(offers[0].get('price', 0.0))
-                    p_r = p_o
-
-                img_url = item.get('image') or ""
-                if isinstance(img_url, list) and len(img_url) > 0: img_url = img_url[0]
-                if isinstance(img_url, dict): img_url = img_url.get('url', '')
-
-                if img_url and not img_url.startswith('http'):
-                    img_url = urljoin("https:", img_url) if img_url.startswith('//') else urljoin("https://www.natura.com.pe", img_url)
-
-                if 0 < p_o <= limite:
-                    productos_map[link_final] = {
-                        "nombre": f"NATURA - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": str(img_url)
-                    }
-        except Exception:
-            continue
-
-    # ==============================================================================
-    # CAPA 2: ESCÁNER VTEX IO DE ENLACES TERMINADOS EN /p
-    # ==============================================================================
-    if not productos_map:
-        enlaces_p = soup.find_all('a', href=lambda h: h and ('/p' in str(h).lower() or '/producto' in str(h).lower()))
-
-        for a_tag in enlaces_p:
-            try:
-                href = a_tag['href'].strip()
-                if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']):
-                    continue
-
-                link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
-                card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
-
-                # Extraer nombre
+            if not nombre or len(nombre) < 3:
                 nombre_el = card.find(['h2', 'h3', 'h4', 'span', 'p'], class_=re.compile(r'(title|name|nombre|product)', re.I))
                 if nombre_el:
                     nombre = nombre_el.get_text(strip=True).upper()
                 else:
                     nombre = a_tag.get_text(strip=True).upper()
 
-                nombre = re.sub(r'S/\.?\s*\d+[\d\.,]*', '', nombre)
-                nombre = re.sub(r'\s+', ' ', nombre).strip()
+            nombre = re.sub(r'S/\.?\s*\d+[\d\.,]*', '', nombre)
+            nombre = re.sub(r'\s+', ' ', nombre).strip()
 
-                if not nombre or len(nombre) < 3 or nombre in ['COMPRAR', 'VER MÁS', 'AGREGAR']:
-                    continue
+            if not nombre or len(nombre) < 3 or nombre in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
+                continue
 
-                # Extraer precios
+            # 2. Extracción de Precios directa usando los IDs del DOM de Natura
+            el_por = card.find(id=lambda i: i and 'product-price-por' in str(i).lower())
+            el_de = card.find(id=lambda i: i and 'product-price-de' in str(i).lower())
+
+            p_o = limpiar_precio_natura(el_por.get_text()) if el_por else 0.0
+            p_r = limpiar_precio_natura(el_de.get_text()) if el_de else p_o
+
+            # Fallback en caso los IDs cambien
+            if p_o <= 0:
                 texto_card = card.get_text(separator=' ', strip=True)
                 precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
                 precios_numeros = [limpiar_precio_natura(p) for p in precios_encontrados if limpiar_precio_natura(p) > 0]
@@ -199,29 +155,28 @@ def motor_natura(url, limite=999999.0, headers=None):
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                # Extraer imagen
-                img_el = card.find('img')
-                img_url = ""
-                if img_el:
-                    img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
+            # 3. Imagen del producto
+            img_url = ""
+            if img_el:
+                img_url = img_el.get('src') or img_el.get('data-src') or img_el.get('srcset') or ""
 
-                if img_url:
-                    if ',' in img_url: img_url = img_url.split(',')[0].split(' ')[0]
-                    if img_url.startswith('//'): img_url = 'https:' + img_url
-                    elif not img_url.startswith('http'): img_url = urljoin("https://www.natura.com.pe", img_url)
+            if img_url:
+                if ',' in img_url: img_url = img_url.split(',')[0].split(' ')[0]
+                if img_url.startswith('//'): img_url = 'https:' + img_url
+                elif not img_url.startswith('http'): img_url = urljoin("https://www.natura.com.pe", img_url)
 
-                if 'data:image' in img_url.lower(): img_url = ""
+            if 'data:image' in img_url.lower(): img_url = ""
 
-                if 0 < p_o <= limite:
-                    productos_map[link_final] = {
-                        "nombre": f"NATURA - {nombre}",
-                        "precio": p_o,
-                        "precio_regular": max(p_r, p_o),
-                        "link": link_final,
-                        "img": img_url
-                    }
-            except Exception:
-                continue
+            if 0 < p_o <= limite:
+                productos_map[link_final] = {
+                    "nombre": f"NATURA - {nombre}",
+                    "precio": p_o,
+                    "precio_regular": max(p_r, p_o),
+                    "link": link_final,
+                    "img": img_url
+                }
+        except Exception:
+            continue
 
     productos_finales = list(productos_map.values())
     if productos_finales:
