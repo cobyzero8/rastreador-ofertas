@@ -39,7 +39,7 @@ def consultar_natura_con_cascada(url_destino):
     try:
         safe_log(f"📡 [NATURA] Intentando conexión directa...", "info")
         resp = requests.get(url_destino, headers=headers_directos, timeout=12, verify=False)
-        if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['natura', 'product', '__next_data__']):
+        if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['natura', 'product', 'vtex', 'ld+json', '__next_data__']):
             safe_log("✅ [NATURA] Conexión directa exitosa (0 créditos consumidos).", "success")
             return resp
         else:
@@ -59,7 +59,7 @@ def consultar_natura_con_cascada(url_destino):
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por consulta
+            'render': 'false'  # Mantiene el consumo en solo 1 crédito
         }
         resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
@@ -89,24 +89,9 @@ def limpiar_precio_natura(texto):
         except ValueError: return 0.0
     return 0.0
 
-def extraer_productos_json(data):
-    prods = []
-    def buscar(obj):
-        if isinstance(obj, dict):
-            # Criterio de objeto de producto Natura / VTEX
-            if ('name' in obj or 'productName' in obj) and ('price' in obj or 'offers' in obj or 'spotPrice' in obj or 'link' in obj or 'url' in obj):
-                prods.append(obj)
-            for v in obj.values():
-                buscar(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                buscar(item)
-    buscar(data)
-    return prods
-
 def motor_natura(url, limite=999999.0, headers=None):
     """
-    Motor extractor de productos para Natura Perú (natura.com.pe)
+    Motor extractor de productos para Natura Perú (natura.com.pe) - VTEX IO Compatible
     """
     productos_map = {}
     url_base = sanitizar_url(url)
@@ -118,73 +103,80 @@ def motor_natura(url, limite=999999.0, headers=None):
     soup = BeautifulSoup(resp.text, 'html.parser')
 
     # ==============================================================================
-    # CAPA 1: EXTRACCIÓN VÍA JSON NATIVO DE NEXT.JS / STATE
+    # CAPA 1: PARSEO VÍA ESTRUCTURA JSON-LD (VTEX ItemList)
     # ==============================================================================
-    script_next = soup.find('script', id='__NEXT_DATA__')
-    if script_next and script_next.text:
+    scripts_ld = soup.find_all('script', type='application/ld+json')
+    for script in scripts_ld:
+        if not script.text: continue
         try:
-            data_json = json.loads(script_next.text)
-            catalog_products = extraer_productos_json(data_json)
+            data_ld = json.loads(script.text)
+            items_list = []
+            
+            if isinstance(data_ld, dict):
+                if data_ld.get('@type') == 'ItemList':
+                    items_list = data_ld.get('itemListElement', [])
+                elif 'itemListElement' in data_ld:
+                    items_list = data_ld.get('itemListElement', [])
+            elif isinstance(data_ld, list):
+                items_list = data_ld
 
-            for p in catalog_products:
-                if not isinstance(p, dict): continue
+            for elem in items_list:
+                item = elem.get('item', {}) if isinstance(elem, dict) else elem
+                if not isinstance(item, dict): continue
 
-                raw_name = str(p.get('name') or p.get('productName') or p.get('title') or '').strip().upper()
-                if not raw_name or len(raw_name) < 3: continue
+                nombre = str(item.get('name') or item.get('productName') or '').strip().upper()
+                if not nombre or len(nombre) < 3: continue
 
-                href = str(p.get('url') or p.get('link') or p.get('slug') or '').strip()
-                if not href: continue
-                if not href.startswith('/'): href = '/' + href
+                link_rel = item.get('url') or item.get('@id') or ''
+                if not link_rel: continue
+                link_final = urljoin("https://www.natura.com.pe", link_rel).split('?')[0].split('#')[0]
 
-                link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
+                offers = item.get('offers', {})
+                p_o = 0.0
+                p_r = 0.0
 
-                # Precios
-                p_o = float(p.get('spotPrice') or p.get('price') or p.get('salesPrice') or 0.0)
-                p_r = float(p.get('listPrice') or p.get('listPriceValue') or p_o)
+                if isinstance(offers, dict):
+                    p_o = float(offers.get('price') or offers.get('lowPrice') or 0.0)
+                    p_r = float(offers.get('highPrice') or p_o)
+                elif isinstance(offers, list) and len(offers) > 0:
+                    p_o = float(offers[0].get('price', 0.0))
+                    p_r = p_o
 
-                if p_o <= 0 and 'offers' in p and isinstance(p['offers'], dict):
-                    p_o = float(p['offers'].get('price', 0.0))
-                    p_r = max(p_r, p_o)
-
-                # Imagen
-                img_url = p.get('imageUrl') or p.get('image') or p.get('thumbnail') or ""
-                if isinstance(img_url, list) and len(img_url) > 0:
-                    img_url = img_url[0]
-                if isinstance(img_url, dict):
-                    img_url = img_url.get('url', '')
+                img_url = item.get('image') or ""
+                if isinstance(img_url, list) and len(img_url) > 0: img_url = img_url[0]
+                if isinstance(img_url, dict): img_url = img_url.get('url', '')
 
                 if img_url and not img_url.startswith('http'):
                     img_url = urljoin("https:", img_url) if img_url.startswith('//') else urljoin("https://www.natura.com.pe", img_url)
 
                 if 0 < p_o <= limite:
                     productos_map[link_final] = {
-                        "nombre": f"NATURA - {raw_name}",
+                        "nombre": f"NATURA - {nombre}",
                         "precio": p_o,
                         "precio_regular": max(p_r, p_o),
                         "link": link_final,
                         "img": str(img_url)
                     }
-        except Exception as ex_j:
-            safe_log(f"⚠️ [NATURA] Error procesando JSON de Next.js: {ex_j}", "warning")
+        except Exception:
+            continue
 
     # ==============================================================================
-    # CAPA 2: ESCÁNER DE TARJETAS HTML (FALLBACK DE SEGURIDAD)
+    # CAPA 2: ESCÁNER VTEX IO DE ENLACES TERMINADOS EN /p
     # ==============================================================================
     if not productos_map:
-        tarjetas = soup.find_all(['div', 'article', 'li'], class_=re.compile(r'(product|card|item|shelf)', re.I))
+        enlaces_p = soup.find_all('a', href=lambda h: h and ('/p' in str(h).lower() or '/producto' in str(h).lower()))
 
-        for card in tarjetas:
+        for a_tag in enlaces_p:
             try:
-                a_tag = card.find('a', href=True)
-                if not a_tag: continue
-
                 href = a_tag['href'].strip()
                 if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']):
                     continue
 
                 link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
+                card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
 
-                nombre_el = card.find(['h2', 'h3', 'h4', 'span', 'p'], class_=re.compile(r'(title|name|nombre)', re.I))
+                # Extraer nombre
+                nombre_el = card.find(['h2', 'h3', 'h4', 'span', 'p'], class_=re.compile(r'(title|name|nombre|product)', re.I))
                 if nombre_el:
                     nombre = nombre_el.get_text(strip=True).upper()
                 else:
@@ -196,6 +188,7 @@ def motor_natura(url, limite=999999.0, headers=None):
                 if not nombre or len(nombre) < 3 or nombre in ['COMPRAR', 'VER MÁS', 'AGREGAR']:
                     continue
 
+                # Extraer precios
                 texto_card = card.get_text(separator=' ', strip=True)
                 precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
                 precios_numeros = [limpiar_precio_natura(p) for p in precios_encontrados if limpiar_precio_natura(p) > 0]
@@ -206,6 +199,7 @@ def motor_natura(url, limite=999999.0, headers=None):
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
+                # Extraer imagen
                 img_el = card.find('img')
                 img_url = ""
                 if img_el:
