@@ -1,250 +1,217 @@
-import os
 import re
 import json
-import time
+import random
 import requests
-import urllib3
+import urllib.parse
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from config import LISTA_USER_AGENTS
 from utils import sanitizar_url, safe_log
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-def obtener_key_natura():
+def limpiar_url_imagen_juntoz(img_url):
     """
-    Obtiene la clave de ScraperAPI para Natura o la clave general.
+    Extrae la URL real del contenedor de Azure Blob de Juntoz
+    evitando el bloqueo de Cloudflare en /_next/image.
     """
-    key = None
-    try:
-        import streamlit as st
-        if hasattr(st, "secrets"):
-            key = st.secrets.get("SCRAPERAPI_NATURA_KEY") or st.secrets.get("SCRAPERAPI_KEY")
-    except Exception:
-        pass
-
-    if not key:
-        key = os.environ.get("SCRAPERAPI_NATURA_KEY") or os.environ.get("SCRAPERAPI_KEY")
-
-    return key.strip() if key else None
-
-def consultar_natura_con_cascada(url_destino):
-    headers_directos = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.natura.com.pe/"
-    }
-
-    # 🟢 Paso 1: Intento directo gratis
-    try:
-        safe_log(f"📡 [NATURA] Intentando conexión directa...", "info")
-        resp = requests.get(url_destino, headers=headers_directos, timeout=12, verify=False)
-        if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['product-price-por', '/p/', 'natura']):
-            safe_log("✅ [NATURA] Conexión directa exitosa (0 créditos consumidos).", "success")
-            return resp
-        else:
-            safe_log(f"⚠️ [NATURA] Conexión directa rebotó (HTTP {resp.status_code}). Activando ScraperAPI...", "warning")
-    except Exception as ex:
-        safe_log(f"⚠️ [NATURA] Error en conexión directa: {ex}", "warning")
-
-    # 🛡️ Paso 2: Respaldo con ScraperAPI
-    key = obtener_key_natura()
-    if not key:
-        safe_log("🛑 [NATURA] No se encontró clave de ScraperAPI en los secretos.", "error")
-        return None
-
-    try:
-        safe_log(f"🛡️ [NATURA] Consultando vía ScraperAPI...", "info")
-        payload = {
-            'api_key': key,
-            'url': url_destino,
-            'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por consulta
-        }
-        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
-        if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
-            safe_log("✅ [NATURA] Petición exitosa usando ScraperAPI.", "success")
-            return resp_sc
-        else:
-            safe_log(f"🛑 [NATURA] ScraperAPI devolvió HTTP {resp_sc.status_code}", "error")
-    except Exception as e:
-        safe_log(f"🚨 [NATURA] Error con ScraperAPI: {e}", "error")
-
-    return None
-
-def limpiar_precio_natura(texto):
-    if not texto: return 0.0
-    texto = str(texto).replace('&nbsp;', ' ').replace('\xa0', ' ')
-    texto = texto.replace('S/.', '').replace('S/', '').replace('PEN', '').replace('S', '').strip()
-    match = re.search(r'\d+(?:[.,]\d+)*', texto)
-    if match:
-        raw = match.group(0)
-        if ',' in raw and '.' in raw:
-            raw = raw.replace(',', '')
-        elif ',' in raw and len(raw.split(',')[-1]) == 2:
-            raw = raw.replace(',', '.')
-        else:
-            raw = raw.replace(',', '')
-        try: return float(raw)
-        except ValueError: return 0.0
-    return 0.0
-
-def extraer_nombre_limpio_natura(card, a_tag, href):
-    """
-    Extrae el nombre completo del producto probando atributos alt, slugs y texto del DOM.
-    """
-    # 1. Atributo ALT de la imagen
-    for img in card.find_all('img'):
-        alt = img.get('alt', '').strip()
-        if alt and len(alt) > 6 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']):
-            return alt.upper()
-
-    # 2. Reconstrucción desde el Slug de la URL (/p/natura-homem-eau-de-parfum-masculino-coragio-100-ml/NATPER-186)
-    match_slug = re.search(r'/p/([^/?#]+)', href)
-    if match_slug:
-        raw_slug = match_slug.group(1)
-        slug_clean = re.sub(r'NATPER-[A-Z0-9_-]+$', '', raw_slug, flags=re.I).strip('-')
-        parts = [p.capitalize() for p in slug_clean.split('-') if not p.isdigit() or len(p) <= 3]
-        if len(parts) >= 2:
-            txt_slug = " ".join(parts).upper()
-            if len(txt_slug) > 5:
-                return txt_slug
-
-    # 3. Escaneo de etiquetas de texto
-    candidatos = []
-    for el in card.find_all(['p', 'span', 'h2', 'h3', 'h4', 'div']):
-        txt = el.get_text(strip=True)
-        if not txt or 'S/' in txt or any(b in txt.upper() for b in ['AGREGAR', 'BOLSA', 'COMPRAR', 'VER MÁS', 'PROMO', 'PRECIO']):
-            continue
-        if len(txt) > 3 and not re.search(r'-\d+%', txt) and 'ETIQUETA' not in txt.upper():
-            candidatos.append(txt)
-
-    if candidatos:
-        candidatos.sort(key=len, reverse=True)
-        if len(candidatos) >= 2 and len(candidatos[1]) < 15 and candidatos[1].upper() not in candidatos[0].upper():
-            return f"{candidatos[1].upper()} {candidatos[0].upper()}"
-        return candidatos[0].upper()
-
-    return ""
-
-def extraer_imagen_natura(card, a_tag, href):
-    """
-    Estrategia de 3 capas para extraer URLs de imagen de Demandware CDN evitando placeholders.
-    """
-    card_str = str(card)
-
-    # Capa 1: Atributos de etiquetas img / source
-    for tag in card.find_all(['img', 'source']):
-        for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original', 'data-url']:
-            val = tag.get(attr, '')
-            if not val or 'data:image' in val.lower():
-                continue
-
-            if ',' in val:
-                val = val.split(',')[0].strip().split(' ')[0]
-            elif ' ' in val.strip():
-                val = val.strip().split(' ')[0]
-
-            if val.startswith('//'):
-                val = 'https:' + val
-            elif not val.startswith('http'):
-                val = urljoin("https://www.natura.com.pe", val)
-
-            if any(ext in val.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', 'dw/image', 'natura', 'products']):
-                return val
-
-    # Capa 2: Regex directa en la cadena HTML
-    match_dw = re.search(r'https?://[^\s"\'>]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
-    if match_dw:
-        url_found = match_dw.group(0)
-        if 'data:image' not in url_found.lower():
-            return url_found
-
-    # Capa 3: Fallback por código NATPER (Construcción directa de CDN Demandware)
-    match_id = re.search(r'NATPER-([0-9]+)', href + " " + card_str, re.I)
-    if match_id:
-        prod_code = match_id.group(1)
-        return f"https://production.na01.natura.com/dw/image/v2/BFKR_PRD/on/demandware.static/-/Sites-natura-peru-storefront-catalog/default/dwb9008a8f/ProdutoJoia/mobile/{prod_code}.jpg?sw=300&q=80"
-
-    return ""
-
-def motor_natura(url, limite=999999.0, headers=None):
-    """
-    Motor extractor de productos para Natura Perú (natura.com.pe)
-    """
-    productos_map = {}
-    url_base = sanitizar_url(url)
-
-    resp = consultar_natura_con_cascada(url_base)
-    if not resp or resp.status_code != 200 or not resp.text:
-        return []
-
-    soup = BeautifulSoup(resp.text, 'html.parser')
-
-    # Buscar enlaces directos a productos que contienen /p/
-    enlaces_p = soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
-
-    for a_tag in enlaces_p:
+    if not img_url:
+        return ""
+        
+    img_str = str(img_url).strip()
+    
+    if "_next/image" in img_str and "url=" in img_str:
         try:
-            href = a_tag['href'].strip()
-            if not href or any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']):
-                continue
-
-            link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
-            card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
-
-            # 1. Extracción e Higienización del Nombre
-            nombre_raw = extraer_nombre_limpio_natura(card, a_tag, href)
-            
-            nombre_clean = nombre_raw.strip().upper()
-            if nombre_clean.startswith("NATURA -"):
-                nombre_clean = nombre_clean[8:].strip()
-            elif nombre_clean.startswith("NATURA"):
-                nombre_clean = nombre_clean[6:].strip()
-
-            nombre_clean = nombre_clean.lstrip('-').strip()
-
-            if not nombre_clean or len(nombre_clean) < 3 or nombre_clean in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
-                continue
-
-            nombre_final = f"NATURA - {nombre_clean}"
-
-            # 2. Extracción de Precios
-            el_por = card.find(id=lambda i: i and 'product-price-por' in str(i).lower())
-            el_de = card.find(id=lambda i: i and 'product-price-de' in str(i).lower())
-
-            p_o = limpiar_precio_natura(el_por.get_text()) if el_por else 0.0
-            p_r = limpiar_precio_natura(el_de.get_text()) if el_de else p_o
-
-            if p_o <= 0:
-                texto_card = card.get_text(separator=' ', strip=True)
-                precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
-                precios_numeros = [limpiar_precio_natura(p) for p in precios_encontrados if limpiar_precio_natura(p) > 0]
-
-                if not precios_numeros: continue
-
-                precios_unicos = sorted(list(set(precios_numeros)))
-                p_o = precios_unicos[0]
-                p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
-
-            # 3. Extracción de Imagen legítima de Demandware CDN
-            img_url = extraer_imagen_natura(card, a_tag, href)
-
-            if 0 < p_o <= limite:
-                productos_map[link_final] = {
-                    "nombre": nombre_final,
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url
-                }
+            parsed = urllib.parse.urlparse(img_str)
+            qs = urllib.parse.parse_qs(parsed.query)
+            if "url" in qs and qs["url"]:
+                return urllib.parse.unquote(qs["url"][0])
         except Exception:
-            continue
+            pass
+
+    return img_str
+
+def motor_juntoz(url, limite=999999.0, headers=None):
+    productos_map = {}
+    url = sanitizar_url(url)
+    
+    def limpiar_num_juntoz(texto):
+        if not texto: return 0.0
+        texto = str(texto).replace('S/.', '').replace('S/', '').strip()
+        match = re.search(r'\d+(?:[.,]\d+)*', texto)
+        if match:
+            raw = match.group(0)
+            if ',' in raw and '.' in raw:
+                raw = raw.replace(',', '')
+            elif ',' in raw and len(raw.split(',')[-1]) == 2:
+                raw = raw.replace(',', '.')
+            else:
+                raw = raw.replace(',', '')
+            try: return float(raw)
+            except ValueError: return 0.0
+        return 0.0
+
+    if not headers:
+        headers = {
+            "User-Agent": random.choice(LISTA_USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+            "Referer": "https://juntoz.com/"
+        }
+
+    try:
+        safe_log(f"📡 [Juntoz] Descargando catálogo GRATIS por HTML...", "info")
+        session = requests.Session()
+        resp = session.get(url, headers=headers, timeout=20, verify=False)
+        
+        if resp.status_code != 200:
+            safe_log(f"🛑 [Juntoz] Error de servidor. Código HTTP: {resp.status_code}", "error")
+            return []
+
+        texto_html = resp.text
+        soup = BeautifulSoup(texto_html, 'html.parser')
+
+        # --- CAPA 1: EXTRACCIÓN JSON-LD ---
+        scripts_json = soup.find_all('script', type='application/ld+json')
+        for s in scripts_json:
+            try:
+                data = json.loads(s.text)
+                items = []
+                if isinstance(data, dict):
+                    if data.get('@type') == 'ItemList':
+                        items = data.get('itemListElement', [])
+                    elif data.get('@type') == 'Product':
+                        items = [data]
+                elif isinstance(data, list):
+                    items = data
+
+                for item in items:
+                    prod = item.get('item', item) if isinstance(item, dict) else item
+                    if isinstance(prod, dict) and prod.get('@type') == 'Product':
+                        nombre = str(prod.get('name', '')).strip().upper()
+                        if len(nombre) < 3: continue
+
+                        link_rel = prod.get('url', url)
+                        link_final = urljoin("https://juntoz.com", link_rel)
+
+                        offers = prod.get('offers', {})
+                        if isinstance(offers, list) and len(offers) > 0:
+                            offers = offers[0]
+
+                        p_o = float(offers.get('price', 0) or 0)
+                        p_r = float(offers.get('highPrice', p_o) or p_o)
+
+                        img_url = prod.get('image', '')
+                        if isinstance(img_url, list) and len(img_url) > 0:
+                            img_url = img_url[0]
+
+                        # 🟢 LIMPIEZA DE IMAGEN (EVITA CLOUDFLARE)
+                        img_url = limpiar_url_imagen_juntoz(img_url)
+
+                        if 0 < p_o <= limite:
+                            productos_map[link_final] = {
+                                "nombre": f"Juntoz - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": str(img_url)
+                            }
+            except Exception: continue
+
+        # --- CAPA 2: FALLBACK HTML ---
+        if not productos_map:
+            enlaces_productos = []
+            for a in soup.find_all('a', href=True):
+                href = a['href'].lower()
+                if ('/p/' in href or '/producto/' in href or '-p' in href) and not any(x in href for x in ['/politica', '/ayuda', '/terminos', '/catalogo', '/tienda']):
+                    enlaces_productos.append(a)
+
+            for a_el in enlaces_productos:
+                try:
+                    href_rel = a_el['href']
+                    link_final = urljoin("https://juntoz.com", href_rel)
+                    
+                    contenedor_tarjeta = None
+                    ancestro_actual = a_el.parent
+                    
+                    for _ in range(6):
+                        if not ancestro_actual or ancestro_actual.name in ['body', 'html']: break
+                        texto_ancestro = ancestro_actual.get_text()
+                        if 'S/.' in texto_ancestro or 'S/' in texto_ancestro:
+                            contenedor_tarjeta = ancestro_actual
+                            break
+                        ancestro_actual = ancestro_actual.parent
+
+                    if not contenedor_tarjeta: continue
+
+                    nombre = a_el.get_text(separator=" ").strip().upper()
+                    if not nombre or len(nombre) < 5:
+                        for otro_a in contenedor_tarjeta.find_all('a', href=True):
+                            if otro_a['href'] == href_rel:
+                                nombre_otro = otro_a.get_text(separator=" ").strip().upper()
+                                if nombre_otro and len(nombre_otro) >= 5:
+                                    nombre = nombre_otro
+                                    break
+
+                    if not nombre or len(nombre) < 5:
+                        img_el = contenedor_tarjeta.find('img')
+                        if img_el and img_el.get('alt'):
+                            nombre = img_el['alt'].strip().upper()
+
+                    if not nombre or len(nombre) < 5: continue
+                    nombre = nombre.replace("AGREGAR A CARRITO", "").replace("AGREGAR", "").strip()
+                    nombre = re.sub(r'\s+', ' ', nombre)
+
+                    texto_tarjeta = contenedor_tarjeta.get_text()
+                    textos_precios = re.findall(r'(?:S/\.?\s*)(\d[\d\.,]*)', texto_tarjeta)
+                    if not textos_precios: continue
+
+                    precios_numeros = [limpiar_num_juntoz(p) for p in textos_precios if limpiar_num_juntoz(p) > 0]
+                    if not precios_numeros: continue
+
+                    precios_unicos = sorted(list(set(precios_numeros)))
+                    p_o = precios_unicos[0]
+                    p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
+
+                    img_el = contenedor_tarjeta.find('img')
+                    img_url = ""
+                    if img_el:
+                        img_url = img_el.get('data-src') or img_el.get('src') or img_el.get('data-lazy') or img_el.get('data-original') or ""
+                    
+                    if img_url.startswith('//'): img_url = 'https:' + img_url
+                    elif img_url and not img_url.startswith('http'): img_url = urljoin("https://juntoz.com", img_url)
+
+                    if 'data:image' in img_url.lower() or 'pixel' in img_url.lower(): img_url = ""
+
+                    # 🟢 LIMPIEZA DE IMAGEN (EVITA CLOUDFLARE)
+                    img_url = limpiar_url_imagen_juntoz(img_url)
+
+                    if 0 < p_o <= limite:
+                        if link_final in productos_map:
+                            prod_existente = productos_map[link_final]
+                            if len(nombre) > len(prod_existente['nombre']) or (img_url and not prod_existente['img']):
+                                productos_map[link_final] = {
+                                    "nombre": f"Juntoz - {nombre}",
+                                    "precio": p_o,
+                                    "precio_regular": max(p_r, p_o),
+                                    "link": link_final,
+                                    "img": img_url or prod_existente['img']
+                                }
+                        else:
+                            productos_map[link_final] = {
+                                "nombre": f"Juntoz - {nombre}",
+                                "precio": p_o,
+                                "precio_regular": max(p_r, p_o),
+                                "link": link_final,
+                                "img": img_url
+                            }
+                except Exception: continue
+
+    except Exception as e:
+        safe_log(f"🛑 [Juntoz] Error crítico inesperado: {e}", "error")
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron {len(productos_finales)} ofertas.", "success")
+        safe_log(f"✅ [Juntoz] ¡Éxito! Se indexaron {len(productos_finales)} ofertas.", "success")
     else:
-        safe_log(f"⚠️ [NATURA] No se encontraron productos bajo S/. {limite:.2f}", "warning")
+        safe_log(f"⚠️ [Juntoz] No se encontraron productos bajo el límite de S/. {limite:.2f}", "warning")
 
     return productos_finales
