@@ -59,7 +59,7 @@ def consultar_natura_con_cascada(url_destino):
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por llamada
+            'render': 'false'  # 1 solo crédito por consulta
         }
         resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
@@ -91,26 +91,26 @@ def limpiar_precio_natura(texto):
 
 def extraer_nombre_limpio_natura(card, a_tag, href):
     """
-    Extrae el nombre completo del producto combinando alt, marcas y slugs de URL.
+    Extrae el nombre completo del producto probando atributos alt, slugs y texto del DOM.
     """
-    # 1. Inspeccionar atributo alt en imágenes de la tarjeta
+    # 1. Atributo ALT de la imagen
     for img in card.find_all('img'):
         alt = img.get('alt', '').strip()
-        if alt and len(alt) > 6 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'NATURA']):
+        if alt and len(alt) > 6 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']):
             return alt.upper()
 
-    # 2. Reconstruir nombre a partir del Slug de la URL (/p/kaiak-eau-de-toilette-masculino-urbe-100-ml/...)
-    match_slug = re.search(r'/p/([^/]+)', href)
+    # 2. Reconstrucción desde el Slug de la URL (/p/natura-homem-eau-de-parfum-masculino-coragio-100-ml/NATPER-186)
+    match_slug = re.search(r'/p/([^/?#]+)', href)
     if match_slug:
         raw_slug = match_slug.group(1)
-        slug_clean = re.sub(r'/NATPER-[A-Z0-9_-]+$', '', raw_slug, flags=re.I)
+        slug_clean = re.sub(r'NATPER-[A-Z0-9_-]+$', '', raw_slug, flags=re.I).strip('-')
         parts = [p.capitalize() for p in slug_clean.split('-') if not p.isdigit() or len(p) <= 3]
         if len(parts) >= 2:
             txt_slug = " ".join(parts).upper()
-            if len(txt_slug) > 6:
+            if len(txt_slug) > 5:
                 return txt_slug
 
-    # 3. Escaneo de etiquetas de texto en la tarjeta
+    # 3. Escaneo de etiquetas de texto
     candidatos = []
     for el in card.find_all(['p', 'span', 'h2', 'h3', 'h4', 'div']):
         txt = el.get_text(strip=True)
@@ -127,31 +127,44 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
     return ""
 
-def extraer_imagen_natura(card, a_tag):
+def extraer_imagen_natura(card, a_tag, href):
     """
-    Busca URLs de imágenes legítimas en Demandware CDN / Natura evitando SVGs placeholders.
+    Estrategia de 3 capas para extraer URLs de imagen de Demandware CDN evitando placeholders.
     """
+    card_str = str(card)
+
+    # Capa 1: Atributos de etiquetas img / source
     for tag in card.find_all(['img', 'source']):
-        for attr in ['src', 'data-src', 'data-lazy', 'srcset', 'data-srcset']:
+        for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original', 'data-url']:
             val = tag.get(attr, '')
             if not val or 'data:image' in val.lower():
                 continue
 
             if ',' in val:
                 val = val.split(',')[0].strip().split(' ')[0]
+            elif ' ' in val.strip():
+                val = val.strip().split(' ')[0]
 
             if val.startswith('//'):
                 val = 'https:' + val
             elif not val.startswith('http'):
                 val = urljoin("https://www.natura.com.pe", val)
 
-            if any(ext in val.lower() for ext in ['.jpg', '.png', '.webp', '.jpeg', 'dw/image', 'natura']):
+            if any(ext in val.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', 'dw/image', 'natura', 'products']):
                 return val
 
-    # Búsqueda directa por expresión regular en el código HTML de la tarjeta
-    match_dw = re.search(r'https?://[^\s"\']*?(?:natura|dw/image)[^\s"\']*?\.(?:jpg|png|webp|jpeg)', str(card), re.I)
+    # Capa 2: Regex directa en la cadena HTML
+    match_dw = re.search(r'https?://[^\s"\'>]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
     if match_dw:
-        return match_dw.group(0)
+        url_found = match_dw.group(0)
+        if 'data:image' not in url_found.lower():
+            return url_found
+
+    # Capa 3: Fallback por código NATPER (Construcción directa de CDN Demandware)
+    match_id = re.search(r'NATPER-([0-9]+)', href + " " + card_str, re.I)
+    if match_id:
+        prod_code = match_id.group(1)
+        return f"https://production.na01.natura.com/dw/image/v2/BFKR_PRD/on/demandware.static/-/Sites-natura-peru-storefront-catalog/default/dwb9008a8f/ProdutoJoia/mobile/{prod_code}.jpg?sw=300&q=80"
 
     return ""
 
@@ -180,16 +193,21 @@ def motor_natura(url, limite=999999.0, headers=None):
             link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
             card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
 
-            # 1. Extracción de Nombre Completo
-            nombre = extraer_nombre_limpio_natura(card, a_tag, href)
+            # 1. Extracción e Higienización del Nombre
+            nombre_raw = extraer_nombre_limpio_natura(card, a_tag, href)
             
-            # Limpieza final de caracteres extra
-            nombre = re.sub(r'-\d+%', '', nombre)
-            nombre = re.sub(r'S/\.?\s*\d+[\d\.,]*', '', nombre)
-            nombre = re.sub(r'\s+', ' ', nombre).strip()
+            nombre_clean = nombre_raw.strip().upper()
+            if nombre_clean.startswith("NATURA -"):
+                nombre_clean = nombre_clean[8:].strip()
+            elif nombre_clean.startswith("NATURA"):
+                nombre_clean = nombre_clean[6:].strip()
 
-            if not nombre or len(nombre) < 3 or nombre in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
+            nombre_clean = nombre_clean.lstrip('-').strip()
+
+            if not nombre_clean or len(nombre_clean) < 3 or nombre_clean in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
                 continue
+
+            nombre_final = f"NATURA - {nombre_clean}"
 
             # 2. Extracción de Precios
             el_por = card.find(id=lambda i: i and 'product-price-por' in str(i).lower())
@@ -209,12 +227,12 @@ def motor_natura(url, limite=999999.0, headers=None):
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-            # 3. Extracción de Imagen
-            img_url = extraer_imagen_natura(card, a_tag)
+            # 3. Extracción de Imagen legítima de Demandware CDN
+            img_url = extraer_imagen_natura(card, a_tag, href)
 
             if 0 < p_o <= limite:
                 productos_map[link_final] = {
-                    "nombre": f"NATURA - {nombre}",
+                    "nombre": nombre_final,
                     "precio": p_o,
                     "precio_regular": max(p_r, p_o),
                     "link": link_final,
