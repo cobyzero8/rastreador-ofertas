@@ -59,7 +59,7 @@ def consultar_natura_con_cascada(url_destino):
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por consulta
+            'render': 'false'  # 1 solo crédito por llamada
         }
         resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
@@ -89,6 +89,72 @@ def limpiar_precio_natura(texto):
         except ValueError: return 0.0
     return 0.0
 
+def extraer_nombre_limpio_natura(card, a_tag, href):
+    """
+    Extrae el nombre completo del producto combinando alt, marcas y slugs de URL.
+    """
+    # 1. Inspeccionar atributo alt en imágenes de la tarjeta
+    for img in card.find_all('img'):
+        alt = img.get('alt', '').strip()
+        if alt and len(alt) > 6 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'NATURA']):
+            return alt.upper()
+
+    # 2. Reconstruir nombre a partir del Slug de la URL (/p/kaiak-eau-de-toilette-masculino-urbe-100-ml/...)
+    match_slug = re.search(r'/p/([^/]+)', href)
+    if match_slug:
+        raw_slug = match_slug.group(1)
+        slug_clean = re.sub(r'/NATPER-[A-Z0-9_-]+$', '', raw_slug, flags=re.I)
+        parts = [p.capitalize() for p in slug_clean.split('-') if not p.isdigit() or len(p) <= 3]
+        if len(parts) >= 2:
+            txt_slug = " ".join(parts).upper()
+            if len(txt_slug) > 6:
+                return txt_slug
+
+    # 3. Escaneo de etiquetas de texto en la tarjeta
+    candidatos = []
+    for el in card.find_all(['p', 'span', 'h2', 'h3', 'h4', 'div']):
+        txt = el.get_text(strip=True)
+        if not txt or 'S/' in txt or any(b in txt.upper() for b in ['AGREGAR', 'BOLSA', 'COMPRAR', 'VER MÁS', 'PROMO', 'PRECIO']):
+            continue
+        if len(txt) > 3 and not re.search(r'-\d+%', txt) and 'ETIQUETA' not in txt.upper():
+            candidatos.append(txt)
+
+    if candidatos:
+        candidatos.sort(key=len, reverse=True)
+        if len(candidatos) >= 2 and len(candidatos[1]) < 15 and candidatos[1].upper() not in candidatos[0].upper():
+            return f"{candidatos[1].upper()} {candidatos[0].upper()}"
+        return candidatos[0].upper()
+
+    return ""
+
+def extraer_imagen_natura(card, a_tag):
+    """
+    Busca URLs de imágenes legítimas en Demandware CDN / Natura evitando SVGs placeholders.
+    """
+    for tag in card.find_all(['img', 'source']):
+        for attr in ['src', 'data-src', 'data-lazy', 'srcset', 'data-srcset']:
+            val = tag.get(attr, '')
+            if not val or 'data:image' in val.lower():
+                continue
+
+            if ',' in val:
+                val = val.split(',')[0].strip().split(' ')[0]
+
+            if val.startswith('//'):
+                val = 'https:' + val
+            elif not val.startswith('http'):
+                val = urljoin("https://www.natura.com.pe", val)
+
+            if any(ext in val.lower() for ext in ['.jpg', '.png', '.webp', '.jpeg', 'dw/image', 'natura']):
+                return val
+
+    # Búsqueda directa por expresión regular en el código HTML de la tarjeta
+    match_dw = re.search(r'https?://[^\s"\']*?(?:natura|dw/image)[^\s"\']*?\.(?:jpg|png|webp|jpeg)', str(card), re.I)
+    if match_dw:
+        return match_dw.group(0)
+
+    return ""
+
 def motor_natura(url, limite=999999.0, headers=None):
     """
     Motor extractor de productos para Natura Perú (natura.com.pe)
@@ -114,52 +180,18 @@ def motor_natura(url, limite=999999.0, headers=None):
             link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
             card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
 
-            # 1. Extracción e inspección limpia de Imagen
-            img_el = a_tag.find('img') or card.find('img')
-            img_url = ""
-            nombre_alt = ""
-
-            if img_el:
-                if img_el.get('alt') and len(img_el['alt'].strip()) > 3:
-                    nombre_alt = img_el['alt'].strip()
-
-                # Recorrer candidatos a URL de imagen evitando placeholders data:image
-                for attr in ['src', 'data-src', 'data-lazy', 'srcset', 'data-srcset']:
-                    val = img_el.get(attr, '')
-                    if val and 'data:image' not in val.lower():
-                        if ',' in val:
-                            val = val.split(',')[0].strip().split(' ')[0]
-                        if val.startswith('//'):
-                            val = 'https:' + val
-                        elif not val.startswith('http'):
-                            val = urljoin("https://www.natura.com.pe", val)
-                        img_url = val
-                        break
-
-            # 2. Extracción limpia de Nombre (excluyendo insignias de descuento)
-            nombre = ""
-            if nombre_alt and not any(x in nombre_alt.upper() for x in ['PROMO', 'ETIQUETA', 'PRECIO', '-']):
-                nombre = nombre_alt.strip().upper()
-
-            if not nombre or len(nombre) < 3:
-                for tag in card.find_all(['h2', 'h3', 'h4', 'p', 'span', 'a']):
-                    txt = tag.get_text(strip=True)
-                    if not txt or 'S/' in txt or txt.upper() in ['AGREGAR', 'AGREGAR A MI BOLSA', 'COMPRAR', 'VER MÁS', 'PROMO FLASH', 'PRECIO FINAL']:
-                        continue
-                    if len(txt) > 3 and not re.search(r'-\d+%', txt) and 'ETIQUETA' not in txt.upper():
-                        nombre = txt.strip().upper()
-                        break
-
-            # Limpieza quirúrgica del nombre
+            # 1. Extracción de Nombre Completo
+            nombre = extraer_nombre_limpio_natura(card, a_tag, href)
+            
+            # Limpieza final de caracteres extra
             nombre = re.sub(r'-\d+%', '', nombre)
-            nombre = re.sub(r'ETIQUETA', '', nombre, flags=re.I)
             nombre = re.sub(r'S/\.?\s*\d+[\d\.,]*', '', nombre)
             nombre = re.sub(r'\s+', ' ', nombre).strip()
 
             if not nombre or len(nombre) < 3 or nombre in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
                 continue
 
-            # 3. Precios
+            # 2. Extracción de Precios
             el_por = card.find(id=lambda i: i and 'product-price-por' in str(i).lower())
             el_de = card.find(id=lambda i: i and 'product-price-de' in str(i).lower())
 
@@ -176,6 +208,9 @@ def motor_natura(url, limite=999999.0, headers=None):
                 precios_unicos = sorted(list(set(precios_numeros)))
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
+
+            # 3. Extracción de Imagen
+            img_url = extraer_imagen_natura(card, a_tag)
 
             if 0 < p_o <= limite:
                 productos_map[link_final] = {
