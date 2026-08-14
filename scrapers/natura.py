@@ -93,10 +93,10 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
     """
     Extrae el nombre completo del producto probando atributos alt, slugs y texto del DOM.
     """
-    # 1. Atributo ALT de la imagen
-    for img in card.find_all('img'):
+    # 1. Atributo ALT en imágenes dentro del enlace o la tarjeta
+    for img in a_tag.find_all('img') + card.find_all('img'):
         alt = img.get('alt', '').strip()
-        if alt and len(alt) > 6 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']):
+        if alt and len(alt) > 5 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']) and alt != '0':
             return alt.upper()
 
     # 2. Reconstrucción desde el Slug de la URL (/p/natura-homem-eau-de-parfum-masculino-coragio-100-ml/NATPER-186)
@@ -121,50 +121,45 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
     if candidatos:
         candidatos.sort(key=len, reverse=True)
-        if len(candidatos) >= 2 and len(candidatos[1]) < 15 and candidatos[1].upper() not in candidatos[0].upper():
-            return f"{candidatos[1].upper()} {candidatos[0].upper()}"
         return candidatos[0].upper()
 
     return ""
 
-def extraer_imagen_natura(card, a_tag, href):
-    """
-    Estrategia de 3 capas para extraer URLs de imagen de Demandware CDN evitando placeholders.
-    """
-    card_str = str(card)
+def sanitizar_url_imagen(val):
+    if not val or 'data:image' in val.lower():
+        return ""
+    if ',' in val:
+        val = val.split(',')[0].strip().split(' ')[0]
+    elif ' ' in val.strip():
+        val = val.strip().split(' ')[0]
 
-    # Capa 1: Atributos de etiquetas img / source
-    for tag in card.find_all(['img', 'source']):
-        for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original', 'data-url']:
+    if val.startswith('//'):
+        val = 'https:' + val
+    elif not val.startswith('http'):
+        val = urljoin("https://www.natura.com.pe", val)
+    return val
+
+def extraer_imagen_natura(card, a_tag):
+    """
+    Rastrea las imágenes reales del CDN de Demandware de Natura.
+    """
+    # 1. Buscar primero directamente dentro del tag <a> del producto
+    for tag in a_tag.find_all(['img', 'source']) + card.find_all(['img', 'source']):
+        for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original']:
             val = tag.get(attr, '')
-            if not val or 'data:image' in val.lower():
-                continue
+            url_clean = sanitizar_url_imagen(val)
+            if url_clean and any(ext in url_clean.lower() for ext in ['demandware', 'natura', 'products', '.jpg', '.png', '.webp', '.jpeg']):
+                return url_clean
 
-            if ',' in val:
-                val = val.split(',')[0].strip().split(' ')[0]
-            elif ' ' in val.strip():
-                val = val.strip().split(' ')[0]
-
-            if val.startswith('//'):
-                val = 'https:' + val
-            elif not val.startswith('http'):
-                val = urljoin("https://www.natura.com.pe", val)
-
-            if any(ext in val.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', 'dw/image', 'natura', 'products']):
-                return val
-
-    # Capa 2: Regex directa en la cadena HTML
-    match_dw = re.search(r'https?://[^\s"\'>]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
+    # 2. Búsqueda por regex de URL de imagen en el HTML completo de la tarjeta
+    card_str = str(card)
+    match_dw = re.search(r'https?://production\.na01\.natura\.com/dw/image/v2/[^\s"\'>]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
     if match_dw:
-        url_found = match_dw.group(0)
-        if 'data:image' not in url_found.lower():
-            return url_found
+        return match_dw.group(0)
 
-    # Capa 3: Fallback por código NATPER (Construcción directa de CDN Demandware)
-    match_id = re.search(r'NATPER-([0-9]+)', href + " " + card_str, re.I)
-    if match_id:
-        prod_code = match_id.group(1)
-        return f"https://production.na01.natura.com/dw/image/v2/BFKR_PRD/on/demandware.static/-/Sites-natura-peru-storefront-catalog/default/dwb9008a8f/ProdutoJoia/mobile/{prod_code}.jpg?sw=300&q=80"
+    match_gen = re.search(r'https?://[^\s"\'>]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
+    if match_gen and 'data:image' not in match_gen.group(0).lower():
+        return match_gen.group(0)
 
     return ""
 
@@ -228,7 +223,7 @@ def motor_natura(url, limite=999999.0, headers=None):
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
             # 3. Extracción de Imagen legítima de Demandware CDN
-            img_url = extraer_imagen_natura(card, a_tag, href)
+            img_url = extraer_imagen_natura(card, a_tag)
 
             if 0 < p_o <= limite:
                 productos_map[link_final] = {
