@@ -59,7 +59,7 @@ def consultar_natura_con_cascada(url_destino):
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por llamada
+            'render': 'false'  # 1 solo crédito por consulta
         }
         resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
@@ -91,7 +91,7 @@ def limpiar_precio_natura(texto):
 
 def normalizar_url_imagen(url_raw):
     """
-    Limpia, des-escapa de JSON y convierte cualquier URL en una dirección absoluta HTTP(S).
+    Limpia, des-escapa de JSON y convierte cualquier URL/ruta en una dirección completa del CDN de Demandware.
     """
     if not url_raw or 'data:image' in str(url_raw).lower():
         return ""
@@ -106,15 +106,76 @@ def normalizar_url_imagen(url_raw):
     if url_clean.startswith('//'):
         url_clean = 'https:' + url_clean
     elif url_clean.startswith('/'):
-        url_clean = urljoin("https://www.natura.com.pe", url_clean)
+        if 'Sites-natura-pe-storefront-catalog' in url_clean or 'dw/image' in url_clean:
+            url_clean = 'https://production.na01.natura.com' + url_clean
+        else:
+            url_clean = urljoin("https://www.natura.com.pe", url_clean)
     elif not url_clean.startswith('http'):
         url_clean = 'https://' + url_clean
 
     return url_clean
 
+def extraer_imagen_natura(card, a_tag, href, full_page_html=""):
+    """
+    Localiza la URL exacta de la imagen en el CDN Demandware utilizando rastreo por NATPER-ID.
+    """
+    card_html_raw = str(card).replace('\\/', '/')
+    combined_html = card_html_raw + " " + str(a_tag)
+    
+    search_texts = [combined_html]
+    if full_page_html:
+        search_texts.append(full_page_html.replace('\\/', '/'))
+
+    # 1. Extraer ID del producto (NATPER-XXXXX) desde el enlace
+    natper_id = ""
+    match_id = re.search(r'NATPER-(\d+)', href + " " + combined_html, re.I)
+    if match_id:
+        natper_id = match_id.group(1)
+
+    # 2. Búsqueda por NATPER-ID en el HTML completo de la página o tarjeta
+    if natper_id:
+        for html_text in search_texts:
+            # Opción A: URL completa que contiene NATPER-{natper_id}
+            p1 = re.compile(rf'(https?://[^\s"\'>\\]+?NATPER-{natper_id}[^\s"\'>\\]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', re.I)
+            m1 = p1.search(html_text)
+            if m1:
+                return normalizar_url_imagen(m1.group(1))
+
+            # Opción B: Ruta de Demandware dw[hash]...NATPER-{natper_id}...
+            p2 = re.compile(rf'([^\s"\'>\\]*?dw[a-f0-9]+[^\s"\'>\\]*?NATPER-{natper_id}[^\s"\'>\\]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', re.I)
+            m2 = p2.search(html_text)
+            if m2:
+                path = m2.group(1)
+                if path.startswith('http'):
+                    return normalizar_url_imagen(path)
+                elif path.startswith('//'):
+                    return normalizar_url_imagen('https:' + path)
+                else:
+                    path_clean = path.lstrip('/')
+                    if 'Sites-natura-pe-storefront-catalog' in path_clean:
+                        return normalizar_url_imagen('https://production.na01.natura.com/' + path_clean)
+                    else:
+                        return normalizar_url_imagen('https://production.na01.natura.com/dw/image/v2/BFKR_PRD/on/demandware.static/-/Sites-natura-pe-storefront-catalog/default/' + path_clean)
+
+    # 3. Búsqueda directa en etiquetas HTML img / source
+    if hasattr(a_tag, 'find_all') and hasattr(card, 'find_all'):
+        for tag in a_tag.find_all(['img', 'source']) + card.find_all(['img', 'source']):
+            for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original']:
+                val = tag.get(attr, '')
+                url_norm = normalizar_url_imagen(val)
+                if url_norm and any(ext in url_norm.lower() for ext in ['demandware', 'natura', 'products', 'produto', '.jpg', '.jpeg', '.png', '.webp']):
+                    return url_norm
+
+    # 4. Fallback de respaldo en el bloque HTML de la tarjeta
+    match_dw = re.search(r'(https?://production\.na01\.natura\.com/dw/image/v2/[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', combined_html, re.I)
+    if match_dw:
+        return normalizar_url_imagen(match_dw.group(1))
+
+    return ""
+
 def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, img_url, limite):
     """
-    Guarda o actualiza un producto en el diccionario garantizando que NO se borren imágenes previas.
+    Almacena el producto asegurando que no se sobreescriban imágenes válidas extraídas previamente.
     """
     if not link_final or p_o <= 0 or p_o > limite:
         return
@@ -133,13 +194,10 @@ def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, i
     img_clean = normalizar_url_imagen(img_url)
 
     if link_final in productos_map:
-        # Preservar imagen si la actual está vacía y recibimos una válida
         if not productos_map[link_final]["img"] and img_clean:
             productos_map[link_final]["img"] = img_clean
-        # Actualizar a nombre más descriptivo/largo si se encuentra
         if len(nombre_final) > len(productos_map[link_final]["nombre"]):
             productos_map[link_final]["nombre"] = nombre_final
-        # Actualizar precios si no estaban definidos
         if productos_map[link_final]["precio"] <= 0 and p_o > 0:
             productos_map[link_final]["precio"] = p_o
             productos_map[link_final]["precio_regular"] = max(p_r, p_o)
@@ -154,7 +212,7 @@ def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, i
 
 def extraer_productos_de_json(soup, productos_map, limite):
     """
-    Extrae productos de __NEXT_DATA__ o application/ld+json nativos de VTEX / Next.js.
+    Extrae productos de scripts JSON nativos (__NEXT_DATA__ / ld+json).
     """
     scripts = soup.find_all('script')
     for script in scripts:
@@ -178,7 +236,6 @@ def extraer_productos_de_json(soup, productos_map, limite):
                                 list_price = 0.0
                                 img_url = ""
 
-                                # Buscar imágenes
                                 if 'images' in obj and isinstance(obj['images'], list) and len(obj['images']) > 0:
                                     first_img = obj['images'][0]
                                     if isinstance(first_img, dict):
@@ -190,7 +247,6 @@ def extraer_productos_de_json(soup, productos_map, limite):
                                 elif 'image' in obj:
                                     img_url = str(obj['image'])
 
-                                # Buscar precios
                                 if 'items' in obj and isinstance(obj['items'], list):
                                     for item in obj['items']:
                                         if not img_url and 'images' in item and len(item['images']) > 0:
@@ -222,13 +278,11 @@ def extraer_productos_de_json(soup, productos_map, limite):
                 continue
 
 def extraer_nombre_limpio_natura(card, a_tag, href):
-    # Atributo ALT en imágenes
     for img in a_tag.find_all('img') + card.find_all('img'):
         alt = img.get('alt', '').strip()
         if alt and len(alt) > 5 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']) and alt != '0':
             return alt.upper()
 
-    # Reconstrucción desde el Slug de la URL
     match_slug = re.search(r'/p/([^/?#]+)', href)
     if match_slug:
         raw_slug = match_slug.group(1)
@@ -239,7 +293,6 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
             if len(txt_slug) > 5:
                 return txt_slug
 
-    # Escaneo de etiquetas de texto
     candidatos = []
     for el in card.find_all(['p', 'span', 'h2', 'h3', 'h4', 'div']):
         txt = el.get_text(strip=True)
@@ -254,27 +307,6 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
     return ""
 
-def extraer_imagen_natura(card, a_tag):
-    # 1. Búsqueda en etiquetas HTML de la tarjeta y enlace
-    for tag in a_tag.find_all(['img', 'source']) + card.find_all(['img', 'source']):
-        for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original']:
-            val = tag.get(attr, '')
-            url_norm = normalizar_url_imagen(val)
-            if url_norm and any(ext in url_norm.lower() for ext in ['demandware', 'natura', 'products', 'produto', '.jpg', '.jpeg', '.png', '.webp']):
-                return url_norm
-
-    # 2. Búsqueda por Regex en la cadena HTML
-    card_html_raw = str(card).replace('\\/', '/')
-    match_dw = re.search(r'(https?://[^\s"\'>\\]+?demandware[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', card_html_raw, re.I)
-    if match_dw:
-        return normalizar_url_imagen(match_dw.group(1))
-
-    match_gen = re.search(r'(https?://[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', card_html_raw, re.I)
-    if match_gen and 'data:image' not in match_gen.group(1).lower():
-        return normalizar_url_imagen(match_gen.group(1))
-
-    return ""
-
 def motor_natura(url, limite=999999.0, headers=None):
     """
     Motor extractor de productos para Natura Perú (natura.com.pe)
@@ -286,12 +318,13 @@ def motor_natura(url, limite=999999.0, headers=None):
     if not resp or resp.status_code != 200 or not resp.text:
         return []
 
-    soup = BeautifulSoup(resp.text, 'html.parser')
+    full_page_html = resp.text
+    soup = BeautifulSoup(full_page_html, 'html.parser')
 
-    # CAPA 1: Extracción desde objetos JSON nativos
+    # CAPA 1: Extracción JSON desde scripts nativos
     extraer_productos_de_json(soup, productos_map, limite)
 
-    # CAPA 2: Escaneo HTML de enlaces de producto /p/ acumulativo
+    # CAPA 2: Escaneo HTML acumulativo por NATPER-ID
     enlaces_p = soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
 
     for a_tag in enlaces_p:
@@ -322,9 +355,10 @@ def motor_natura(url, limite=999999.0, headers=None):
                     p_o = precios_unicos[0]
                     p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-            img_url = extraer_imagen_natura(card, a_tag)
+            # Rastreo exacto por ID NATPER en la respuesta completa
+            img_url = extraer_imagen_natura(card, a_tag, href, full_page_html)
 
-            # Procesamiento defensivo sin sobreescritura
+            # Guardar/Actualizar sin sobreescritura
             procesar_producto_acumulativo(productos_map, link_final, nombre_raw, p_o, p_r, img_url, limite)
 
         except Exception:
