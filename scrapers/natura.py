@@ -59,7 +59,7 @@ def consultar_natura_con_cascada(url_destino):
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por consulta
+            'render': 'false'  # 1 solo crédito por llamada
         }
         resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
@@ -93,7 +93,7 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
     """
     Extrae el nombre completo del producto probando atributos alt, slugs y texto del DOM.
     """
-    # 1. Atributo ALT en imágenes dentro del enlace o la tarjeta
+    # 1. Atributo ALT en imágenes dentro del enlace o tarjeta
     for img in a_tag.find_all('img') + card.find_all('img'):
         alt = img.get('alt', '').strip()
         if alt and len(alt) > 5 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']) and alt != '0':
@@ -125,41 +125,55 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
     return ""
 
-def sanitizar_url_imagen(val):
-    if not val or 'data:image' in val.lower():
+def normalizar_url_imagen(url_raw):
+    """
+    Limpia, des-escapa y convierte cualquier URL parcial en una URL absoluta válida HTTP(S).
+    """
+    if not url_raw or 'data:image' in str(url_raw).lower():
         return ""
-    if ',' in val:
-        val = val.split(',')[0].strip().split(' ')[0]
-    elif ' ' in val.strip():
-        val = val.strip().split(' ')[0]
 
-    if val.startswith('//'):
-        val = 'https:' + val
-    elif not val.startswith('http'):
-        val = urljoin("https://www.natura.com.pe", val)
-    return val
+    # Des-escapar barras de JSON (ej: https:\/\/ -> https://)
+    url_clean = str(url_raw).replace('\\/', '/').replace('&amp;', '&').strip()
+
+    # Si vienen múltiples imágenes separadas por coma (srcset)
+    if ',' in url_clean:
+        url_clean = url_clean.split(',')[0].strip().split(' ')[0]
+    elif ' ' in url_clean:
+        url_clean = url_clean.split(' ')[0]
+
+    if url_clean.startswith('//'):
+        url_clean = 'https:' + url_clean
+    elif url_clean.startswith('/'):
+        url_clean = urljoin("https://www.natura.com.pe", url_clean)
+    elif not url_clean.startswith('http'):
+        url_clean = 'https://' + url_clean
+
+    return url_clean
 
 def extraer_imagen_natura(card, a_tag):
     """
-    Rastrea las imágenes reales del CDN de Demandware de Natura.
+    Rastrea exhaustivamente las imágenes reales del CDN de Demandware/Natura.
     """
-    # 1. Buscar primero directamente dentro del tag <a> del producto
+    card_html_raw = str(card).replace('\\/', '/')
+
+    # Nivel 1: Inspección directa de etiquetas HTML <img>, <source>, etc.
     for tag in a_tag.find_all(['img', 'source']) + card.find_all(['img', 'source']):
         for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original']:
             val = tag.get(attr, '')
-            url_clean = sanitizar_url_imagen(val)
-            if url_clean and any(ext in url_clean.lower() for ext in ['demandware', 'natura', 'products', '.jpg', '.png', '.webp', '.jpeg']):
-                return url_clean
+            url_norm = normalizar_url_imagen(val)
+            if url_norm and any(ext in url_norm.lower() for ext in ['demandware', 'natura', 'products', 'produto', '.jpg', '.jpeg', '.png', '.webp']):
+                return url_norm
 
-    # 2. Búsqueda por regex de URL de imagen en el HTML completo de la tarjeta
-    card_str = str(card)
-    match_dw = re.search(r'https?://production\.na01\.natura\.com/dw/image/v2/[^\s"\'>]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
+    # Nivel 2: Expresión regular sobre la cadena HTML completa de la tarjeta
+    # Coincidencia con CDN de Demandware (Natura)
+    match_dw = re.search(r'(https?://[^\s"\'>\\]+?demandware[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', card_html_raw, re.I)
     if match_dw:
-        return match_dw.group(0)
+        return normalizar_url_imagen(match_dw.group(1))
 
-    match_gen = re.search(r'https?://[^\s"\'>]+\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>]*)?', card_str, re.I)
-    if match_gen and 'data:image' not in match_gen.group(0).lower():
-        return match_gen.group(0)
+    # Nivel 3: Coincidencia con cualquier URL de imagen válida en la tarjeta
+    match_gen = re.search(r'(https?://[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', card_html_raw, re.I)
+    if match_gen and 'data:image' not in match_gen.group(1).lower():
+        return normalizar_url_imagen(match_gen.group(1))
 
     return ""
 
@@ -222,7 +236,7 @@ def motor_natura(url, limite=999999.0, headers=None):
                 p_o = precios_unicos[0]
                 p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-            # 3. Extracción de Imagen legítima de Demandware CDN
+            # 3. Extracción de Imagen legítima
             img_url = extraer_imagen_natura(card, a_tag)
 
             if 0 < p_o <= limite:
