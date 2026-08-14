@@ -89,17 +89,146 @@ def limpiar_precio_natura(texto):
         except ValueError: return 0.0
     return 0.0
 
+def normalizar_url_imagen(url_raw):
+    """
+    Limpia, des-escapa de JSON y convierte cualquier URL en una dirección absoluta HTTP(S).
+    """
+    if not url_raw or 'data:image' in str(url_raw).lower():
+        return ""
+
+    url_clean = str(url_raw).replace('\\/', '/').replace('&amp;', '&').strip()
+
+    if ',' in url_clean:
+        url_clean = url_clean.split(',')[0].strip().split(' ')[0]
+    elif ' ' in url_clean.strip():
+        url_clean = url_clean.strip().split(' ')[0]
+
+    if url_clean.startswith('//'):
+        url_clean = 'https:' + url_clean
+    elif url_clean.startswith('/'):
+        url_clean = urljoin("https://www.natura.com.pe", url_clean)
+    elif not url_clean.startswith('http'):
+        url_clean = 'https://' + url_clean
+
+    return url_clean
+
+def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, img_url, limite):
+    """
+    Guarda o actualiza un producto en el diccionario garantizando que NO se borren imágenes previas.
+    """
+    if not link_final or p_o <= 0 or p_o > limite:
+        return
+
+    nombre_clean = str(nombre).strip().upper()
+    if nombre_clean.startswith("NATURA -"):
+        nombre_clean = nombre_clean[8:].strip()
+    elif nombre_clean.startswith("NATURA"):
+        nombre_clean = nombre_clean[6:].strip()
+    nombre_clean = nombre_clean.lstrip('-').strip()
+
+    if not nombre_clean or len(nombre_clean) < 3 or nombre_clean in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
+        return
+
+    nombre_final = f"NATURA - {nombre_clean}"
+    img_clean = normalizar_url_imagen(img_url)
+
+    if link_final in productos_map:
+        # Preservar imagen si la actual está vacía y recibimos una válida
+        if not productos_map[link_final]["img"] and img_clean:
+            productos_map[link_final]["img"] = img_clean
+        # Actualizar a nombre más descriptivo/largo si se encuentra
+        if len(nombre_final) > len(productos_map[link_final]["nombre"]):
+            productos_map[link_final]["nombre"] = nombre_final
+        # Actualizar precios si no estaban definidos
+        if productos_map[link_final]["precio"] <= 0 and p_o > 0:
+            productos_map[link_final]["precio"] = p_o
+            productos_map[link_final]["precio_regular"] = max(p_r, p_o)
+    else:
+        productos_map[link_final] = {
+            "nombre": nombre_final,
+            "precio": p_o,
+            "precio_regular": max(p_r, p_o),
+            "link": link_final,
+            "img": img_clean
+        }
+
+def extraer_productos_de_json(soup, productos_map, limite):
+    """
+    Extrae productos de __NEXT_DATA__ o application/ld+json nativos de VTEX / Next.js.
+    """
+    scripts = soup.find_all('script')
+    for script in scripts:
+        s_type = script.get('type', '')
+        s_id = script.get('id', '')
+        if s_id == '__NEXT_DATA__' or 'json' in s_type.lower():
+            if not script.text or len(script.text) < 50:
+                continue
+            try:
+                data = json.loads(script.text)
+                
+                def walk(obj):
+                    if isinstance(obj, dict):
+                        if ('productName' in obj or 'name' in obj) and ('link' in obj or 'url' in obj or 'slug' in obj or 'productId' in obj):
+                            name = str(obj.get('productName') or obj.get('name') or '').strip()
+                            url_rel = str(obj.get('link') or obj.get('url') or obj.get('slug') or '').strip()
+                            
+                            if name and url_rel:
+                                link_abs = urljoin("https://www.natura.com.pe", url_rel).split('?')[0].split('#')[0]
+                                price = 0.0
+                                list_price = 0.0
+                                img_url = ""
+
+                                # Buscar imágenes
+                                if 'images' in obj and isinstance(obj['images'], list) and len(obj['images']) > 0:
+                                    first_img = obj['images'][0]
+                                    if isinstance(first_img, dict):
+                                        img_url = first_img.get('imageUrl') or first_img.get('url') or ''
+                                    elif isinstance(first_img, str):
+                                        img_url = first_img
+                                elif 'imageUrl' in obj:
+                                    img_url = str(obj['imageUrl'])
+                                elif 'image' in obj:
+                                    img_url = str(obj['image'])
+
+                                # Buscar precios
+                                if 'items' in obj and isinstance(obj['items'], list):
+                                    for item in obj['items']:
+                                        if not img_url and 'images' in item and len(item['images']) > 0:
+                                            img_url = item['images'][0].get('imageUrl') or item['images'][0].get('url') or ''
+                                        if 'sellers' in item and isinstance(item['sellers'], list):
+                                            for seller in item['sellers']:
+                                                offer = seller.get('commercialOffer', {})
+                                                if offer:
+                                                    p = float(offer.get('Price') or offer.get('spotPrice') or 0.0)
+                                                    lp = float(offer.get('ListPrice') or offer.get('price') or p)
+                                                    if p > 0:
+                                                        price, list_price = p, lp
+
+                                if price <= 0:
+                                    price = float(obj.get('spotPrice') or obj.get('price') or 0.0)
+                                    list_price = float(obj.get('listPrice') or price)
+
+                                if price > 0 and '/p/' in link_abs.lower():
+                                    procesar_producto_acumulativo(productos_map, link_abs, name, price, list_price, img_url, limite)
+
+                        for v in obj.values():
+                            walk(v)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            walk(item)
+
+                walk(data)
+            except Exception:
+                continue
+
 def extraer_nombre_limpio_natura(card, a_tag, href):
-    """
-    Extrae el nombre completo del producto probando atributos alt, slugs y texto del DOM.
-    """
-    # 1. Atributo ALT en imágenes dentro del enlace o tarjeta
+    # Atributo ALT en imágenes
     for img in a_tag.find_all('img') + card.find_all('img'):
         alt = img.get('alt', '').strip()
         if alt and len(alt) > 5 and not any(x in alt.upper() for x in ['LOGOTIPO', 'PROMO', 'ETIQUETA', 'AGREGAR']) and alt != '0':
             return alt.upper()
 
-    # 2. Reconstrucción desde el Slug de la URL (/p/natura-homem-eau-de-parfum-masculino-coragio-100-ml/NATPER-186)
+    # Reconstrucción desde el Slug de la URL
     match_slug = re.search(r'/p/([^/?#]+)', href)
     if match_slug:
         raw_slug = match_slug.group(1)
@@ -110,7 +239,7 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
             if len(txt_slug) > 5:
                 return txt_slug
 
-    # 3. Escaneo de etiquetas de texto
+    # Escaneo de etiquetas de texto
     candidatos = []
     for el in card.find_all(['p', 'span', 'h2', 'h3', 'h4', 'div']):
         txt = el.get_text(strip=True)
@@ -125,38 +254,8 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
     return ""
 
-def normalizar_url_imagen(url_raw):
-    """
-    Limpia, des-escapa y convierte cualquier URL parcial en una URL absoluta válida HTTP(S).
-    """
-    if not url_raw or 'data:image' in str(url_raw).lower():
-        return ""
-
-    # Des-escapar barras de JSON (ej: https:\/\/ -> https://)
-    url_clean = str(url_raw).replace('\\/', '/').replace('&amp;', '&').strip()
-
-    # Si vienen múltiples imágenes separadas por coma (srcset)
-    if ',' in url_clean:
-        url_clean = url_clean.split(',')[0].strip().split(' ')[0]
-    elif ' ' in url_clean:
-        url_clean = url_clean.split(' ')[0]
-
-    if url_clean.startswith('//'):
-        url_clean = 'https:' + url_clean
-    elif url_clean.startswith('/'):
-        url_clean = urljoin("https://www.natura.com.pe", url_clean)
-    elif not url_clean.startswith('http'):
-        url_clean = 'https://' + url_clean
-
-    return url_clean
-
 def extraer_imagen_natura(card, a_tag):
-    """
-    Rastrea exhaustivamente las imágenes reales del CDN de Demandware/Natura.
-    """
-    card_html_raw = str(card).replace('\\/', '/')
-
-    # Nivel 1: Inspección directa de etiquetas HTML <img>, <source>, etc.
+    # 1. Búsqueda en etiquetas HTML de la tarjeta y enlace
     for tag in a_tag.find_all(['img', 'source']) + card.find_all(['img', 'source']):
         for attr in ['src', 'data-src', 'srcset', 'data-srcset', 'data-lazy', 'data-original']:
             val = tag.get(attr, '')
@@ -164,13 +263,12 @@ def extraer_imagen_natura(card, a_tag):
             if url_norm and any(ext in url_norm.lower() for ext in ['demandware', 'natura', 'products', 'produto', '.jpg', '.jpeg', '.png', '.webp']):
                 return url_norm
 
-    # Nivel 2: Expresión regular sobre la cadena HTML completa de la tarjeta
-    # Coincidencia con CDN de Demandware (Natura)
+    # 2. Búsqueda por Regex en la cadena HTML
+    card_html_raw = str(card).replace('\\/', '/')
     match_dw = re.search(r'(https?://[^\s"\'>\\]+?demandware[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', card_html_raw, re.I)
     if match_dw:
         return normalizar_url_imagen(match_dw.group(1))
 
-    # Nivel 3: Coincidencia con cualquier URL de imagen válida en la tarjeta
     match_gen = re.search(r'(https?://[^\s"\'>\\]+?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', card_html_raw, re.I)
     if match_gen and 'data:image' not in match_gen.group(1).lower():
         return normalizar_url_imagen(match_gen.group(1))
@@ -190,7 +288,10 @@ def motor_natura(url, limite=999999.0, headers=None):
 
     soup = BeautifulSoup(resp.text, 'html.parser')
 
-    # Buscar enlaces directos a productos que contienen /p/
+    # CAPA 1: Extracción desde objetos JSON nativos
+    extraer_productos_de_json(soup, productos_map, limite)
+
+    # CAPA 2: Escaneo HTML de enlaces de producto /p/ acumulativo
     enlaces_p = soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
 
     for a_tag in enlaces_p:
@@ -202,23 +303,9 @@ def motor_natura(url, limite=999999.0, headers=None):
             link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
             card = a_tag.find_parent(['div', 'article', 'li']) or a_tag
 
-            # 1. Extracción e Higienización del Nombre
             nombre_raw = extraer_nombre_limpio_natura(card, a_tag, href)
-            
-            nombre_clean = nombre_raw.strip().upper()
-            if nombre_clean.startswith("NATURA -"):
-                nombre_clean = nombre_clean[8:].strip()
-            elif nombre_clean.startswith("NATURA"):
-                nombre_clean = nombre_clean[6:].strip()
 
-            nombre_clean = nombre_clean.lstrip('-').strip()
-
-            if not nombre_clean or len(nombre_clean) < 3 or nombre_clean in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
-                continue
-
-            nombre_final = f"NATURA - {nombre_clean}"
-
-            # 2. Extracción de Precios
+            # Precios
             el_por = card.find(id=lambda i: i and 'product-price-por' in str(i).lower())
             el_de = card.find(id=lambda i: i and 'product-price-de' in str(i).lower())
 
@@ -230,23 +317,16 @@ def motor_natura(url, limite=999999.0, headers=None):
                 precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
                 precios_numeros = [limpiar_precio_natura(p) for p in precios_encontrados if limpiar_precio_natura(p) > 0]
 
-                if not precios_numeros: continue
+                if precios_numeros:
+                    precios_unicos = sorted(list(set(precios_numeros)))
+                    p_o = precios_unicos[0]
+                    p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                precios_unicos = sorted(list(set(precios_numeros)))
-                p_o = precios_unicos[0]
-                p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
-
-            # 3. Extracción de Imagen legítima
             img_url = extraer_imagen_natura(card, a_tag)
 
-            if 0 < p_o <= limite:
-                productos_map[link_final] = {
-                    "nombre": nombre_final,
-                    "precio": p_o,
-                    "precio_regular": max(p_r, p_o),
-                    "link": link_final,
-                    "img": img_url
-                }
+            # Procesamiento defensivo sin sobreescritura
+            procesar_producto_acumulativo(productos_map, link_final, nombre_raw, p_o, p_r, img_url, limite)
+
         except Exception:
             continue
 
