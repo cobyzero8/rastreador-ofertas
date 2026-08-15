@@ -38,32 +38,28 @@ def consultar_natura_con_cascada(url_destino):
 
     # 🟢 Paso 1: Intento directo gratis
     try:
-        resp = requests.get(url_destino, headers=headers_directos, timeout=12, verify=False)
+        resp = requests.get(url_destino, headers=headers_directos, timeout=10, verify=False)
         if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['product-price-por', '/p/', 'natura']):
-            # Si el HTML estático tiene bastantes productos, usar respuesta directa
-            soup_test = BeautifulSoup(resp.text, 'html.parser')
-            links_test = soup_test.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
-            if len(links_test) >= 12:
-                safe_log("✅ [NATURA] Conexión directa exitosa con catálogo amplio.", "success")
-                return resp
+            return resp
     except Exception:
         pass
 
-    # 🛡️ Paso 2: Respaldo con ScraperAPI y Renderizado JavaScript (render=true)
+    # 🛡️ Paso 2: Respaldo rápido con ScraperAPI (render=false, 1 crédito)
     key = obtener_key_natura()
     if not key:
         safe_log("🛑 [NATURA] No se encontró clave de ScraperAPI en los secretos.", "error")
         return None
 
     try:
-        safe_log(f"🛡️ [NATURA] Consultando vía ScraperAPI con JS activado (render=true)...", "info")
+        safe_log(f"🛡️ [NATURA] Consultando vía ScraperAPI (Modo rápido)...", "info")
         payload = {
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'true'  # 👈 Permite ejecutar el JS para cargar el lazy-load-wrapper
+            'render': 'false'  # 👈 Mantiene respuesta rápida (1 crédito)
         }
-        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=45)
+        # Timeout extendido a 60s para evitar el "Read timed out"
+        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=60)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
             return resp_sc
         else:
@@ -311,12 +307,12 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
 def motor_natura(url, limite=999999.0, headers=None, max_paginas=3):
     """
-    Motor extractor con renderizado JavaScript para Natura Perú.
+    Motor extractor de Natura Perú.
     """
     productos_map = {}
     url_base = sanitizar_url(url)
 
-    safe_log(f"🚀 [NATURA] Iniciando escaneo con JavaScript activado...", "info")
+    safe_log(f"🚀 [NATURA] Iniciando escaneo...", "info")
 
     for pagina in range(1, max_paginas + 1):
         url_pagina = construir_url_pagina(url_base, pagina, page_size=48)
