@@ -40,38 +40,47 @@ def consultar_natura_con_cascada(url_destino):
     try:
         resp = requests.get(url_destino, headers=headers_directos, timeout=12, verify=False)
         if resp.status_code == 200 and len(resp.text) > 2000 and any(x in resp.text.lower() for x in ['product-price-por', '/p/', 'natura']):
-            return resp
+            # Si el HTML estático tiene bastantes productos, usar respuesta directa
+            soup_test = BeautifulSoup(resp.text, 'html.parser')
+            links_test = soup_test.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
+            if len(links_test) >= 12:
+                safe_log("✅ [NATURA] Conexión directa exitosa con catálogo amplio.", "success")
+                return resp
     except Exception:
         pass
 
-    # 🛡️ Paso 2: Respaldo con ScraperAPI
+    # 🛡️ Paso 2: Respaldo con ScraperAPI y Renderizado JavaScript (render=true)
     key = obtener_key_natura()
     if not key:
         safe_log("🛑 [NATURA] No se encontró clave de ScraperAPI en los secretos.", "error")
         return None
 
     try:
+        safe_log(f"🛡️ [NATURA] Consultando vía ScraperAPI con JS activado (render=true)...", "info")
         payload = {
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'  # 1 solo crédito por llamada
+            'render': 'true'  # 👈 Permite ejecutar el JS para cargar el lazy-load-wrapper
         }
-        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=30)
+        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers_directos, timeout=45)
         if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
             return resp_sc
+        else:
+            safe_log(f"🛑 [NATURA] ScraperAPI devolvió HTTP {resp_sc.status_code}", "error")
     except Exception as e:
         safe_log(f"🚨 [NATURA] Error con ScraperAPI: {e}", "error")
 
     return None
 
-def construir_url_pagina(url_base, num_pagina):
+def construir_url_pagina(url_base, num_pagina, page_size=48):
     """
-    Agrega o actualiza el parámetro ?page=N en la URL.
+    Agrega o actualiza los parámetros ?page=N y &pageSize=48 en la URL.
     """
     parsed = urllib.parse.urlparse(url_base)
     query_dict = urllib.parse.parse_qs(parsed.query)
     query_dict['page'] = [str(num_pagina)]
+    query_dict['pageSize'] = [str(page_size)]
     
     new_query = urllib.parse.urlencode(query_dict, doseq=True)
     return urllib.parse.urlunparse((
@@ -300,24 +309,23 @@ def extraer_nombre_limpio_natura(card, a_tag, href):
 
     return ""
 
-def motor_natura(url, limite=999999.0, headers=None, max_paginas=5):
+def motor_natura(url, limite=999999.0, headers=None, max_paginas=3):
     """
-    Motor extractor multipágina para Natura Perú (natura.com.pe)
-    Rastrea secuencialmente hasta max_paginas (?page=1, ?page=2...).
+    Motor extractor con renderizado JavaScript para Natura Perú.
     """
     productos_map = {}
     url_base = sanitizar_url(url)
 
-    safe_log(f"🚀 [NATURA] Iniciando escaneo multipágina (Máx: {max_paginas} páginas)...", "info")
+    safe_log(f"🚀 [NATURA] Iniciando escaneo con JavaScript activado...", "info")
 
     for pagina in range(1, max_paginas + 1):
-        url_pagina = construir_url_pagina(url_base, pagina) if pagina > 1 else url_base
+        url_pagina = construir_url_pagina(url_base, pagina, page_size=48)
         
         safe_log(f"📡 [NATURA] Consultado página {pagina}: {url_pagina}", "info")
         resp = consultar_natura_con_cascada(url_pagina)
 
         if not resp or resp.status_code != 200 or not resp.text:
-            safe_log(f"⚠️ [NATURA] No se obtuvo respuesta válida en la página {pagina}. Finalizando rastreo.", "warning")
+            safe_log(f"⚠️ [NATURA] No se obtuvo respuesta válida en la página {pagina}.", "warning")
             break
 
         full_page_html = resp.text
@@ -359,10 +367,8 @@ def motor_natura(url, limite=999999.0, headers=None, max_paginas=5):
                         p_o = precios_unicos[0]
                         p_r = precios_unicos[-1] if len(precios_unicos) > 1 else p_o
 
-                # Rastreo de imágenes
                 img_url = extraer_imagen_natura(card, a_tag, href, full_page_html)
 
-                # Guardar sin sobreescritura
                 procesar_producto_acumulativo(productos_map, link_final, nombre_raw, p_o, p_r, img_url, limite)
 
             except Exception:
@@ -371,14 +377,13 @@ def motor_natura(url, limite=999999.0, headers=None, max_paginas=5):
         nuevos_encontrados = len(productos_map) - conteo_previo
         safe_log(f"📊 [NATURA] Página {pagina}: Se agregaron {nuevos_encontrados} nuevas ofertas (Total acumulado: {len(productos_map)}).", "info")
 
-        # Si en esta página no se encontraron productos nuevos, detiene la paginación
         if nuevos_encontrados == 0:
             safe_log(f"🏁 [NATURA] Fin del catálogo alcanzado en la página {pagina}.", "success")
             break
 
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron un total de {len(productos_finales)} ofertas multipágina.", "success")
+        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron un total de {len(productos_finales)} ofertas.", "success")
     else:
         safe_log(f"⚠️ [NATURA] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
