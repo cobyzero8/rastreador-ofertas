@@ -11,9 +11,6 @@ from utils import sanitizar_url, safe_log
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def obtener_key_natura():
-    """
-    Obtiene la clave de ScraperAPI para Natura desde st.secrets o variables de entorno.
-    """
     key = None
     try:
         import streamlit as st
@@ -27,64 +24,31 @@ def obtener_key_natura():
 
     return key.strip() if key else None
 
-def asegurar_pagesize(url_base, page_size=48):
-    """
-    Asegura que la URL contenga pageSize=48 si no se especificó previamente.
-    """
-    parsed = urllib.parse.urlparse(url_base)
-    query_dict = urllib.parse.parse_qs(parsed.query)
-    
-    if 'pageSize' not in query_dict:
-        query_dict['pageSize'] = [str(page_size)]
-    
-    new_query = urllib.parse.urlencode(query_dict, doseq=True)
-    return urllib.parse.urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        parsed.params,
-        new_query,
-        parsed.fragment
-    ))
-
-def consultar_natura_con_cascada(url_destino):
-    """
-    Consulta la URL ruteando por ScraperAPI si la conexión directa rejeta por WAF (HTTP 403).
-    """
+def consultar_via_scraperapi(url_destino, render_js=False):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
+        "Accept": "application/json, text/html, */*",
         "Referer": "https://www.natura.com.pe/"
     }
 
-    # Intento directo inicial
-    try:
-        resp = requests.get(url_destino, headers=headers, timeout=10, verify=False)
-        if resp.status_code == 200 and len(resp.text) > 2000 and "desafortunadamente no encontramos" not in resp.text.lower():
-            return resp
-    except Exception:
-        pass
-
-    # Respaldo con ScraperAPI
     key = obtener_key_natura()
     if not key:
-        safe_log("🛑 [NATURA] No se encontró clave de ScraperAPI en los secretos.", "error")
+        safe_log("🛑 [NATURA] No se encontró clave de ScraperAPI.", "error")
         return None
 
     try:
-        safe_log("🛡️ [NATURA] Consultando vía ScraperAPI...", "info")
         payload = {
             'api_key': key,
             'url': url_destino,
             'country_code': 'us',
-            'render': 'false'
+            'render': 'true' if render_js else 'false'
         }
-        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers, timeout=35)
-        if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
-            return resp_sc
+        timeout_val = 60 if render_js else 25
+        resp = requests.get('http://api.scraperapi.com', params=payload, headers=headers, timeout=timeout_val)
+        if resp.status_code == 200 and len(resp.text) > 100:
+            return resp.text
     except Exception as e:
-        safe_log(f"🚨 [NATURA] Error con ScraperAPI: {e}", "error")
+        safe_log(f"🚨 [NATURA] Error en ScraperAPI ({url_destino}): {e}", "error")
 
     return None
 
@@ -105,9 +69,6 @@ def limpiar_precio_natura(texto):
     return 0.0
 
 def normalizar_url_imagen(url_raw):
-    """
-    Limpia y construye URLs completas del CDN de Demandware.
-    """
     if not url_raw or 'data:image' in str(url_raw).lower():
         return ""
 
@@ -131,39 +92,7 @@ def normalizar_url_imagen(url_raw):
 
     return url_clean
 
-def extraer_imagen_real_natura(card, a_tag, href, full_html):
-    """
-    Busca la URL real de la imagen asociada al código NATPER-ID.
-    """
-    card_str = str(card).replace('\\/', '/') if card else ""
-    comb = card_str + " " + str(a_tag or "")
-
-    match_id = re.search(r'NATPER-(\d+)', href + " " + comb, re.I)
-    if match_id and full_html:
-        natper_id = match_id.group(1)
-        html_clean = full_html.replace('\\/', '/')
-
-        p1 = re.compile(rf'(https?://[^\s"\'>\\]+?NATPER-{natper_id}[^\s"\'>\\]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', re.I)
-        m1 = p1.search(html_clean)
-        if m1:
-            return normalizar_url_imagen(m1.group(1))
-
-        p2 = re.compile(rf'([^\s"\'>\\]*?dw[a-f0-9]+[^\s"\'>\\]*?NATPER-{natper_id}[^\s"\'>\\]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', re.I)
-        m2 = p2.search(html_clean)
-        if m2:
-            return normalizar_url_imagen(m2.group(1))
-
-    if card and hasattr(card, 'find_all'):
-        for tag in card.find_all(['img', 'source']):
-            for attr in ['src', 'data-src', 'srcset', 'data-srcset']:
-                val = tag.get(attr, '')
-                url_norm = normalizar_url_imagen(val)
-                if url_norm and any(ext in url_norm.lower() for ext in ['demandware', 'natura', 'products', '.jpg', '.jpeg', '.png', '.webp']):
-                    return url_norm
-
-    return ""
-
-def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, img_url, limite, full_html=""):
+def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, img_url, limite):
     if not link_final or p_o <= 0 or p_o > limite:
         return
 
@@ -178,10 +107,7 @@ def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, i
         return
 
     nombre_final = f"NATURA - {nombre_clean}"
-
     img_clean = normalizar_url_imagen(img_url)
-    if not img_clean and full_html:
-        img_clean = extraer_imagen_real_natura(None, None, link_final, full_html)
 
     if link_final in productos_map:
         if not productos_map[link_final]["img"] and img_clean:
@@ -200,120 +126,127 @@ def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, i
             "img": img_clean
         }
 
-def extraer_de_json_next_data(full_html, productos_map, limite):
+def extraer_desde_api_vtex(cat_slug, productos_map, limite):
     """
-    Escanea el JSON __NEXT_DATA__ para obtener todos los productos de la grilla.
+    Consulta los endpoints REST / Intelligent Search de VTEX Natura en JSON.
     """
-    match_script = re.search(r'<script\s+id="__NEXT_DATA__"\s+type="application/json">\s*({.*?})\s*</script>', full_html, re.DOTALL)
-    if not match_script:
-        return
+    clean = cat_slug.strip('/').replace('c/', '')
+    endpoints = [
+        f"https://www.natura.com.pe/api/io/_v/api/intelligent-search/product_search/{clean}?page=1&count=50",
+        f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{clean}?_from=0&_to=49",
+        f"https://www.natura.com.pe/api/catalog_system/pub/products/search/{clean.replace('-', '/')}?_from=0&_to=49",
+        f"https://www.natura.com.pe/api/catalog_system/pub/products/search?ft={urllib.parse.quote(clean.replace('-', ' '))}&_from=0&_to=49"
+    ]
 
-    try:
-        data = json.loads(match_script.group(1))
-        
-        def walk(obj):
-            if isinstance(obj, dict):
-                name = str(obj.get('productName') or obj.get('name') or obj.get('title') or '').strip()
-                url_rel = str(obj.get('link') or obj.get('url') or obj.get('slug') or '').strip()
-                pid = str(obj.get('productId') or obj.get('id') or '').strip()
+    for api_url in endpoints:
+        safe_log(f"📡 [NATURA API] Consultando API VTEX...", "info")
+        res_text = consultar_via_scraperapi(api_url, render_js=False)
+        if not res_text or len(res_text) < 50:
+            continue
 
-                if name and (url_rel or pid) and len(name) > 3:
-                    link_final = ""
-                    if url_rel:
-                        link_final = urljoin("https://www.natura.com.pe", url_rel).split('?')[0].split('#')[0]
-                    elif pid:
-                        clean_pid = pid if 'NATPER-' in pid else f"NATPER-{pid}"
-                        link_final = f"https://www.natura.com.pe/p/producto/{clean_pid}"
+        try:
+            data = json.loads(res_text)
+            items = data.get('products', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            
+            if items and isinstance(items, list) and len(items) > 0:
+                for prod in items:
+                    try:
+                        raw_name = str(prod.get('productName') or prod.get('name') or prod.get('brand') or '').strip()
+                        link_rel = str(prod.get('link') or prod.get('url') or prod.get('linkText') or '').strip()
+                        if not raw_name or not link_rel: continue
 
-                    if link_final and ('/p/' in link_final.lower() or 'NATPER-' in link_final):
-                        price, list_price, img_url = 0.0, 0.0, ""
+                        link_final = urljoin("https://www.natura.com.pe", link_rel).split('?')[0]
+                        p_o, p_r, img_url = 0.0, 0.0, ""
 
-                        items = obj.get('items')
-                        if isinstance(items, list) and len(items) > 0:
-                            first_item = items[0]
+                        prod_items = prod.get('items', [])
+                        if prod_items and isinstance(prod_items, list) and len(prod_items) > 0:
+                            first_item = prod_items[0]
                             imgs = first_item.get('images', [])
-                            if isinstance(imgs, list) and len(imgs) > 0:
+                            if imgs and isinstance(imgs, list) and len(imgs) > 0:
                                 img_url = str(imgs[0].get('imageUrl') or imgs[0].get('url') or '')
 
                             sellers = first_item.get('sellers', [])
-                            if isinstance(sellers, list) and len(sellers) > 0:
+                            if sellers and isinstance(sellers, list) and len(sellers) > 0:
                                 comm = sellers[0].get('commertialOffer', {}) or sellers[0].get('commercialOffer', {})
-                                price = float(comm.get('Price') or comm.get('spotPrice') or 0.0)
-                                list_price = float(comm.get('ListPrice') or price)
+                                p_o = float(comm.get('Price') or comm.get('spotPrice') or 0.0)
+                                p_r = float(comm.get('ListPrice') or p_o)
 
-                        if price <= 0:
-                            price = float(obj.get('spotPrice') or obj.get('price') or obj.get('value') or 0.0)
-                            list_price = float(obj.get('listPrice') or price)
+                        if p_o <= 0:
+                            p_o = float(prod.get('spotPrice') or prod.get('price') or 0.0)
+                            p_r = float(prod.get('listPrice') or p_o)
 
-                        if not img_url:
-                            img_url = str(obj.get('imageUrl') or obj.get('image') or '')
+                        procesar_producto_acumulativo(productos_map, link_final, raw_name, p_o, p_r, img_url, limite)
+                    except Exception:
+                        continue
 
-                        procesar_producto_acumulativo(productos_map, link_final, name, price, list_price, img_url, limite, full_html)
-
-                for v in obj.values(): walk(v)
-            elif isinstance(obj, list):
-                for elem in obj: walk(elem)
-
-        walk(data)
-    except Exception:
-        pass
-
-def motor_natura(url, limite=999999.0, headers=None):
-    """
-    Motor de consulta única sin bucle de paginación.
-    """
-    productos_map = {}
-    url_base = sanitizar_url(url)
-
-    # Garantiza pageSize=48 en la URL sin bucle de páginas
-    url_final = asegurar_pagesize(url_base, page_size=48)
-    safe_log(f"🚀 [NATURA] Consultando URL: {url_final}", "info")
-
-    resp = consultar_natura_con_cascada(url_final)
-
-    if not resp or resp.status_code != 200 or not resp.text:
-        safe_log("⚠️ [NATURA] No se obtuvo respuesta válida de la tienda.", "warning")
-        return []
-
-    full_html = resp.text
-    soup = BeautifulSoup(full_html, 'html.parser')
-
-    # 1. Extracción desde JSON __NEXT_DATA__
-    extraer_de_json_next_data(full_html, productos_map, limite)
-
-    # 2. Escaneo complementario del DOM
-    enlaces = soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
-    for a_tag in enlaces:
-        try:
-            href = a_tag['href'].strip()
-            if any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']):
-                continue
-
-            link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
-            card = a_tag.find_parent(['div', 'article']) or a_tag
-
-            img_el = card.find('img')
-            nombre_raw = img_el.get('alt', '').strip() if img_el and img_el.get('alt') else a_tag.get_text(strip=True)
-
-            texto_card = card.get_text(separator=' ', strip=True)
-            precios_found = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
-            precios_num = [limpiar_precio_natura(p) for p in precios_found if limpiar_precio_natura(p) > 0]
-
-            p_o, p_r = 0.0, 0.0
-            if precios_num:
-                unicos = sorted(list(set(precios_num)))
-                p_o = unicos[0]
-                p_r = unicos[-1]
-
-            img_url = extraer_imagen_real_natura(card, a_tag, href, full_html)
-
-            procesar_producto_acumulativo(productos_map, link_final, nombre_raw, p_o, p_r, img_url, limite, full_html)
+                if len(productos_map) >= 15:
+                    safe_log(f"✅ [NATURA API] Se obtuvieron {len(productos_map)} productos directamente vía API.", "success")
+                    return True
         except Exception:
             continue
 
+    return False
+
+def motor_natura(url, limite=999999.0, headers=None):
+    """
+    Motor híbrido: API VTEX -> Respaldo HTML con Renderizado JS.
+    """
+    productos_map = {}
+    url_base = sanitizar_url(url)
+    parsed = urllib.parse.urlparse(url_base)
+
+    safe_log(f"🚀 [NATURA] Iniciando escaneo de grilla completa...", "info")
+
+    # 1. Intentar API VTEX nativa (rápida y sin renderizado JS)
+    exito_api = extraer_desde_api_vtex(parsed.path, productos_map, limite)
+
+    # 2. Respaldo: Renderizado JS completo para cargar div.flex-1.flex-wrap (plp-products-grid)
+    if not exito_api or len(productos_map) < 15:
+        safe_log("🛡️ [NATURA] Ejecutando escáner con renderizado JS para capturar la grilla completa...", "warning")
+        url_target = f"{url_base}?pageSize=48" if 'pageSize' not in url_base else url_base
+        html_js = consultar_via_scraperapi(url_target, render_js=True)
+
+        if html_js:
+            soup = BeautifulSoup(html_js, 'html.parser')
+            # Buscar explícitamente las tarjetas dentro de la grilla principal
+            articulos = soup.find_all(['article', 'div'], attrs={'data-testid': re.compile(r'product-card', re.I)}) or \
+                        soup.find_all(['article', 'div'], attrs={'id': 'product-card'})
+
+            if not articulos:
+                articulos = soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
+
+            for art in articulos:
+                try:
+                    a_tag = art if art.name == 'a' else art.find('a', href=lambda h: h and '/p/' in str(h).lower())
+                    if not a_tag or not a_tag.get('href'): continue
+
+                    href = a_tag['href'].strip()
+                    if any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']):
+                        continue
+
+                    link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
+
+                    img_el = art.find('img')
+                    nombre_raw = img_el.get('alt', '').strip() if img_el and img_el.get('alt') else a_tag.get_text(strip=True)
+
+                    texto_card = art.get_text(separator=' ', strip=True)
+                    precios_num = [limpiar_precio_natura(p) for p in re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card) if limpiar_precio_natura(p) > 0]
+
+                    p_o, p_r = 0.0, 0.0
+                    if precios_num:
+                        unicos = sorted(list(set(precios_num)))
+                        p_o = unicos[0]
+                        p_r = unicos[-1]
+
+                    img_src = img_el.get('src', '') or img_el.get('data-src', '') if img_el else ''
+
+                    procesar_producto_acumulativo(productos_map, link_final, nombre_raw, p_o, p_r, img_src, limite)
+                except Exception:
+                    continue
+
     productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron un total de {len(productos_finales)} ofertas válidas.", "success")
+        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron {len(productos_finales)} ofertas de la grilla principal.", "success")
     else:
         safe_log(f"⚠️ [NATURA] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
