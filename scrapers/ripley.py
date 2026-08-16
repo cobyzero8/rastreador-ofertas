@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import time
 import requests
 import urllib3
 from bs4 import BeautifulSoup
@@ -14,9 +13,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Obtención de Claves
 # -------------------------
 def obtener_key_ripley():
-    """
-    Obtiene la clave de ScraperAPI desde st.secrets o variables de entorno.
-    """
     key = None
     try:
         import streamlit as st
@@ -31,7 +27,7 @@ def obtener_key_ripley():
     return key.strip() if key else None
 
 # -------------------------
-# Descarga HTML (Directa o ScraperAPI sin Render)
+# Descarga HTML
 # -------------------------
 def descargar_html_ripley(url_destino, headers=None):
     if headers is None:
@@ -42,19 +38,17 @@ def descargar_html_ripley(url_destino, headers=None):
             "Referer": "https://simple.ripley.com.pe/"
         }
 
-    # 1. Petición Directa (Rápida)
+    # 1. Petición directa
     try:
         session = requests.Session()
         resp = session.get(url_destino, headers=headers, timeout=12, verify=False)
         if resp.status_code == 200 and len(resp.text) > 3000:
             safe_log(f"🌐 [RIPLEY] Petición directa exitosa ({len(resp.text)} bytes).", "info")
             return resp.text
-        else:
-            safe_log(f"⚠️ [RIPLEY] Petición directa HTTP {resp.status_code}.", "warning")
-    except Exception as e:
-        safe_log(f"⚠️ [RIPLEY] Fallo directo: {str(e)}", "warning")
+    except Exception:
+        pass
 
-    # 2. Respaldo ScraperAPI (timeout aumentado a 35 segundos)
+    # 2. Respaldo ScraperAPI
     key = obtener_key_ripley()
     if key:
         safe_log("🔄 [RIPLEY] Consultando mediante ScraperAPI...", "info")
@@ -64,8 +58,6 @@ def descargar_html_ripley(url_destino, headers=None):
             if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
                 safe_log(f"🌐 [RIPLEY] ScraperAPI respuesta exitosa ({len(resp_sc.text)} bytes).", "info")
                 return resp_sc.text
-            else:
-                safe_log(f"🛑 [RIPLEY] ScraperAPI devolvió HTTP {resp_sc.status_code}.", "error")
         except Exception as e:
             safe_log(f"🛑 [RIPLEY] Error ScraperAPI: {str(e)}", "error")
 
@@ -120,7 +112,7 @@ def calcular_descuento(precio_oferta, precio_regular):
     return 0.0
 
 # -------------------------
-# Estrategia 1: Extracción por __NEXT_DATA__ (JSON Estático)
+# Estrategia 1: Extracción JSON (__NEXT_DATA__)
 # -------------------------
 def extraer_desde_next_data(soup, productos_map, limite):
     script_next = soup.find('script', id='__NEXT_DATA__')
@@ -129,8 +121,7 @@ def extraer_desde_next_data(soup, productos_map, limite):
 
     try:
         json_data = json.loads(script_next.string)
-        
-        # Búsqueda recursiva del arreglo 'products' dentro de las props de Next.js
+
         def buscar_productos(obj):
             if isinstance(obj, dict):
                 if 'products' in obj and isinstance(obj['products'], list):
@@ -145,7 +136,6 @@ def extraer_desde_next_data(soup, productos_map, limite):
             return None
 
         productos_raw = buscar_productos(json_data.get('props', {})) or []
-        safe_log(f"📦 [RIPLEY JSON] Se procesarán {len(productos_raw)} productos extraídos de __NEXT_DATA__.", "info")
 
         for p in productos_raw:
             try:
@@ -157,28 +147,23 @@ def extraer_desde_next_data(soup, productos_map, limite):
                 link_final = rel_url if rel_url.startswith('http') else f"https://simple.ripley.com.pe{rel_url}"
                 link_final = link_final.split('?')[0].split('#')[0]
 
-                # Precios (soporta números y cadenas formateadas)
                 prices = p.get('prices') or p.get('price') or {}
-                p_oferta = 0.0
-                p_regular = 0.0
+                p_tarjeta = 0.0
+                p_venta = 0.0
+                p_lista = 0.0
 
                 if isinstance(prices, dict):
-                    raw_oferta = prices.get('cardPrice') or prices.get('offerPrice') or prices.get('discountPrice') or prices.get('price') or prices.get('formattedOfferPrice') or prices.get('formattedCardPrice')
-                    raw_regular = prices.get('listPrice') or prices.get('normalPrice') or prices.get('formattedListPrice') or raw_oferta
+                    p_tarjeta = limpiar_precio(prices.get('cardPrice') or prices.get('formattedCardPrice'))
+                    p_venta = limpiar_precio(prices.get('offerPrice') or prices.get('discountPrice') or prices.get('formattedOfferPrice'))
+                    p_lista = limpiar_precio(prices.get('listPrice') or prices.get('normalPrice') or prices.get('formattedListPrice'))
 
-                    p_oferta = limpiar_precio(raw_oferta)
-                    p_regular = limpiar_precio(raw_regular)
-                elif isinstance(prices, (int, float)):
-                    p_oferta = float(prices)
+                p_oferta = p_tarjeta if p_tarjeta > 0 else (p_venta if p_venta > 0 else p_lista)
+                p_regular = p_lista if p_lista > 0 else max(p_venta, p_tarjeta)
+
+                if p_regular < p_oferta or p_regular <= 0:
                     p_regular = p_oferta
 
-                if p_oferta <= 0:
-                    p_oferta = p_regular
-
-                if p_regular <= 0:
-                    p_regular = p_oferta
-
-                # Imágenes (soporta cadenas, diccionarios y arreglos)
+                # Imagen CDN
                 img_url = str(p.get('thumbnail') or p.get('fullImage') or p.get('image') or '').strip()
                 if not img_url:
                     imgs = p.get('images')
@@ -199,7 +184,7 @@ def extraer_desde_next_data(soup, productos_map, limite):
                     productos_map[link_final] = {
                         "nombre": nombre_final,
                         "precio": p_oferta,
-                        "precio_regular": max(p_regular, p_oferta),
+                        "precio_regular": p_regular,
                         "descuento_pct": descuento_pct,
                         "link": link_final,
                         "img": img_url
@@ -207,14 +192,13 @@ def extraer_desde_next_data(soup, productos_map, limite):
             except Exception:
                 continue
     except Exception as e:
-        safe_log(f"⚠️ [RIPLEY JSON] Error al procesar __NEXT_DATA__: {str(e)}", "warning")
+        safe_log(f"⚠️ [RIPLEY JSON] Error en __NEXT_DATA__: {str(e)}", "warning")
 
 # -------------------------
-# Estrategia 2: Extracción DOM
+# Estrategia 2: Extracción DOM Exacta (DevTools IDs)
 # -------------------------
 def extraer_desde_dom_ripley(soup, productos_map, limite):
-    cards = soup.find_all('a', class_=re.compile(r'catalog-product-item', re.I)) or \
-            soup.find_all('div', class_=re.compile(r'catalog-product-item', re.I))
+    cards = soup.find_all(['div', 'article', 'a'], class_=re.compile(r'catalog-product-item|product-item', re.I))
 
     for card in cards:
         try:
@@ -231,23 +215,41 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             if img_src.startswith('//'):
                 img_src = f"https:{img_src}"
 
-            nombre_el = card.find(class_=re.compile(r'catalog-product-details__name', re.I)) or \
-                        card.find('div', class_=re.compile(r'title', re.I))
+            nombre_el = card.find(class_=re.compile(r'product-item-name|catalog-product-details__name', re.I)) or card.find('p', title=True)
             nombre_raw = nombre_el.get_text(strip=True) if nombre_el else (img_el.get('alt') if img_el else '')
 
             nombre_final = limpiar_nombre(nombre_raw)
             if not nombre_final:
                 continue
 
-            texto_card = card.get_text(separator=' ', strip=True)
-            precios_found = re.findall(r'(?:S/\.?\s*|PEN\s*|S/)\s*([\d\.,]+)', texto_card)
-            precios_num = [limpiar_precio(p) for p in precios_found if limpiar_precio(p) > 0]
+            # PRECIOS EXACTOS DEVTOOLS (IMÁGENES 2 Y 3)
+            # 1. Precio Lista / Real
+            el_lista = card.find(class_=re.compile(r'product-price-old-price-container|product-price-strikethrough', re.I))
+            p_lista = limpiar_precio(el_lista.get_text()) if el_lista else 0.0
 
-            if not precios_num:
-                continue
+            # 2. Precio Venta / Oferta General
+            el_venta = card.find(class_=re.compile(r'product-price-container', re.I))
+            p_venta = limpiar_precio(el_venta.get_text()) if el_venta else 0.0
 
-            p_oferta = min(precios_num)
-            p_regular = max(precios_num) if len(precios_num) > 1 else p_oferta
+            # 3. Precio Tarjeta Ripley (Oferta Principal)
+            el_ripley = card.find(class_=re.compile(r'product-price-ripley-price-container|product-price-color-red', re.I))
+            p_ripley = limpiar_precio(el_ripley.get_text()) if el_ripley else 0.0
+
+            # Fallback en caso de etiquetas dinámicas
+            if p_ripley <= 0 and p_venta <= 0 and p_lista <= 0:
+                texto_card = card.get_text(separator=' ', strip=True)
+                precios_found = re.findall(r'(?:S/\.?\s*|PEN\s*|S/)\s*([\d\.,]+)', texto_card)
+                precios_num = [limpiar_precio(p) for p in precios_found if limpiar_precio(p) > 0]
+                if precios_num:
+                    p_venta = min(precios_num)
+                    p_lista = max(precios_num) if len(precios_num) > 1 else p_venta
+
+            p_oferta = p_ripley if p_ripley > 0 else (p_venta if p_venta > 0 else p_lista)
+            p_regular = p_lista if p_lista > 0 else max(p_venta, p_ripley, p_lista)
+
+            if p_regular < p_oferta or p_regular <= 0:
+                p_regular = p_oferta
+
             descuento_pct = calcular_descuento(p_oferta, p_regular)
 
             if p_oferta > 0 and p_oferta <= limite:
@@ -255,11 +257,18 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
                     productos_map[link_final] = {
                         "nombre": nombre_final,
                         "precio": p_oferta,
-                        "precio_regular": max(p_regular, p_oferta),
+                        "precio_regular": p_regular,
                         "descuento_pct": descuento_pct,
                         "link": link_final,
                         "img": img_src
                     }
+                else:
+                    # Sincronización y actualización forzada con el valor DOM más preciso
+                    productos_map[link_final]["precio"] = p_oferta
+                    productos_map[link_final]["precio_regular"] = p_regular
+                    productos_map[link_final]["descuento_pct"] = descuento_pct
+                    if not productos_map[link_final]["img"] and img_src:
+                        productos_map[link_final]["img"] = img_src
         except Exception:
             continue
 
@@ -279,10 +288,10 @@ def motor_ripley(url, limite=999999.0, headers=None):
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    # 1. Extraer desde __NEXT_DATA__
+    # 1. Extracción desde JSON
     extraer_desde_next_data(soup, productos_map, limite)
 
-    # 2. Respaldo DOM
+    # 2. Extracción y actualización exacta desde el DOM
     extraer_desde_dom_ripley(soup, productos_map, limite)
 
     productos_finales = list(productos_map.values())
