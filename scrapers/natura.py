@@ -11,6 +11,9 @@ from utils import sanitizar_url, safe_log
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def obtener_key_natura():
+    """
+    Obtiene la clave de ScraperAPI desde st.secrets o variables de entorno.
+    """
     key = None
     try:
         import streamlit as st
@@ -25,6 +28,9 @@ def obtener_key_natura():
     return key.strip() if key else None
 
 def asegurar_pagesize(url_base, page_size=48):
+    """
+    Garantiza que la URL contenga pageSize=48 para solicitar el catálogo completo.
+    """
     parsed = urlparse(url_base)
     query_dict = parse_qs(parsed.query)
     if 'pageSize' not in query_dict:
@@ -40,13 +46,16 @@ def asegurar_pagesize(url_base, page_size=48):
     ))
 
 def consultar_natura_html(url_destino):
+    """
+    Consulta rápida del HTML original de la página de Natura.
+    """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Referer": "https://www.natura.com.pe/"
     }
 
-    # 1. Intento directo
+    # Intento 1: Conexión directa
     try:
         resp = requests.get(url_destino, headers=headers, timeout=10, verify=False)
         if resp.status_code == 200 and len(resp.text) > 2000:
@@ -54,7 +63,7 @@ def consultar_natura_html(url_destino):
     except Exception:
         pass
 
-    # 2. Respaldo ScraperAPI (render=false, rápido y seguro)
+    # Intento 2: Respaldo ScraperAPI (Modo rápido, 1 solo crédito)
     key = obtener_key_natura()
     if not key:
         safe_log("🛑 [NATURA] No se encontró clave de ScraperAPI.", "error")
@@ -121,195 +130,155 @@ def normalizar_url_imagen(url_raw, natper_id=""):
 
     return url_clean
 
-def limpiar_nombre_natura(nombre):
-    if not nombre: return ""
-    clean = str(nombre).strip().upper()
-    if clean.startswith("NATURA -"):
-        clean = clean[8:].strip()
-    elif clean.startswith("NATURA"):
-        clean = clean[6:].strip()
-    clean = clean.lstrip('- ').strip()
-
-    if not clean or len(clean) < 3 or clean in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
-        return ""
-
-    return f"NATURA - {clean}"
-
-def procesar_producto_acumulativo(productos_map, link_final, nombre, p_o, p_r, img_url, limite):
-    if not link_final or p_o <= 0 or p_o > limite:
-        return
-
-    nombre_final = limpiar_nombre_natura(nombre)
-    if not nombre_final:
-        return
-
-    natper_id = ""
-    match_id = re.search(r'NATPER-(\d+)', link_final, re.I)
-    if match_id:
-        natper_id = match_id.group(1)
-
-    img_clean = normalizar_url_imagen(img_url, natper_id)
-
-    if link_final in productos_map:
-        if not productos_map[link_final]["img"] and img_clean:
-            productos_map[link_final]["img"] = img_clean
-        if len(nombre_final) > len(productos_map[link_final]["nombre"]):
-            productos_map[link_final]["nombre"] = nombre_final
-        if productos_map[link_final]["precio"] <= 0 and p_o > 0:
-            productos_map[link_final]["precio"] = p_o
-            productos_map[link_final]["precio_regular"] = max(p_r, p_o)
-    else:
-        productos_map[link_final] = {
-            "nombre": nombre_final,
-            "precio": p_o,
-            "precio_regular": max(p_r, p_o),
-            "link": link_final,
-            "img": img_clean
-        }
-
-def extraer_de_next_stream_payloads(html_text, productos_map, limite):
+def extraer_todos_los_productos_natura(raw_html, limite=500.0):
     """
-    Escanea las tramas de datos self.__next_f.push(...) y scripts JSON de Next.js
-    que contienen las 28 fichas de la grilla principal.
+    Sanea la transmisión Next.js RSC y extrae la totalidad de productos de la grilla principal.
     """
-    # 1. Buscar todos los enlaces /p/slug/NATPER-ID en el texto completo del HTML
-    enlaces_raw = set(re.findall(r'(/p/[a-zA-Z0-9\-_]+/NATPER-\d+)', html_text, re.I))
+    productos_map = {}
 
-    for rel_link in enlaces_raw:
-        try:
-            link_final = f"https://www.natura.com.pe{rel_link}"
-            natper_match = re.search(r'NATPER-(\d+)', rel_link, re.I)
-            natper_id = natper_match.group(1) if natper_match else ""
+    if not raw_html or len(raw_html) < 100:
+        return []
 
-            # Extraer slug para generar un nombre base
-            slug_part = rel_link.split('/p/')[1].split('/NATPER-')[0]
-            parts = [p.capitalize() for p in slug_part.split('-') if not p.isdigit()]
-            nombre_base = " ".join(parts).upper()
+    # PASO CLAVE: Desescapar la sintaxis de Next.js App Router (self.__next_f.push)
+    clean_html = raw_html.replace(r'\/', '/').replace(r'\"', '"').replace('&quot;', '"').replace('&amp;', '&')
 
-            # Buscar imagen asociada a ese NATPER-ID en todo el HTML
-            img_url = ""
-            p_img = re.compile(rf'(https?://[^\s"\'>\\]+?NATPER-{natper_id}[^\s"\'>\\]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', re.I)
-            m_img = p_img.search(html_text.replace('\\/', '/'))
-            if m_img:
-                img_url = m_img.group(1)
+    # 1. Extracción de Objetos JSON estructurados en las tramas RSC
+    natper_matches = list(re.finditer(r'NATPER-\d+', clean_html, re.I))
+    for m in natper_matches:
+        start_pos = m.start()
+        left = clean_html.rfind('{', max(0, start_pos - 700), start_pos)
+        right = clean_html.find('}', start_pos, min(len(clean_html), start_pos + 700))
 
-            # Buscar bloque de precio alrededor de esa ocurrencia en el HTML
-            idx = html_text.find(rel_link)
-            p_o, p_r = 0.0, 0.0
-            if idx != -1:
-                sub_text = html_text[max(0, idx - 500): min(len(html_text), idx + 800)]
-
-                # Precios en JSON (spotPrice / price / Price)
-                prices_found = re.findall(r'(?:"spotPrice"|"price"|"Price"|"listPrice"|"ListPrice")\s*:\s*(\d+(?:\.\d+)?)', sub_text)
-                nums_json = [float(p) for p in prices_found if float(p) > 0]
-                if nums_json:
-                    p_o = min(nums_json)
-                    p_r = max(nums_json)
-                else:
-                    # Precios en texto S/ XX.XX
-                    precios_text = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', sub_text)
-                    nums_text = [limpiar_precio_natura(p) for p in precios_text if limpiar_precio_natura(p) > 0]
-                    if nums_text:
-                        p_o = min(nums_text)
-                        p_r = max(nums_text)
-
-            if p_o > 0 and p_o <= limite:
-                procesar_producto_acumulativo(productos_map, link_final, nombre_base, p_o, p_r, img_url, limite)
-        except Exception:
-            continue
-
-    # 2. Escanear objetos JSON estructurales (scripts)
-    scripts = re.findall(r'<script[^>]*>(.*?)</script>', html_text, re.DOTALL | re.IGNORECASE)
-    for s_text in scripts:
-        if len(s_text) > 50 and any(k in s_text for k in ['NATPER', 'productName', 'spotPrice', '/p/']):
+        if left != -1 and right != -1:
+            json_str = clean_html[left : right + 1]
             try:
-                # Tratar de parsear JSON directo si es un script estándar
-                data = json.loads(s_text.strip())
-                def walk(obj):
-                    if isinstance(obj, dict):
-                        name = str(obj.get('productName') or obj.get('name') or '').strip()
-                        url_rel = str(obj.get('link') or obj.get('url') or obj.get('slug') or '').strip()
+                data = json.loads(json_str)
+                name = str(data.get('productName') or data.get('name') or data.get('title') or '').strip()
+                link_rel = str(data.get('link') or data.get('slug') or data.get('url') or '').strip()
 
-                        if name and url_rel and '/p/' in url_rel.lower():
-                            link_final = urljoin("https://www.natura.com.pe", url_rel).split('?')[0].split('#')[0]
-                            price = float(obj.get('spotPrice') or obj.get('price') or 0.0)
-                            list_price = float(obj.get('listPrice') or price)
-                            img_url = str(obj.get('imageUrl') or obj.get('image') or '')
+                if name and link_rel and '/p/' in link_rel.lower():
+                    link_final = link_rel if link_rel.startswith('http') else f"https://www.natura.com.pe{link_rel}"
+                    link_final = link_final.split('?')[0].split('#')[0]
 
-                            if price > 0:
-                                procesar_producto_acumulativo(productos_map, link_final, name, price, list_price, img_url, limite)
+                    price = float(data.get('spotPrice') or data.get('price') or data.get('spot_price') or 0.0)
+                    list_price = float(data.get('listPrice') or data.get('list_price') or price)
+                    img_url = str(data.get('imageUrl') or data.get('image') or '')
 
-                        for v in obj.values():
-                            if isinstance(v, (dict, list)): walk(v)
-                    elif isinstance(obj, list):
-                        for el in obj: walk(el)
-                walk(data)
+                    clean_n = name.replace("NATURA -", "").replace("NATURA", "").strip("- ").upper()
+                    if len(clean_n) >= 3 and 'AGREGAR' not in clean_n:
+                        nombre_final = f"NATURA - {clean_n}"
+                        if 0 < price <= limite and link_final not in productos_map:
+                            productos_map[link_final] = {
+                                "nombre": nombre_final,
+                                "precio": price,
+                                "precio_regular": max(list_price, price),
+                                "link": link_final,
+                                "img": img_url
+                            }
             except Exception:
                 pass
 
-def extraer_de_dom_bs4(soup, productos_map, limite, html_text):
-    """
-    Rastrea tarjetas renderizadas directamente en el DOM HTML (<article> / <a>).
-    """
-    articulos = soup.find_all(['article', 'div'], attrs={'data-testid': re.compile(r'product-card', re.I)}) or \
-                soup.find_all(['article', 'div'], attrs={'id': 'product-card'}) or \
-                soup.find_all('a', href=lambda h: h and '/p/' in str(h).lower())
+    # 2. Escaneo por Expresión Regular de Enlaces /p/.../NATPER-XXXXX
+    p_links = set(re.findall(r'/p/[a-zA-Z0-9\-_%]+/NATPER-\d+', clean_html, re.I))
 
-    for art in articulos:
+    for rel_link in p_links:
         try:
-            a_tag = art if art.name == 'a' else art.find('a', href=lambda h: h and '/p/' in str(h).lower())
-            if not a_tag or not a_tag.get('href'): continue
+            link_final = f"https://www.natura.com.pe{rel_link}"
+            if link_final in productos_map and productos_map[link_final]["precio"] > 0 and productos_map[link_final]["img"]:
+                continue
 
-            href = a_tag['href'].strip()
-            if any(x in href.lower() for x in ['/cart', '/checkout', '/login', '/mi-cuenta']): continue
+            match_id = re.search(r'NATPER-(\d+)', rel_link, re.I)
+            if not match_id: continue
+            natper_id = match_id.group(1)
 
-            link_final = urljoin("https://www.natura.com.pe", href).split('?')[0].split('#')[0]
-            card = a_tag.find_parent(['div', 'article']) or a_tag
+            pos = clean_html.find(f"NATPER-{natper_id}")
+            if pos == -1: pos = clean_html.find(rel_link)
 
-            img_el = card.find('img')
-            nombre_raw = img_el.get('alt', '').strip() if img_el and img_el.get('alt') else a_tag.get_text(strip=True)
+            sub = clean_html[max(0, pos - 400): min(len(clean_html), pos + 400)] if pos != -1 else ""
 
-            texto_card = card.get_text(separator=' ', strip=True)
-            precios_found = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d[\d\.,]*)', texto_card)
-            precios_num = [limpiar_precio_natura(p) for p in precios_found if limpiar_precio_natura(p) > 0]
+            # Nombre
+            m_name = re.search(r'(?:"productName"|"name"|"title")\s*:\s*"([^"]{3,120})"', sub, re.I)
+            nombre_raw = ""
+            if m_name and 'NATPER' not in m_name.group(1) and 'AGREGAR' not in m_name.group(1).upper():
+                nombre_raw = m_name.group(1)
+            else:
+                slug_part = rel_link.split('/p/')[1].split('/NATPER-')[0]
+                words = [w.capitalize() for w in slug_part.split('-') if not w.isdigit()]
+                nombre_raw = " ".join(words)
 
-            p_o, p_r = 0.0, 0.0
-            if precios_num:
-                unicos = sorted(list(set(precios_num)))
-                p_o = unicos[0]
-                p_r = unicos[-1]
+            clean_n = nombre_raw.replace("NATURA -", "").replace("NATURA", "").strip("- ").upper()
+            if not clean_n or len(clean_n) < 3 or clean_n in ['COMPRAR', 'VER MÁS', 'AGREGAR', 'AGREGAR A MI BOLSA']:
+                continue
+            nombre_final = f"NATURA - {clean_n}"
 
-            img_src = img_el.get('src', '') or img_el.get('data-src', '') if img_el else ''
-            procesar_producto_acumulativo(productos_map, link_final, nombre_raw, p_o, p_r, img_src, limite)
+            # Precios
+            p_o = 0.0
+            p_r = 0.0
+            if sub:
+                spot_matches = re.findall(r'(?:"spotPrice"|"price"|"Price"|"value")\s*:\s*(\d+(?:\.\d+)?)', sub)
+                list_matches = re.findall(r'(?:"listPrice"|"ListPrice")\s*:\s*(\d+(?:\.\d+)?)', sub)
+
+                if spot_matches:
+                    valid_spot = [float(x) for x in spot_matches if float(x) > 0]
+                    if valid_spot: p_o = valid_spot[0]
+
+                if list_matches:
+                    valid_list = [float(x) for x in list_matches if float(x) > 0]
+                    if valid_list: p_r = valid_list[0]
+
+                if p_o <= 0:
+                    txt_matches = re.findall(r'(?:S/\.?\s*|PEN\s*)(\d+[\d\.,]*)', sub)
+                    valid_prices = []
+                    for tm in txt_matches:
+                        raw_num = tm.replace(',', '') if ',' in tm and '.' in tm else tm.replace(',', '.')
+                        try:
+                            val = float(raw_num)
+                            if val > 0: valid_prices.append(val)
+                        except ValueError: pass
+                    if valid_prices:
+                        p_o = min(valid_prices)
+                        p_r = max(valid_prices)
+
+            # Imagen
+            p_img = re.compile(rf'(https?://[^\s"\'>\\]+?NATPER-{natper_id}[^\s"\'>\\]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"\'>\\]*)?)', re.I)
+            m_img = p_img.search(clean_html)
+            img_url = m_img.group(1) if m_img else ""
+
+            if p_o > 0 and p_o <= limite:
+                if link_final not in productos_map:
+                    productos_map[link_final] = {
+                        "nombre": nombre_final,
+                        "precio": p_o,
+                        "precio_regular": max(p_r, p_o),
+                        "link": link_final,
+                        "img": img_url
+                    }
+                else:
+                    if not productos_map[link_final]["img"] and img_url:
+                        productos_map[link_final]["img"] = img_url
         except Exception:
             continue
 
+    return list(productos_map.values())
+
 def motor_natura(url, limite=999999.0, headers=None):
     """
-    Motor principal de extracción simplificado y desacoplado.
+    Motor principal de extracción para Natura Perú.
     """
-    productos_map = {}
     url_base = sanitizar_url(url)
     url_final = asegurar_pagesize(url_base, page_size=48)
 
     safe_log(f"🚀 [NATURA] Consultando catálogo completo: {url_final}", "info")
 
     html_content = consultar_natura_html(url_final)
-
     if not html_content:
-        safe_log("🛑 [NATURA] No se pudo obtener el contenido HTML de la página.", "error")
+        safe_log("🛑 [NATURA] No se obtuvo contenido HTML de la página.", "error")
         return []
 
-    # 1. Extracción desde las tramas de Next.js App Router (self.__next_f)
-    extraer_de_next_stream_payloads(html_content, productos_map, limite)
+    productos_finales = extraer_todos_los_productos_natura(html_content, limite)
 
-    # 2. Extracción complementaria desde el DOM
-    soup = BeautifulSoup(html_content, 'html.parser')
-    extraer_de_dom_bs4(soup, productos_map, limite, html_content)
-
-    productos_finales = list(productos_map.values())
     if productos_finales:
-        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron un total de {len(productos_finales)} ofertas válidas de la grilla principal.", "success")
+        safe_log(f"✅ [NATURA] ¡Éxito! Se indexaron {len(productos_finales)} ofertas reales de la grilla principal.", "success")
     else:
         safe_log(f"⚠️ [NATURA] No se encontraron productos bajo S/. {limite:.2f}", "warning")
 
