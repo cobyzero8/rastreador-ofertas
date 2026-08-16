@@ -11,7 +11,7 @@ from utils import sanitizar_url, safe_log
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # -------------------------
-# Configuración y Claves
+# Configuración de Claves y URLs
 # -------------------------
 def obtener_key_natura():
     key = None
@@ -36,32 +36,54 @@ def asegurar_pagesize(url_base, page_size=48):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 # -------------------------
-# Descarga HTML
+# Descarga HTML con Diagnóstico Detallado de Logs
 # -------------------------
 def descargar_html(url_destino, headers=None):
     if headers is None:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            "Sec-Ch-Ua": '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
             "Referer": "https://www.natura.com.pe/"
         }
 
+    # 1. Intentar Petición Directa
     try:
-        resp = requests.get(url_destino, headers=headers, timeout=12, verify=False)
-        if resp.status_code == 200 and len(resp.text) > 1500:
+        session = requests.Session()
+        resp = session.get(url_destino, headers=headers, timeout=15, verify=False)
+        if resp.status_code == 200 and len(resp.text) > 2000:
+            safe_log(f"🌐 [NATURA] Petición directa exitosa ({len(resp.text)} bytes).", "info")
             return resp.text
-    except Exception:
-        pass
+        else:
+            safe_log(f"⚠️ [NATURA] Petición directa devuelta con estado HTTP {resp.status_code} (Longitud: {len(resp.text)} bytes).", "warning")
+    except Exception as e:
+        safe_log(f"⚠️ [NATURA] Fallo en conexión directa: {str(e)}", "warning")
 
+    # 2. Respaldo a ScraperAPI si la petición directa fue bloqueada
     key = obtener_key_natura()
-    if key:
-        try:
-            payload = {'api_key': key, 'url': url_destino, 'render': 'true'}
-            resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers, timeout=35)
-            if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
-                return resp_sc.text
-        except Exception:
-            pass
+    if not key:
+        safe_log("🛑 [NATURA] La petición directa falló y no se encontró API Key de ScraperAPI configurada.", "error")
+        return None
+
+    safe_log("🔄 [NATURA] Intentando descarga a través de ScraperAPI...", "info")
+    try:
+        payload = {'api_key': key, 'url': url_destino, 'render': 'false'}
+        resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers, timeout=25)
+        if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
+            safe_log(f"🌐 [NATURA] ScraperAPI respuesta exitosa ({len(resp_sc.text)} bytes).", "info")
+            return resp_sc.text
+        else:
+            safe_log(f"🛑 [NATURA] ScraperAPI devolvió estado {resp_sc.status_code}.", "error")
+    except Exception as e:
+        safe_log(f"🛑 [NATURA] Error al conectar con ScraperAPI: {str(e)}", "error")
 
     return None
 
@@ -195,7 +217,7 @@ def extraer_producto_desde_dict(data):
     return None
 
 # -------------------------
-# Estrategia 1: Next.js Stream Balanceado
+# Extracción desde Next.js Stream
 # -------------------------
 def extraer_desde_next_stream(html_text, productos_map, limite):
     clean_html = html_text.replace(r'\/', '/').replace(r'\"', '"').replace('&quot;', '"').replace('&amp;', '&')
@@ -235,7 +257,7 @@ def extraer_desde_next_stream(html_text, productos_map, limite):
                         break
 
 # -------------------------
-# Estrategia 2: Extracción DOM Exacta (DevTools IDs)
+# Extracción DOM Exacta (IDs de DevTools)
 # -------------------------
 def extraer_desde_dom_grid(soup, productos_map, limite):
     cards = soup.find_all(['article', 'div'], attrs={'data-testid': re.compile(r'product-card', re.I)}) or \
@@ -273,8 +295,7 @@ def extraer_desde_dom_grid(soup, productos_map, limite):
             if not nombre_final:
                 continue
 
-            # PRECIOS EXTRAÍDOS DE DEVTOOLS (IMÁGENES 4 Y 5)
-            # 1. Precio "Por" (Oferta Real) -> span#product-price-por
+            # 1. Precio "Por" (Oferta) -> span#product-price-por
             precio_oferta = 0.0
             el_por = card.find(attrs={'id': 'product-price-por'}) or \
                      card.find(attrs={'data-testid': 'product-price-por'}) or \
@@ -291,7 +312,6 @@ def extraer_desde_dom_grid(soup, productos_map, limite):
             if el_de:
                 precio_regular = limpiar_precio(el_de.get_text())
 
-            # Fallback en contenedor de precios
             price_container = card.find(attrs={'id': re.compile(r'product-price', re.I)}) or card
             if precio_oferta <= 0 or precio_regular <= 0:
                 texto_precio = price_container.get_text(separator=' ', strip=True)
@@ -323,7 +343,6 @@ def extraer_desde_dom_grid(soup, productos_map, limite):
                         "img": img_src
                     }
                 else:
-                    # ACTUALIZACIÓN FORZOSA DE AMBOS PRECIOS DESDE EL DOM
                     productos_map[link_final]["precio"] = precio_oferta
                     productos_map[link_final]["precio_regular"] = max(precio_regular, precio_oferta)
                     productos_map[link_final]["descuento_pct"] = calcular_descuento(precio_oferta, productos_map[link_final]["precio_regular"])
