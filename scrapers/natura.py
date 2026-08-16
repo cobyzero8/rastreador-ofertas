@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-# motor_natura.py
-# Extrae productos desde la grilla PLP de natura.com.pe
-
 import os
 import re
 import json
@@ -10,26 +6,34 @@ import requests
 import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
+from utils import sanitizar_url, safe_log
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# -------------------------
+# Configuración y Obtención de Claves
+# -------------------------
 def obtener_key_natura():
-    key = os.environ.get("SCRAPERAPI_NATURA_KEY") or os.environ.get("SCRAPERAPI_KEY")
+    """
+    Obtiene la clave de ScraperAPI priorizando Streamlit secrets o variables de entorno.
+    """
+    key = None
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            key = st.secrets.get("SCRAPERAPI_NATURA_KEY") or st.secrets.get("SCRAPERAPI_KEY")
+    except Exception:
+        pass
+
+    if not key:
+        key = os.environ.get("SCRAPERAPI_NATURA_KEY") or os.environ.get("SCRAPERAPI_KEY")
+
     return key.strip() if key else None
 
-def safe_log(msg, level="info"):
-    print(f"[{level.upper()}] {msg}")
-
-def sanitizar_url(u):
-    if not u:
-        return u
-    parsed = urlparse(u)
-    scheme = parsed.scheme or "https"
-    netloc = parsed.netloc or parsed.path
-    path = parsed.path if parsed.netloc else ""
-    return urlunparse((scheme, netloc, path, parsed.params, parsed.query, parsed.fragment))
-
 def asegurar_pagesize(url_base, page_size=48):
+    """
+    Garantiza que la URL incluya el parámetro pageSize=48.
+    """
     parsed = urlparse(url_base)
     query_dict = parse_qs(parsed.query)
     if 'pageSize' not in query_dict:
@@ -37,6 +41,9 @@ def asegurar_pagesize(url_base, page_size=48):
     new_query = urlencode(query_dict, doseq=True)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
+# -------------------------
+# Descarga HTML (Directa o ScraperAPI)
+# -------------------------
 def descargar_html(url_destino, headers=None):
     if headers is None:
         headers = {
@@ -44,6 +51,8 @@ def descargar_html(url_destino, headers=None):
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": "https://www.natura.com.pe/"
         }
+
+    # 1. Intento directo
     try:
         resp = requests.get(url_destino, headers=headers, timeout=12, verify=False)
         if resp.status_code == 200 and len(resp.text) > 1500:
@@ -51,6 +60,7 @@ def descargar_html(url_destino, headers=None):
     except Exception:
         pass
 
+    # 2. Respaldo ScraperAPI
     key = obtener_key_natura()
     if key:
         try:
@@ -63,6 +73,9 @@ def descargar_html(url_destino, headers=None):
 
     return None
 
+# -------------------------
+# Helpers de Procesamiento de Datos
+# -------------------------
 def limpiar_precio(texto):
     if not texto:
         return 0.0
@@ -112,11 +125,12 @@ def calcular_descuento(precio_oferta, precio_regular):
         pass
     return 0.0
 
+# -------------------------
+# Estrategia 1: Next.js Stream / JSON
+# -------------------------
 def extraer_desde_next_stream(html_text, productos_map, limite):
-    """Extrae las fichas de producto desde las tramas Next.js App Router (self.__next_f)."""
     clean_html = html_text.replace(r'\/', '/').replace(r'\"', '"').replace('&quot;', '"').replace('&amp;', '&')
     
-    # Búsqueda por IDs de producto NATPER-XXXXX
     natper_matches = list(re.finditer(r'NATPER-\d+', clean_html, re.I))
     for m in natper_matches:
         start_pos = m.start()
@@ -156,12 +170,14 @@ def extraer_desde_next_stream(html_text, productos_map, limite):
             except Exception:
                 pass
 
+# -------------------------
+# Estrategia 2: Extracción del DOM
+# -------------------------
 def extraer_desde_dom_grid(soup, productos_map, limite):
-    """Extrae las tarjetas directamente del contenedor de la grilla HTML."""
     grid = soup.find(attrs={'data-testid': 'plp-products-grid'}) or soup
     cards = grid.find_all(['article', 'div'], attrs={'data-testid': re.compile(r'product-card', re.I)}) \
             or grid.find_all(['article', 'div'], attrs={'id': re.compile(r'product-card', re.I)})
-    
+
     if not cards:
         cards = [c for c in grid.find_all(['div', 'article']) if c.find('a', href=lambda h: h and '/p/' in h.lower())]
 
@@ -230,25 +246,32 @@ def extraer_desde_dom_grid(soup, productos_map, limite):
         except Exception:
             continue
 
-def motor_natura(url, limite=999999.0, delay_between_requests=0.5):
+# -------------------------
+# Motor Principal Integrado
+# -------------------------
+def motor_natura(url, limite=999999.0, headers=None):
+    """
+    Función principal llamada por el enrutador del proyecto.
+    """
     productos_map = {}
     url_base = sanitizar_url(url)
     url_final = asegurar_pagesize(url_base, page_size=48)
-    safe_log(f"Escaneando catálogo: {url_final}", "info")
+    
+    safe_log(f"🚀 [NATURA] Escaneando catálogo: {url_final}", "info")
 
-    html_content = descargar_html(url_final)
+    html_content = descargar_html(url_final, headers=headers)
     if not html_content:
-        safe_log("No se pudo obtener el contenido HTML.", "error")
+        safe_log("🛑 [NATURA] No se pudo obtener el contenido HTML de la página.", "error")
         return []
 
-    # 1) Extracción de tramas Next.js
+    # 1. Extracción de tramas Next.js
     extraer_desde_next_stream(html_content, productos_map, limite)
 
-    # 2) Extracción DOM HTML
+    # 2. Extracción DOM HTML
     soup = BeautifulSoup(html_content, 'html.parser')
     extraer_desde_dom_grid(soup, productos_map, limite)
 
-    # 3) Paginación
+    # 3. Paginación secuencial
     next_links = []
     try:
         rel_next = soup.find('link', rel='next')
@@ -270,9 +293,9 @@ def motor_natura(url, limite=999999.0, delay_between_requests=0.5):
         if nl in visited:
             continue
         visited.add(nl)
-        time.sleep(delay_between_requests)
-        safe_log(f"Siguiendo paginación: {nl}", "info")
-        html2 = descargar_html(asegurar_pagesize(nl))
+        time.sleep(0.5)
+        safe_log(f"🔄 [NATURA] Siguiendo paginación: {nl}", "info")
+        html2 = descargar_html(asegurar_pagesize(nl), headers=headers)
         if not html2:
             continue
         extraer_desde_next_stream(html2, productos_map, limite)
@@ -281,18 +304,9 @@ def motor_natura(url, limite=999999.0, delay_between_requests=0.5):
         pages += 1
 
     productos_finales = list(productos_map.values())
-    safe_log(f"Productos extraídos: {len(productos_finales)}", "info")
+    if productos_finales:
+        safe_log(f"✅ [NATURA] Se extrajeron un total de {len(productos_finales)} ofertas válidas.", "success")
+    else:
+        safe_log(f"⚠️ [NATURA] No se encontraron productos bajo S/. {limite:.2f}", "warning")
+
     return productos_finales
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Motor Natura - extrae productos desde PLP de natura.com.pe")
-    parser.add_argument("url", help="URL de la categoría o búsqueda")
-    parser.add_argument("--limite", type=float, default=999999.0, help="Precio máximo para filtrar ofertas")
-    parser.add_argument("--out", default="productos_natura.json", help="Archivo JSON de salida")
-    args = parser.parse_args()
-
-    resultados = motor_natura(args.url, limite=args.limite)
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(resultados, f, ensure_ascii=False, indent=2)
-    safe_log(f"Guardado {len(resultados)} productos en {args.out}", "info")
