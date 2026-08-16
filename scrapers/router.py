@@ -20,7 +20,7 @@ from .conecta_retail import motor_conecta_retail
 from .general import motor_tradicional_general
 from .belcorp import motor_belcorp
 from .jbl import motor_jbl
-from .natura import motor_natura
+from .ripley import motor_ripley
 
 
 
@@ -76,8 +76,8 @@ def escanear_tienda(url: str, tienda: str = "GENERAL", precio_max: float = 99999
             return motor_belcorp(url, precio_max)
         elif "jbl.com.pe" in domain or "JBL" in tienda_upper:
             return motor_jbl(url, precio_max)
-        elif "natura.com.pe" in domain or "NATURA" in tienda_upper:
-            return motor_natura(url, precio_max)
+        elif "ripley.com.pe" in domain or tienda_upper == "RIPLEY":
+            return motor_ripley(url, precio_max)
         else:
             return motor_tradicional_general(url, precio_max)
             
