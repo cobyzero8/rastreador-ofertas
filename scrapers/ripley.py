@@ -1,10 +1,17 @@
 import os
 import re
 import json
+import logging
 import requests
 import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
+
+# Silenciar advertencias de Streamlit en ejecuciones CLI / Cron
+os.environ["STREAMLIT_LOG_LEVEL"] = "error"
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+
 from utils import sanitizar_url, safe_log
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -13,16 +20,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Obtención de Claves
 # -------------------------
 def obtener_key_ripley():
-    key = None
-    try:
-        import streamlit as st
-        if hasattr(st, "secrets"):
-            key = st.secrets.get("SCRAPERAPI_RIPLEY_KEY") or st.secrets.get("SCRAPERAPI_KEY")
-    except Exception:
-        pass
-
+    key = os.environ.get("SCRAPERAPI_RIPLEY_KEY") or os.environ.get("SCRAPERAPI_KEY")
+    
     if not key:
-        key = os.environ.get("SCRAPERAPI_RIPLEY_KEY") or os.environ.get("SCRAPERAPI_KEY")
+        try:
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            if get_script_run_ctx() is not None:
+                import streamlit as st
+                if hasattr(st, "secrets"):
+                    key = st.secrets.get("SCRAPERAPI_RIPLEY_KEY") or st.secrets.get("SCRAPERAPI_KEY")
+        except Exception:
+            pass
 
     return key.strip() if key else None
 
@@ -153,8 +161,6 @@ def extraer_desde_next_data(soup, productos_map, limite):
                     link_final = f"https://simple.ripley.com.pe/p/{unique_id}"
 
                 link_final = link_final.split('?')[0].split('#')[0]
-
-                # Clave única para evitar sobreescritura de duplicados
                 item_key = f"{link_final}#{unique_id}"
 
                 prices = p.get('prices') or p.get('price') or {}
@@ -176,7 +182,6 @@ def extraer_desde_next_data(soup, productos_map, limite):
                 if p_regular < p_oferta or p_regular <= 0:
                     p_regular = p_oferta
 
-                # Imagen CDN
                 img_url = str(p.get('thumbnail') or p.get('fullImage') or p.get('image') or '').strip()
                 if not img_url:
                     imgs = p.get('images')
@@ -208,7 +213,7 @@ def extraer_desde_next_data(soup, productos_map, limite):
         safe_log(f"⚠️ [RIPLEY JSON] Error en __NEXT_DATA__: {str(e)}", "warning")
 
 # -------------------------
-# Estrategia 2: Extracción DOM Específica
+# Estrategia 2: Extracción DOM
 # -------------------------
 def extraer_desde_dom_ripley(soup, productos_map, limite):
     cards = soup.find_all(['div', 'article'], class_=re.compile(r'\bcatalog-product-item\b', re.I))
