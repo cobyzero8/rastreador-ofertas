@@ -370,7 +370,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                 if st.session_state.mod_id is not None:
                     supabase.table("radares").update({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).eq("id", st.session_state.mod_id).execute()
                 else:
-                    supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id}).execute()
+                    supabase.table("radares").insert({"url": url.strip(), "precio_max": precio_max, "identificador": nuevo_id, "activo": True}).execute()
                 st.session_state.mod_id = None
                 st.session_state.mod_nombre, st.session_state.mod_url = "", ""
                 st.rerun()
@@ -394,18 +394,33 @@ elif menu == "🛠️ Configurar Radares y URLs":
                 items_tienda = radares_por_tienda[tienda_nombre]
                 cant_radares = len(items_tienda)
 
-                with st.expander(f"🏪 **{tienda_nombre}** ({cant_radares} radar{'es' if cant_radares > 1 else ''} activo{'s' if cant_radares > 1 else ''})", expanded=False):
+                with st.expander(f"🏪 **{tienda_nombre}** ({cant_radares} radar{'es' if cant_radares > 1 else ''})", expanded=False):
                     for index, (item, parts) in enumerate(items_tienda):
+                        es_activo = item.get("activo", True)
+                        if es_activo is None:
+                            es_activo = True
+
                         with st.container(border=True):
-                            col_info, col_mod, col_del = st.columns([7.5, 1.25, 1.25])
+                            # Distribución de columnas con espacio para el Toggle
+                            col_info, col_toggle, col_mod, col_del = st.columns([5.5, 1.5, 1.5, 1.5])
+                            
                             p_tienda = parts[0] if len(parts) > 0 else "OTRAS"
                             p_cat = parts[1].replace('_', ' ') if len(parts) > 1 else "GENERAL"
                             p_tag = parts[2] if len(parts) > 2 else "N/A"
                             p_talla = parts[3] if len(parts) > 3 else "Todas"
 
+                            indicador_estado = "🟢 **[ACTIVO]**" if es_activo else "🔴 **[INACTIVO]**"
+
                             with col_info:
-                                st.markdown(f"**{index + 1}. 🌐 [{p_tienda}]** | #{p_cat} | Etiqueta: `{p_tag}` | **Tope: S/. {item.get('precio_max', 0):.2f}**")
+                                st.markdown(f"**{index + 1}. 🌐 [{p_tienda}]** {indicador_estado} | #{p_cat} | Etiqueta: `{p_tag}` | **Tope: S/. {item.get('precio_max', 0):.2f}**")
                                 st.caption(f"🔗 **URL:** {item.get('url', '')}")
+                            
+                            with col_toggle:
+                                lbl_btn = "⏸️ Pausar" if es_activo else "▶️ Activar"
+                                if st.button(lbl_btn, key=f"t_{item['id']}", use_container_width=True):
+                                    supabase.table("radares").update({"activo": not es_activo}).eq("id", item['id']).execute()
+                                    st.rerun()
+
                             with col_mod:
                                 if st.button("📝 Modificar", key=f"m_{item['id']}", use_container_width=True):
                                     st.session_state.mod_id = item["id"]
@@ -416,6 +431,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                                     st.session_state.mod_url = item.get("url", "")
                                     st.session_state.mod_precio = item.get("precio_max", 100)
                                     st.rerun()
+
                             with col_del:
                                 if st.button("🗑️ Eliminar", key=f"d_{item['id']}", use_container_width=True):
                                     supabase.table("radares").delete().eq("id", item['id']).execute()
