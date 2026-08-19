@@ -66,17 +66,16 @@ def descargar_html_ripley(url_destino, headers=None):
 # -------------------------
 # Utilidades de Limpieza
 # -------------------------
-def limpiar_precio(texto):
+def extraer_monto_num(texto):
     if not texto:
         return 0.0
     if isinstance(texto, (int, float)):
         return float(texto)
-    s = str(texto).replace('\xa0', ' ').replace('&nbsp;', ' ')
-    s = re.sub(r'[^\d,.\s]', '', s).strip()
-    m = re.search(r'\d+(?:[.,]\d+)?', s)
+    # Extrae explícitamente el valor numérico ignorando porcentajes de descuento (-50%)
+    m = re.search(r'(?:S/\.?\s*|PEN\s*|S/)?\s*(\d+(?:[.,]\d+)?)', str(texto))
     if not m:
         return 0.0
-    raw = m.group(0)
+    raw = m.group(1)
     if ',' in raw and '.' in raw:
         raw = raw.replace(',', '')
     elif ',' in raw and len(raw.split(',')[-1]) == 2:
@@ -98,7 +97,7 @@ def limpiar_nombre(nombre_raw):
     elif up.startswith("RIPLEY"):
         clean = clean[6:].strip()
     clean = clean.lstrip('- ').strip()
-    if not clean or len(clean) < 2:
+    if not clean or len(clean) < 2 or clean.upper() in ['BÚSQUEDA', 'CALZADO', 'DEPORTE']:
         return ""
     return f"RIPLEY - {clean}"
 
@@ -112,8 +111,25 @@ def calcular_descuento(precio_oferta, precio_regular):
     return 0.0
 
 # -------------------------
-# Extracción Recursiva Universal JSON (__NEXT_DATA__)
+# Localización Exacta de la Lista de Productos en JSON
 # -------------------------
+def buscar_arreglo_productos_json(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in ['products', 'results', 'items'] and isinstance(v, list) and len(v) > 0:
+                primer_elem = v[0]
+                if isinstance(primer_elem, dict) and any(x in primer_elem for x in ['name', 'fullTitle', 'uniqueID', 'partNumber']):
+                    return v
+            res = buscar_arreglo_productos_json(v)
+            if res:
+                return res
+    elif isinstance(obj, list):
+        for item in obj:
+            res = buscar_arreglo_productos_json(item)
+            if res:
+                return res
+    return []
+
 def extraer_desde_next_data(soup, productos_map, limite):
     script_next = soup.find('script', id='__NEXT_DATA__')
     if not script_next or not script_next.string:
@@ -121,29 +137,10 @@ def extraer_desde_next_data(soup, productos_map, limite):
 
     try:
         json_data = json.loads(script_next.string)
-        productos_recolectados = []
+        productos_raw = buscar_arreglo_productos_json(json_data.get('props', {}))
+        safe_log(f"📦 [RIPLEY JSON] Se aislaron {len(productos_raw)} productos en __NEXT_DATA__.", "info")
 
-        def recorrer_json(obj):
-            if isinstance(obj, dict):
-                name = str(obj.get('name') or obj.get('fullTitle') or obj.get('title') or '').strip()
-                url = str(obj.get('url') or obj.get('fullUrl') or obj.get('path') or '').strip()
-                prices = obj.get('prices') or obj.get('price')
-
-                # Criterio de validación de ficha de producto
-                if name and (url or obj.get('uniqueID') or obj.get('partNumber')) and (prices is not None or '/p' in url.lower() or 'pmp' in url.lower()):
-                    productos_recolectados.append(obj)
-                    return
-
-                for v in obj.values():
-                    recorrer_json(v)
-            elif isinstance(obj, list):
-                for item in obj:
-                    recorrer_json(item)
-
-        recorrer_json(json_data)
-        safe_log(f"📦 [RIPLEY JSON] Se recolectaron {len(productos_recolectados)} nodos de productos en __NEXT_DATA__.", "info")
-
-        for p in productos_recolectados:
+        for p in productos_raw:
             try:
                 name = p.get('name') or p.get('fullTitle') or p.get('title') or ''
                 rel_url = p.get('url') or p.get('fullUrl') or p.get('path') or ''
@@ -163,9 +160,9 @@ def extraer_desde_next_data(soup, productos_map, limite):
                 p_lista = 0.0
 
                 if isinstance(prices, dict):
-                    p_tarjeta = limpiar_precio(prices.get('cardPrice') or prices.get('formattedCardPrice') or prices.get('ripleyPrice'))
-                    p_venta = limpiar_precio(prices.get('offerPrice') or prices.get('discountPrice') or prices.get('formattedOfferPrice') or prices.get('salePrice'))
-                    p_lista = limpiar_precio(prices.get('listPrice') or prices.get('normalPrice') or prices.get('formattedListPrice') or prices.get('price'))
+                    p_tarjeta = extraer_monto_num(prices.get('cardPrice') or prices.get('formattedCardPrice') or prices.get('ripleyPrice'))
+                    p_venta = extraer_monto_num(prices.get('offerPrice') or prices.get('discountPrice') or prices.get('formattedOfferPrice') or prices.get('salePrice'))
+                    p_lista = extraer_monto_num(prices.get('listPrice') or prices.get('normalPrice') or prices.get('formattedListPrice') or prices.get('price'))
                 elif isinstance(prices, (int, float)):
                     p_venta = float(prices)
                     p_lista = p_venta
@@ -205,19 +202,18 @@ def extraer_desde_next_data(soup, productos_map, limite):
             except Exception:
                 continue
     except Exception as e:
-        safe_log(f"⚠️ [RIPLEY JSON] Error al procesar __NEXT_DATA__: {str(e)}", "warning")
+        safe_log(f"⚠️ [RIPLEY JSON] Error en __NEXT_DATA__: {str(e)}", "warning")
 
 # -------------------------
-# Estrategia 2: Extracción DOM Exacta
+# Estrategia 2: Extracción DOM Específica
 # -------------------------
 def extraer_desde_dom_ripley(soup, productos_map, limite):
-    # Selector estricto de contenedor para no capturar elementos hijos
     cards = soup.find_all(['div', 'article'], class_=re.compile(r'\bcatalog-product-item\b', re.I))
 
     if not cards:
         cards = [a.parent for a in soup.find_all('a', href=re.compile(r'/pmp|-p|/zapatillas', re.I)) if a.parent]
 
-    safe_log(f"🔎 [RIPLEY DOM] Tarjetas contenedoras aisladas: {len(cards)}", "info")
+    safe_log(f"🔎 [RIPLEY DOM] Tarjetas de producto procesadas: {len(cards)}", "info")
 
     for card in cards:
         try:
@@ -241,23 +237,15 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             if not nombre_final:
                 continue
 
-            # Extracción explícita de precios DOM
-            el_lista = card.find(class_=re.compile(r'product-price-old-price-container|product-price-strikethrough', re.I))
-            p_lista = limpiar_precio(el_lista.get_text()) if el_lista else 0.0
+            # Extracción limpia aislando etiquetas de precio para evitar interferencias de Badges (-50%)
+            el_lista = card.find(class_=re.compile(r'product-price-strikethrough|product-price-old-price-container', re.I))
+            p_lista = extraer_monto_num(el_lista.get_text()) if el_lista else 0.0
 
-            el_venta = card.find(class_=re.compile(r'product-price-container', re.I))
-            p_venta = limpiar_precio(el_venta.get_text()) if el_venta else 0.0
+            el_venta = card.find(class_=re.compile(r'product-price-price-no-strikethrough|product-price-container', re.I))
+            p_venta = extraer_monto_num(el_venta.get_text()) if el_venta else 0.0
 
-            el_ripley = card.find(class_=re.compile(r'product-price-ripley-price-container|product-price-color-red', re.I))
-            p_ripley = limpiar_precio(el_ripley.get_text()) if el_ripley else 0.0
-
-            if p_ripley <= 0 and p_venta <= 0 and p_lista <= 0:
-                texto_card = card.get_text(separator=' ', strip=True)
-                precios_found = re.findall(r'(?:S/\.?\s*|PEN\s*|S/)\s*([\d\.,]+)', texto_card)
-                precios_num = [limpiar_precio(p) for p in precios_found if limpiar_precio(p) > 0]
-                if precios_num:
-                    p_venta = min(precios_num)
-                    p_lista = max(precios_num) if len(precios_num) > 1 else p_venta
+            el_ripley = card.find(class_=re.compile(r'product-price-price-ripley-price|product-price-ripley-price-container', re.I))
+            p_ripley = extraer_monto_num(el_ripley.get_text()) if el_ripley else 0.0
 
             p_oferta = p_ripley if p_ripley > 0 else (p_venta if p_venta > 0 else p_lista)
             p_regular = p_lista if p_lista > 0 else max(p_venta, p_ripley, p_lista)
@@ -305,7 +293,7 @@ def motor_ripley(url, limite=999999.0, headers=None):
     # 1. Extracción desde JSON
     extraer_desde_next_data(soup, productos_map, limite)
 
-    # 2. Extracción y sincronización exacta desde el DOM
+    # 2. Sincronización y respaldo desde el DOM
     extraer_desde_dom_ripley(soup, productos_map, limite)
 
     productos_finales = list(productos_map.values())
