@@ -1,6 +1,11 @@
 import re
 import streamlit as st
 from urllib.parse import urlparse, urlunparse
+import logging
+
+# Desactivar advertencias de contexto de Streamlit en ejecuciones CLI/Cron
+logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 def safe_log(mensaje, tipo="info"):
     """Imprime mensajes en consola y en Streamlit si la interfaz está activa."""
