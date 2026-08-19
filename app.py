@@ -316,6 +316,28 @@ elif menu == "🏥 Salud de Scrapers (Health Check)":
 # ---------------------------
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
+    # 🟢 RESUMEN DE RADARES ACTIVOS / PAUSADOS
+    try:
+        res_conteo = supabase.table("radares").select("id, identificador, url, activo").execute()
+        if res_conteo.data:
+            totales = len(res_conteo.data)
+            activos = sum(1 for r in res_conteo.data if r.get("activo", True) is not False)
+            pausados = totales - activos
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("📊 Total Radares Registrados", totales)
+            m2.metric("🟢 Radares En Servicio", activos)
+            m3.metric("🔴 Radares Pausados / Inactivos", pausados)
+
+            # Si hay radares pausados, mostrar una vista rápida
+            if pausados > 0:
+                with st.expander("👁️ Ver lista de URLs deshabilitadas actualmente", expanded=False):
+                    for r in res_conteo.data:
+                        if r.get("activo") is False:
+                            st.write(f"🔴 **{r.get('identificador')}** ➔ `{r.get('url')}`")
+        st.write("---")
+    except Exception as ex_m:
+        pass
     lista_tiendas = obtener_tiendas_dinamicas()
     cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"]
 
