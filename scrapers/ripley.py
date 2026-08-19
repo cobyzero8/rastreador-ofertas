@@ -161,7 +161,6 @@ def extraer_desde_next_data(soup, productos_map, limite):
                     link_final = f"https://simple.ripley.com.pe/p/{unique_id}"
 
                 link_final = link_final.split('?')[0].split('#')[0]
-                item_key = f"{link_final}#{unique_id}"
 
                 prices = p.get('prices') or p.get('price') or {}
                 p_tarjeta = 0.0
@@ -198,8 +197,8 @@ def extraer_desde_next_data(soup, productos_map, limite):
                 nombre_final = limpiar_nombre(name)
                 descuento_pct = calcular_descuento(p_oferta, p_regular)
 
-                if p_oferta > 0 and p_oferta <= limite and nombre_final:
-                    productos_map[item_key] = {
+                if p_oferta > 0 and nombre_final:
+                    productos_map[link_final] = {
                         "nombre": nombre_final,
                         "precio": p_oferta,
                         "precio_regular": p_regular,
@@ -213,7 +212,7 @@ def extraer_desde_next_data(soup, productos_map, limite):
         safe_log(f"⚠️ [RIPLEY JSON] Error en __NEXT_DATA__: {str(e)}", "warning")
 
 # -------------------------
-# Estrategia 2: Extracción DOM
+# Estrategia 2: Extracción y Sincronización DOM Exacta
 # -------------------------
 def extraer_desde_dom_ripley(soup, productos_map, limite):
     cards = soup.find_all(['div', 'article'], class_=re.compile(r'\bcatalog-product-item\b', re.I))
@@ -223,7 +222,7 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
 
     safe_log(f"🔎 [RIPLEY DOM] Tarjetas de producto procesadas: {len(cards)}", "info")
 
-    for idx, card in enumerate(cards, 1):
+    for card in cards:
         try:
             a_tag = card if card.name == 'a' else card.find('a', href=True)
             if not a_tag or not a_tag.get('href'):
@@ -232,8 +231,6 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             href = a_tag['href'].strip()
             link_final = href if href.startswith('http') else f"https://simple.ripley.com.pe{href}"
             link_final = link_final.split('?')[0].split('#')[0]
-
-            item_key = f"{link_final}#{idx}"
 
             img_el = card.find('img')
             img_src = img_el.get('src') or img_el.get('data-src') or '' if img_el else ''
@@ -247,14 +244,24 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             if not nombre_final:
                 continue
 
-            el_lista = card.find(class_=re.compile(r'product-price-strikethrough|product-price-old-price-container', re.I))
+            # Extracción limpia de selectores específicos
+            el_lista = card.find(class_=re.compile(r'product-price-strikethrough|product-price-old-price', re.I))
             p_lista = extraer_monto_num(el_lista.get_text()) if el_lista else 0.0
 
-            el_venta = card.find(class_=re.compile(r'product-price-price-no-strikethrough|product-price-container', re.I))
+            el_venta = card.find(class_=re.compile(r'product-price-price-no-strikethrough', re.I))
             p_venta = extraer_monto_num(el_venta.get_text()) if el_venta else 0.0
 
-            el_ripley = card.find(class_=re.compile(r'product-price-price-ripley-price|product-price-ripley-price-container', re.I))
+            el_ripley = card.find(class_=re.compile(r'product-price-price-ripley-price|product-price-color-red', re.I))
             p_ripley = extraer_monto_num(el_ripley.get_text()) if el_ripley else 0.0
+
+            # Fallback a contenedores amplios en caso de etiquetas genéricas
+            if p_ripley <= 0 and p_venta <= 0 and p_lista <= 0:
+                texto_card = card.get_text(separator=' ', strip=True)
+                precios_found = re.findall(r'(?:S/\.?\s*|PEN\s*|S/)\s*([\d\.,]+)', texto_card)
+                precios_num = [extraer_monto_num(p) for p in precios_found if extraer_monto_num(p) > 0]
+                if precios_num:
+                    p_venta = min(precios_num)
+                    p_lista = max(precios_num) if len(precios_num) > 1 else p_venta
 
             p_oferta = p_ripley if p_ripley > 0 else (p_venta if p_venta > 0 else p_lista)
             p_regular = p_lista if p_lista > 0 else max(p_venta, p_ripley, p_lista)
@@ -264,9 +271,16 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
 
             descuento_pct = calcular_descuento(p_oferta, p_regular)
 
-            if p_oferta > 0 and p_oferta <= limite:
-                if item_key not in productos_map and link_final not in [v['link'] for v in productos_map.values()]:
-                    productos_map[item_key] = {
+            if p_oferta > 0:
+                # Sincronizar o agregar al mapa global
+                if link_final in productos_map:
+                    productos_map[link_final]["precio"] = p_oferta
+                    productos_map[link_final]["precio_regular"] = p_regular
+                    productos_map[link_final]["descuento_pct"] = descuento_pct
+                    if img_src and not productos_map[link_final]["img"]:
+                        productos_map[link_final]["img"] = img_src
+                else:
+                    productos_map[link_final] = {
                         "nombre": nombre_final,
                         "precio": p_oferta,
                         "precio_regular": p_regular,
@@ -293,15 +307,20 @@ def motor_ripley(url, limite=999999.0, headers=None):
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    # 1. Extracción desde JSON
+    # 1. Extracción inicial desde JSON
     extraer_desde_next_data(soup, productos_map, limite)
 
-    # 2. Extracción y sincronización desde el DOM
+    # 2. Sincronización y actualización desde el DOM
     extraer_desde_dom_ripley(soup, productos_map, limite)
 
-    productos_finales = list(productos_map.values())
+    # 3. Filtro final por el precio máximo solicitado
+    productos_finales = [
+        p for p in productos_map.values()
+        if 0 < p['precio'] <= limite
+    ]
+
     if productos_finales:
-        safe_log(f"✅ [RIPLEY] ¡Éxito! Se indexaron un total de {len(productos_finales)} ofertas válidas.", "success")
+        safe_log(f"✅ [RIPLEY] ¡Éxito! Se indexaron un total de {len(productos_finales)} ofertas válidas bajo S/. {limite:.2f}.", "success")
         for idx_p, p_item in enumerate(productos_finales[:5], 1):
             safe_log(f"   📌 #{idx_p}: {p_item['nombre']} → Oferta: S/ {p_item['precio']:.2f} | Regular: S/ {p_item['precio_regular']:.2f}", "info")
     else:
