@@ -59,11 +59,12 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     safe_log(f"🕵️‍♂️ Iniciando patrullaje con filtro: '{filtro_categoria}'", "info")
     
     try:
-        query = supabase.table("radares").select("*")
+        # 🟢 CAMBIO: Solo seleccionamos los radares que estén activos (activo = True)
+        query = supabase.table("radares").select("*").eq("activo", True)
         res_radares = query.execute()
         if not res_radares.data:
-            safe_log("⚠️ No se encontraron radares en la tabla 'radares'.", "warning")
-            return "No hay radares registrados en la base de datos."
+            safe_log("⚠️ No se encontraron radares activos en la tabla 'radares'.", "warning")
+            return "No hay radares activos registrados en la base de datos."
         
         radares = res_radares.data
     except Exception as e:
@@ -83,6 +84,10 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     total_productos_procesados = 0
 
     for radar in radares:
+        # 🟢 CAMBIO: Verificación de respaldo por si el valor es False explícito
+        if radar.get("activo") is False:
+            continue
+
         url = radar.get("url", "").strip()
         precio_max = safe_float(radar.get("precio_max", 999999))
         identificador_base = str(radar.get("identificador", "GENERAL-OTROS-PRODUCTO-TODAS")).upper()
