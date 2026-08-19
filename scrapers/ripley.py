@@ -7,7 +7,7 @@ import urllib3
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
 
-# Silenciar advertencias de Streamlit en ejecuciones CLI / Cron
+# Silenciar advertencias de Streamlit en CLI
 os.environ["STREAMLIT_LOG_LEVEL"] = "error"
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
@@ -16,12 +16,8 @@ from utils import sanitizar_url, safe_log
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# -------------------------
-# Obtención de Claves
-# -------------------------
 def obtener_key_ripley():
     key = os.environ.get("SCRAPERAPI_RIPLEY_KEY") or os.environ.get("SCRAPERAPI_KEY")
-    
     if not key:
         try:
             from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -31,11 +27,10 @@ def obtener_key_ripley():
                     key = st.secrets.get("SCRAPERAPI_RIPLEY_KEY") or st.secrets.get("SCRAPERAPI_KEY")
         except Exception:
             pass
-
     return key.strip() if key else None
 
 # -------------------------
-# Descarga HTML
+# Descarga HTML con Retry y Timeout Extendido
 # -------------------------
 def descargar_html_ripley(url_destino, headers=None):
     if headers is None:
@@ -46,33 +41,39 @@ def descargar_html_ripley(url_destino, headers=None):
             "Referer": "https://simple.ripley.com.pe/"
         }
 
-    # 1. Petición directa
+    # 1. Petición directa (Rápida)
     try:
         session = requests.Session()
-        resp = session.get(url_destino, headers=headers, timeout=12, verify=False)
+        resp = session.get(url_destino, headers=headers, timeout=10, verify=False)
         if resp.status_code == 200 and len(resp.text) > 3000:
             safe_log(f"🌐 [RIPLEY] Petición directa exitosa ({len(resp.text)} bytes).", "info")
             return resp.text
     except Exception:
         pass
 
-    # 2. Respaldo ScraperAPI
+    # 2. Respaldo ScraperAPI con 2 reintentos y timeout de 60s
     key = obtener_key_ripley()
     if key:
-        safe_log("🔄 [RIPLEY] Consultando mediante ScraperAPI...", "info")
-        try:
-            payload = {'api_key': key, 'url': url_destino, 'render': 'false'}
-            resp_sc = requests.get('http://api.scraperapi.com', params=payload, headers=headers, timeout=35)
-            if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
-                safe_log(f"🌐 [RIPLEY] ScraperAPI respuesta exitosa ({len(resp_sc.text)} bytes).", "info")
-                return resp_sc.text
-        except Exception as e:
-            safe_log(f"🛑 [RIPLEY] Error ScraperAPI: {str(e)}", "error")
+        safe_log("🔄 [RIPLEY] Consultando mediante ScraperAPI (timeout: 60s)...", "info")
+        payload = {'api_key': key, 'url': url_destino, 'render': 'false'}
+        
+        for intento in range(1, 3):
+            try:
+                resp_sc = requests.get('https://api.scraperapi.com', params=payload, headers=headers, timeout=60)
+                if resp_sc.status_code == 200 and len(resp_sc.text) > 1000:
+                    safe_log(f"🌐 [RIPLEY] ScraperAPI respuesta exitosa ({len(resp_sc.text)} bytes).", "info")
+                    return resp_sc.text
+                else:
+                    safe_log(f"⚠️ [RIPLEY] ScraperAPI intento {intento} devolvió estado {resp_sc.status_code}.", "warning")
+            except requests.exceptions.Timeout:
+                safe_log(f"⚠️ [RIPLEY] Timeout en intento {intento}/2 de ScraperAPI.", "warning")
+            except Exception as e:
+                safe_log(f"🛑 [RIPLEY] Error en intento {intento}: {str(e)}", "error")
 
     return None
 
 # -------------------------
-# Utilidades de Limpieza
+# Utilidades
 # -------------------------
 def extraer_monto_num(texto):
     if not texto:
@@ -98,7 +99,6 @@ def sanitizar_imagen_ripley(img_raw):
     if not img_raw:
         return ""
     img_str = str(img_raw).strip()
-    # Si viene desde un srcset (ej. "https://rimage.ripley.com.pe/... 1x, ...")
     if ' ' in img_str:
         img_str = img_str.split(' ')[0].strip()
     if img_str.startswith('//'):
@@ -131,7 +131,7 @@ def calcular_descuento(precio_oferta, precio_regular):
     return 0.0
 
 # -------------------------
-# Localización y Extracción JSON (__NEXT_DATA__)
+# Extracción JSON y DOM
 # -------------------------
 def buscar_arreglo_productos_json(obj):
     if isinstance(obj, dict):
@@ -170,9 +170,7 @@ def extraer_precios_json(p_dict):
             candidatos.append(val)
 
     if candidatos:
-        p_oferta = min(candidatos)
-        p_regular = max(candidatos)
-        return p_oferta, p_regular
+        return min(candidatos), max(candidatos)
     return 0.0, 0.0
 
 def extraer_desde_next_data(soup, productos_map, limite):
@@ -204,7 +202,6 @@ def extraer_desde_next_data(soup, productos_map, limite):
                 if p_regular < p_oferta or p_regular <= 0:
                     p_regular = p_oferta
 
-                # Extracción de Imagen CDN (rimage.ripley.com.pe)
                 img_url = p.get('fullImage') or p.get('thumbnail') or p.get('image') or ''
                 if not img_url:
                     imgs = p.get('images')
@@ -233,12 +230,8 @@ def extraer_desde_next_data(soup, productos_map, limite):
     except Exception as e:
         safe_log(f"⚠️ [RIPLEY JSON] Error en __NEXT_DATA__: {str(e)}", "warning")
 
-# -------------------------
-# Extracción y Sincronización DOM Universal
-# -------------------------
 def extraer_desde_dom_ripley(soup, productos_map, limite):
     cards = soup.find_all(['div', 'article'], class_=re.compile(r'\bcatalog-product-item\b|product-item', re.I))
-
     if not cards:
         cards = [a.parent for a in soup.find_all('a', href=re.compile(r'/pmp|-p|/zapatillas', re.I)) if a.parent]
 
@@ -254,7 +247,6 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             link_final = href if href.startswith('http') else f"https://simple.ripley.com.pe{href}"
             link_final = link_final.split('?')[0].split('#')[0]
 
-            # Imagen desde DOM
             img_el = card.find('img', class_=re.compile(r'product-image-img|product-image', re.I)) or card.find('img')
             img_src = ''
             if img_el:
@@ -268,7 +260,6 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             if not nombre_final:
                 continue
 
-            # Extracción Universal de Precios en el DOM
             texto_card = card.get_text(separator=' ', strip=True)
             precios_encontrados = re.findall(r'(?:S/\.?\s*|PEN\s*|S/)\s*([\d\.,]+)', texto_card)
             precios_num = [extraer_monto_num(p) for p in precios_encontrados if extraer_monto_num(p) > 0]
@@ -281,7 +272,6 @@ def extraer_desde_dom_ripley(soup, productos_map, limite):
             descuento_pct = calcular_descuento(p_oferta, p_regular)
 
             if p_oferta > 0:
-                # Sincronización: si el producto ya existe, actualiza con el precio más bajo real
                 if link_final in productos_map:
                     if p_oferta < productos_map[link_final]["precio"]:
                         productos_map[link_final]["precio"] = p_oferta
@@ -317,13 +307,9 @@ def motor_ripley(url, limite=999999.0, headers=None):
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    # 1. Extracción desde JSON
     extraer_desde_next_data(soup, productos_map, limite)
-
-    # 2. Extracción y sincronización exacta desde el DOM
     extraer_desde_dom_ripley(soup, productos_map, limite)
 
-    # 3. Filtro final estricto por el precio máximo configurado
     productos_finales = [
         p for p in productos_map.values()
         if 0 < p['precio'] <= limite
