@@ -21,7 +21,8 @@ from utils import safe_log, es_error_de_precio, safe_float
 TIENDAS_CON_ENFRIAMIENTO = {
     "JBL": 4.0,       # Mínimo 4 horas de espera
     "ADIDAS": 4.0,    # Mínimo 4 horas de espera
-    "PLATANITOS": 12.0
+    "PLATANITOS": 12.0,
+    "RIPLEY": 6.0,
 }
 
 
