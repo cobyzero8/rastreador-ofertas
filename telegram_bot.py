@@ -65,16 +65,14 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
         
     resumen = revisar_ofertas(filtro)
     
-    # Se omite parse_mode en el resumen para evitar errores de sintaxis Markdown por guiones bajos
     await context.bot.send_message(
         chat_id=chat_id, 
         text=f"✅ Escaneo [{filtro_limpio}] finalizado:\n\n{resumen}"
     )
 
 async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
+    if not es_usuario_valido(update): return
+
     keyboard = [[InlineKeyboardButton(TIENDAS[i], callback_data=f"run_{TIENDAS[i]}"),
                  InlineKeyboardButton(TIENDAS[i+1], callback_data=f"run_{TIENDAS[i+1]}")] 
                 for i in range(0, len(TIENDAS)-1, 2)]
@@ -83,12 +81,18 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     keyboard.append([InlineKeyboardButton("⬅️ Volver al Menú", callback_data="menu_start")])
     
-    await query.edit_message_text("🏬 *Selecciona una Tienda:*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    texto = "🏬 *Selecciona una Tienda:*"
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
+    if not es_usuario_valido(update): return
+
     keyboard = [[InlineKeyboardButton(CATEGORIAS[i], callback_data=f"run_{CATEGORIAS[i]}"),
                  InlineKeyboardButton(CATEGORIAS[i+1], callback_data=f"run_{CATEGORIAS[i+1]}")] 
                 for i in range(0, len(CATEGORIAS)-1, 2)]
@@ -97,7 +101,14 @@ async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     keyboard.append([InlineKeyboardButton("⬅️ Volver al Menú", callback_data="menu_start")])
     
-    await query.edit_message_text("🏷️ *Selecciona una Categoría:*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    texto = "🏷️ *Selecciona una Categoría:*"
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not es_usuario_valido(update): return
@@ -125,15 +136,18 @@ def main():
     
     app = ApplicationBuilder().token(token).build()
     
+    # Comandos Principales
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("tiendas", menu_tiendas))
+    app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
     
-    # Comandos por Tienda
+    # Comandos por Tienda (/tienda_ripley, /tienda_nike, etc.)
     for tienda in TIENDAS:
         cmd = f"tienda_{tienda.lower()}"
         app.add_handler(CommandHandler(cmd, lambda u, c, t=tienda: ejecutar_escaneo(u, c, t)))
         
-    # Comandos por Categoría
+    # Comandos por Categoría (/cat_zapatillas, /cat_tv, etc.)
     for cat in CATEGORIAS:
         cmd = f"cat_{cat.lower()}"
         app.add_handler(CommandHandler(cmd, lambda u, c, cat_val=cat: ejecutar_escaneo(u, c, cat_val)))
