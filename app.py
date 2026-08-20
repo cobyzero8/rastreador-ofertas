@@ -22,21 +22,14 @@ except ImportError:
 st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
 
 # ---------------------------------------------------------
-# Integración del Bot de Telegram en Segundo Plano (S/ 0.00)
+# Carga de Secretos en Entorno
 # ---------------------------------------------------------
 for secret_key, value in st.secrets.items():
     if isinstance(value, str) and secret_key not in os.environ:
         os.environ[secret_key] = value
 
-@st.cache_resource
-def lanzar_bot_telegram():
-    try:
-        return subprocess.Popen([sys.executable, "telegram_bot.py"])
-    except Exception as err:
-        print(f"❌ Error al iniciar telegram_bot.py: {err}")
-        return None
-
-lanzar_bot_telegram()
+# Nota: El bot de Telegram corre 24/7 en PythonAnywhere. 
+# Se omitió la ejecución local de telegram_bot.py para evitar el error "telegram.error.Conflict".
 # ---------------------------------------------------------
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
