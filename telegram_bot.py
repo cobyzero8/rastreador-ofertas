@@ -7,13 +7,23 @@ from patrol import revisar_ofertas
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Seguridad: Restringe el uso exclusivo a tu chat personal
-CHAT_ID_AUTORIZADO = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Permite configurar tu ID personal (ADMIN) o usar TELEGRAM_CHAT_ID
+CHAT_ID_AUTORIZADO = os.environ.get("TELEGRAM_ADMIN_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
 
 def es_usuario_valido(update: Update) -> bool:
     if not CHAT_ID_AUTORIZADO:
         return True
-    return str(update.effective_chat.id) == str(CHAT_ID_AUTORIZADO)
+    
+    chat_actual = str(update.effective_chat.id)
+    chat_permitido = str(CHAT_ID_AUTORIZADO).strip()
+
+    # Si coincide con el ID autorizado
+    if chat_actual == chat_permitido:
+        return True
+    
+    # Imprime advertencia en los Logs de Streamlit para saber tu ID real
+    logger.warning(f"⚠️ Acceso denegado en Telegram. Tu ID es: [{chat_actual}] | Configurado en Secrets: [{chat_permitido}]")
+    return False
 
 # ---------------------------------------------------------
 # Listas Oficiales
@@ -142,12 +152,12 @@ def main():
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
     
-    # Comandos por Tienda (/tienda_ripley, /tienda_nike, etc.)
+    # Comandos por Tienda
     for tienda in TIENDAS:
         cmd = f"tienda_{tienda.lower()}"
         app.add_handler(CommandHandler(cmd, lambda u, c, t=tienda: ejecutar_escaneo(u, c, t)))
         
-    # Comandos por Categoría (/cat_zapatillas, /cat_tv, etc.)
+    # Comandos por Categoría
     for cat in CATEGORIAS:
         cmd = f"cat_{cat.lower()}"
         app.add_handler(CommandHandler(cmd, lambda u, c, cat_val=cat: ejecutar_escaneo(u, c, cat_val)))
