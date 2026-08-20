@@ -1,6 +1,8 @@
 import os
+import sys
 import time
 import json
+import subprocess
 import pandas as pd
 import requests
 import streamlit as st
@@ -18,6 +20,24 @@ except ImportError:
     from streamlit.scriptrunner import add_script_run_ctx
 
 st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
+
+# ---------------------------------------------------------
+# Integración del Bot de Telegram en Segundo Plano (S/ 0.00)
+# ---------------------------------------------------------
+for secret_key, value in st.secrets.items():
+    if isinstance(value, str) and secret_key not in os.environ:
+        os.environ[secret_key] = value
+
+@st.cache_resource
+def lanzar_bot_telegram():
+    try:
+        return subprocess.Popen([sys.executable, "telegram_bot.py"])
+    except Exception as err:
+        print(f"❌ Error al iniciar telegram_bot.py: {err}")
+        return None
+
+lanzar_bot_telegram()
+# ---------------------------------------------------------
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
@@ -329,7 +349,6 @@ elif menu == "🛠️ Configurar Radares y URLs":
             m2.metric("🟢 Radares En Servicio", activos)
             m3.metric("🔴 Radares Pausados / Inactivos", pausados)
 
-            # Si hay radares pausados, mostrar una vista rápida
             if pausados > 0:
                 with st.expander("👁️ Ver lista de URLs deshabilitadas actualmente", expanded=False):
                     for r in res_conteo.data:
@@ -423,7 +442,6 @@ elif menu == "🛠️ Configurar Radares y URLs":
                             es_activo = True
 
                         with st.container(border=True):
-                            # Distribución de columnas con espacio para el Toggle
                             col_info, col_toggle, col_mod, col_del = st.columns([5.5, 1.5, 1.5, 1.5])
                             
                             p_tienda = parts[0] if len(parts) > 0 else "OTRAS"
