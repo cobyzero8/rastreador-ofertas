@@ -26,6 +26,41 @@ TIENDAS_CON_ENFRIAMIENTO = {
 }
 
 
+def cumple_filtro_categoria(filtro: str, identificador: str) -> bool:
+    """
+    Verifica si el identificador del radar coincide con el filtro solicitado,
+    soportando búsquedas por singular, plural y sinónimos.
+    """
+    if not filtro or filtro == "TODOS":
+        return True
+
+    filtro_clean = str(filtro).upper().strip()
+    ident_clean = str(identificador).upper().strip()
+
+    diccionario_sinonimos = {
+        "POLOS": ["POLO", "CAMISETA"],
+        "ZAPATILLAS": ["ZAPATILLA", "CALZADO", "SNEAKER"],
+        "PERFUMES": ["PERFUME", "COLONIA", "FRAGANCIA"],
+        "CASACAS": ["CASACA", "POLERA", "JACKET", "HOODIE"],
+        "SHORTS": ["SHORT", "BERMUDA"],
+        "BUZOS": ["BUZO", "PANTALON", "JOGGER"],
+        "MEDIAS": ["MEDIA", "MEDIAS", "CALCETIN"],
+        "AUDIFONOS": ["AUDIFONO", "AURICULAR", "HEADPHONE"],
+        "TV": ["TV", "TELEVISOR", "SMART"],
+        "PARLANTE": ["PARLANTE", "SPEAKER"],
+        "BARRA DE SONIDO": ["BARRA", "SOUNDBAR"],
+        "CELULAR": ["CELULAR", "PHONE", "SMARTPHONE"],
+        "PC": ["PC", "LAPTOP", "NOTEBOOK", "COMPUTADORA"],
+        "REFRIGERADORA": ["REFRIGERADORA", "REFRIG", "NEVERA"],
+        "LAVADORA": ["LAVADORA", "LAVADO", "LAVASECADORA"],
+        "ELECTRODOMESTICOS": ["ELECTRO"],
+        "CAMA": ["CAMA", "COLCHON", "TARIMA"],
+    }
+
+    palabras_clave = diccionario_sinonimos.get(filtro_clean, [filtro_clean])
+    return any(kw in ident_clean for kw in palabras_clave)
+
+
 def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS"):
     """
     Envía un único mensaje resumido a Telegram notificando qué URLs
@@ -34,7 +69,6 @@ def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
-    # Intentar obtener secretos desde Streamlit si existen
     try:
         import streamlit as st
         if hasattr(st, "secrets"):
@@ -159,7 +193,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         safe_log(f"🚨 Error leyendo la tabla 'radares': {e}", "error")
         return f"Error leyendo radares desde Supabase: {e}"
 
-    # Evaluación de enfriamiento
     tiendas_permitidas = {}
     for t_nombre, t_horas in TIENDAS_CON_ENFRIAMIENTO.items():
         tiendas_permitidas[t_nombre] = tienda_necesita_patrullaje(
@@ -183,11 +216,8 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         if not url or not url.startswith("http"):
             continue
 
-        # 🟢 CAMBIO CRÍTICO: Filtrar PRIMERO por categoría/tienda antes de evaluar pausa o enfriamiento
-        if (
-            filtro_categoria != "TODOS"
-            and filtro_categoria not in identificador_base
-        ):
+        # 🟢 FILTRADO FLEXIBLE POR CATEGORÍA (Singular, Plural y Sinónimos)
+        if not cumple_filtro_categoria(filtro_categoria, identificador_base):
             continue
 
         parts = identificador_base.split("-")
@@ -389,7 +419,8 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         enviar_reporte_inactivos_telegram(desactivados_acumulados, filtro_categoria)
 
     resumen = (
-        f"Patrullaje finalizado. Procesados: {total_productos_procesados} productos | "
+        f"Patrullaje [{filtro_categoria}] finalizado. "
+        f"Procesados: {total_productos_procesados} productos | "
         f"Notificaciones enviadas: {total_ofertas_notificadas} | "
         f"Radares pausados omitidos: {len(desactivados_acumulados)}."
     )
