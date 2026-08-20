@@ -26,10 +26,10 @@ TIENDAS_CON_ENFRIAMIENTO = {
 }
 
 
-def enviar_reporte_inactivos_telegram(lista_desactivados):
+def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS"):
     """
     Envía un único mensaje resumido a Telegram notificando qué URLs
-    fueron omitidas por estar desactivadas.
+    fueron omitidas por estar desactivadas dentro del filtro solicitado.
     """
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -64,8 +64,8 @@ def enviar_reporte_inactivos_telegram(lista_desactivados):
 
     cuerpo = "\n".join(lineas)
     mensaje = (
-        f"<b>⏸️ REPORTE DE PATRULLAJE - RADARES PAUSADOS</b>\n\n"
-        f"Se han omitido <b>{cant} URL(s)</b> por estar desactivadas manualmente:\n\n"
+        f"<b>⏸️ REPORTE DE PATRULLAJE - RADARES PAUSADOS [{filtro_aplicado}]</b>\n\n"
+        f"Se han omitido <b>{cant} URL(s)</b> de esta categoría por estar desactivadas:\n\n"
         f"{cuerpo}\n\n"
         f"💡 <i>Si deseas volver a rastrearlas, actívalas desde la UI.</i>"
     )
@@ -180,12 +180,22 @@ def revisar_ofertas(filtro_categoria="TODOS"):
             radar.get("identificador", "GENERAL-OTROS-PRODUCTO-TODAS")
         ).upper()
 
+        if not url or not url.startswith("http"):
+            continue
+
+        # 🟢 CAMBIO CRÍTICO: Filtrar PRIMERO por categoría/tienda antes de evaluar pausa o enfriamiento
+        if (
+            filtro_categoria != "TODOS"
+            and filtro_categoria not in identificador_base
+        ):
+            continue
+
         parts = identificador_base.split("-")
         tienda = parts[0] if parts else "GENERAL"
         categoria = parts[1] if len(parts) > 1 else "OTROS"
         tag = parts[2] if len(parts) > 2 else "PRODUCTO"
 
-        # Verificación de estado activo
+        # Verificación de estado activo (sólo para los radares que cumplen el filtro)
         es_activo = radar.get("activo", True)
         if es_activo is False:
             safe_log(
@@ -195,15 +205,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
             desactivados_acumulados.append(
                 {"tienda": tienda, "tag": tag, "url": url}
             )
-            continue
-
-        if not url or not url.startswith("http"):
-            continue
-
-        if (
-            filtro_categoria != "TODOS"
-            and filtro_categoria not in identificador_base
-        ):
             continue
 
         if (
@@ -385,7 +386,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 continue
 
     if desactivados_acumulados:
-        enviar_reporte_inactivos_telegram(desactivados_acumulados)
+        enviar_reporte_inactivos_telegram(desactivados_acumulados, filtro_categoria)
 
     resumen = (
         f"Patrullaje finalizado. Procesados: {total_productos_procesados} productos | "
