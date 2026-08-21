@@ -22,14 +22,23 @@ except ImportError:
 st.set_page_config(page_title="COBY EL CAZADOR", layout="wide")
 
 # ---------------------------------------------------------
-# Carga de Secretos en Entorno
+# Carga de Secretos en Entorno e Inicio del Bot en Streamlit
 # ---------------------------------------------------------
 for secret_key, value in st.secrets.items():
     if isinstance(value, str) and secret_key not in os.environ:
         os.environ[secret_key] = value
 
-# Nota: El bot de Telegram corre 24/7 en PythonAnywhere. 
-# Se omitió la ejecución local de telegram_bot.py para evitar el error "telegram.error.Conflict".
+@st.cache_resource
+def iniciar_bot_telegram_en_la_nube():
+    try:
+        return subprocess.Popen([sys.executable, "telegram_bot.py"])
+    except Exception as e:
+        st.error(f"Error iniciando bot de Telegram en segundo plano: {e}")
+        return None
+
+# Enciende el bot en la nube de Streamlit (solo se ejecuta 1 vez)
+iniciar_bot_telegram_en_la_nube()
+
 # ---------------------------------------------------------
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
@@ -46,7 +55,7 @@ def obtener_tiendas_dinamicas():
     tiendas_base = [
         "GENERAL", "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", 
         "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", 
-        "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM"
+        "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM", "EFE"
     ]
     try:
         res = supabase.table("radares").select("identificador").execute()
@@ -329,7 +338,6 @@ elif menu == "🏥 Salud de Scrapers (Health Check)":
 # ---------------------------
 elif menu == "🛠️ Configurar Radares y URLs":
     st.title("🛠️ Panel de Gestión de Enlaces")
-    # 🟢 RESUMEN DE RADARES ACTIVOS / PAUSADOS
     try:
         res_conteo = supabase.table("radares").select("id, identificador, url, activo").execute()
         if res_conteo.data:
@@ -348,7 +356,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                         if r.get("activo") is False:
                             st.write(f"🔴 **{r.get('identificador')}** ➔ `{r.get('url')}`")
         st.write("---")
-    except Exception as ex_m:
+    except Exception:
         pass
     lista_tiendas = obtener_tiendas_dinamicas()
     cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"]
