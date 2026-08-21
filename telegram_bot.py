@@ -52,7 +52,7 @@ async def es_usuario_valido(update: Update) -> bool:
 # Listas Oficiales (Modo Prueba: 1 Sola Tienda)
 # ---------------------------------------------------------
 TIENDAS = [
-    "PLATANITOS"
+    "EFE"
 ]
 
 CATEGORIAS = []
