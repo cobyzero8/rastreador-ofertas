@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Permite obtener la ID de chat autorizada desde TELEGRAM_CHAT_ID o TELEGRAM_ADMIN_ID
 CHAT_ID_AUTORIZADO = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_ADMIN_ID", "")
 
-# 🖼️ Enlace de la imagen banner principal para el menú de tiendas (cámbiala por la tuya cuando desees)
+# 🖼️ Enlace de la imagen banner principal para los menús
 URL_BANNER_TIENDAS = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?q=80&w=1000"
 
 
@@ -79,7 +79,31 @@ TIENDAS = [
     "TRIATHLON"
 ]
 
-CATEGORIAS = []
+# ---------------------------------------------------------
+# Mapeo Oficial de Categorías (Misma estructura de la UI)
+# ---------------------------------------------------------
+CATEGORIAS_MAP = {
+    "PERFUMES": "🧪 PERFUMES",
+    "ZAPATILLAS": "👟 ZAPATILLAS",
+    "POLOS": "👕 POLOS",
+    "CASACAS": "🧥 CASACAS",
+    "SHORTS": "🩳 SHORTS",
+    "BUZOS": "👖 BUZOS",
+    "MEDIAS": "🧦 MEDIAS",
+    "AUDIFONOS": "🎧 AUDÍFONOS",
+    "TV": "📺 TV",
+    "PARLANTE": "🔊 PARLANTE",
+    "BARRA_DE_SONIDO": "🎵 B. SONIDO",
+    "CELULAR": "📱 CELULAR",
+    "PC": "💻 PC / LAPTOP",
+    "REFRIGERADORA": "❄️ REFRIGERADORA",
+    "LAVADORA": "🧺 LAVADORA",
+    "ELECTRODOMESTICOS": "🔌 ELECTRODOM.",
+    "CAMA": "🛏️ CAMA",
+    "OTROS": "📦 OTROS"
+}
+
+CATEGORIAS = list(CATEGORIAS_MAP.keys())
 
 
 def obtener_teclado_inicio():
@@ -102,7 +126,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        # Si venía de una foto, borramos el mensaje previo para mostrar el menú de inicio limpio
         try:
             await query.message.delete()
             await context.bot.send_message(
@@ -127,7 +150,6 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
         await query.answer()
         chat_id = query.message.chat_id
         
-        # Si el mensaje anterior tenía foto, enviamos mensaje nuevo de confirmación
         if query.message.photo:
             await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
         else:
@@ -137,7 +159,6 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
         chat_id = update.effective_chat.id
 
     try:
-        # 🟢 Ejecución no bloqueante mediante hilo secundario
         resumen = await asyncio.to_thread(revisar_ofertas, filtro)
 
         await context.bot.send_message(
@@ -156,7 +177,6 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
 async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_usuario_valido(update): return
 
-    # Diseño de botones elegantes con corchetes en pares
     keyboard = []
     for i in range(0, len(TIENDAS), 2):
         fila = []
@@ -198,18 +218,20 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_usuario_valido(update): return
 
-    if not CATEGORIAS:
-        texto = "🏷️ *Menú de Categorías en mantenimiento para pruebas.*"
-        keyboard = [[InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")]]
-    else:
-        keyboard = [[InlineKeyboardButton(f"【 🏷️ {CATEGORIAS[i]} 】", callback_data=f"run_{CATEGORIAS[i]}"),
-                     InlineKeyboardButton(f"【 🏷️ {CATEGORIAS[i+1]} 】", callback_data=f"run_{CATEGORIAS[i+1]}")] 
-                    for i in range(0, len(CATEGORIAS)-1, 2)]
-        if len(CATEGORIAS) % 2 != 0:
-            keyboard.append([InlineKeyboardButton(f"【 🏷️ {CATEGORIAS[-1]} 】", callback_data=f"run_{CATEGORIAS[-1]}")])
-        keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-        texto = "🏷️ *Selecciona una Categoría:*"
+    keyboard = []
+    keys = list(CATEGORIAS_MAP.keys())
+    for i in range(0, len(keys), 2):
+        fila = []
+        k1 = keys[i]
+        fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k1]} 】", callback_data=f"run_{k1}"))
+        if i + 1 < len(keys):
+            k2 = keys[i+1]
+            fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k2]} 】", callback_data=f"run_{k2}"))
+        keyboard.append(fila)
 
+    keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
+
+    texto = "<b>🏷️ SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
@@ -217,16 +239,22 @@ async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         try:
             await query.message.delete()
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=texto,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
         except Exception:
-            await query.edit_message_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+            pass
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=URL_BANNER_TIENDAS,
+            caption=texto,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
     else:
-        await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_photo(
+            photo=URL_BANNER_TIENDAS,
+            caption=texto,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
