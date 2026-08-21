@@ -49,18 +49,14 @@ async def es_usuario_valido(update: Update) -> bool:
 
 
 # ---------------------------------------------------------
-# Listas Oficiales
+# Listas Oficiales (Modo Prueba: 1 Sola Tienda)
 # ---------------------------------------------------------
 TIENDAS = [
-    "JUNTOZ", "CYZONE", "ADIDAS", "PLATANITOS", "JBL", "ESIKA", "RIPLEY", 
-    "LBEL", "COOLBOX", "FALABELLA", "PROMART", "HIRAOKA", "THN", "ESTILOS", 
-    "FOOTLOOSE", "EFE", "NIKE", "TRIATHLON", "PLAZA_VEA", "CURACAO", "OECHSLE", "CARSA"
+    "PLATANITOS"
 ]
 
-CATEGORIAS = [
-    "PERFUMES", "ZAPATILLAS", "POLOS", "CASACAS", "SHORTS", "BUZOS", 
-    "MEDIAS", "AUDIFONOS", "TV", "PARLANTE", "CELULAR", "LAVADORA", "CAMA"
-]
+CATEGORIAS = []
+
 
 
 def obtener_teclado_inicio():
