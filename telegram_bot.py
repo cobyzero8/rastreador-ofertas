@@ -55,32 +55,14 @@ async def es_usuario_valido(update: Update) -> bool:
 # Listas Oficiales de Tiendas Monitoreadas
 # ---------------------------------------------------------
 TIENDAS = [
-    "ADIDAS",
-    "CARSA",
-    "COOLBOX",
-    "CURACAO",
-    "CYZONE",
-    "EFE",
-    "ESIKA",
-    "ESTILOS",
-    "FALABELLA",
-    "FOOTLOOSE",
-    "HIRAOKA",
-    "JBL",
-    "JUNTOZ",
-    "LBEL",
-    "NIKE",
-    "OECHSLE",
-    "PLATANITOS",
-    "PLAZA_VEA",
-    "PROMART",
-    "RIPLEY",
-    "THN",
-    "TRIATHLON"
+    "ADIDAS", "CARSA", "COOLBOX", "CURACAO", "CYZONE", "EFE",
+    "ESIKA", "ESTILOS", "FALABELLA", "FOOTLOOSE", "HIRAOKA", "JBL",
+    "JUNTOZ", "LBEL", "NIKE", "OECHSLE", "PLATANITOS", "PLAZA_VEA",
+    "PROMART", "RIPLEY", "THN", "TRIATHLON"
 ]
 
 # ---------------------------------------------------------
-# Mapeo Oficial de Categorías (Misma estructura de la UI)
+# Mapeo Oficial de Categorías
 # ---------------------------------------------------------
 CATEGORIAS_MAP = {
     "PERFUMES": "🧪 PERFUMES",
@@ -108,36 +90,70 @@ CATEGORIAS = list(CATEGORIAS_MAP.keys())
 
 def obtener_teclado_inicio():
     keyboard = [
-        [InlineKeyboardButton("🚀 Forzar Patrullaje Completo", callback_data="run_TODOS")],
-        [InlineKeyboardButton("🏬 Menú de Tiendas", callback_data="menu_tiendas"),
-         InlineKeyboardButton("🏷️ Menú de Categorías", callback_data="menu_categorias")]
+        [InlineKeyboardButton("【 🚀 FORZAR PATRULLAJE COMPLETO 】", callback_data="run_TODOS")],
+        [InlineKeyboardButton("【 🏬 MENÚ DE TIENDAS 】", callback_data="menu_tiendas")],
+        [InlineKeyboardButton("【 🏷️ MENÚ DE CATEGORÍAS 】", callback_data="menu_categorias")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
 # ---------------------------------------------------------
-# Controladores
+# Controladores Principales (/coby y /itzel)
 # ---------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await es_usuario_valido(update): return
 
-    texto = "🤖 *Central de Control - Cazador de Ofertas*\n\nSelecciona una opción interactiva o usa los comandos directos:"
+async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra el menú principal con banner y botones llamativos."""
+    if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+
+    # Si había un menú activo previo, lo borramos para evitar duplicados
+    menu_previo_id = context.user_data.get("menu_message_id")
+    if menu_previo_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=menu_previo_id)
+        except Exception:
+            pass
+
+    texto = "<b>🤖 CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
 
     if update.callback_query:
         query = update.callback_query
         await query.answer()
         try:
             await query.message.delete()
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=texto,
-                reply_markup=obtener_teclado_inicio(),
-                parse_mode="Markdown"
-            )
         except Exception:
-            await query.edit_message_text(texto, reply_markup=obtener_teclado_inicio(), parse_mode="Markdown")
-    else:
-        await update.message.reply_text(texto, reply_markup=obtener_teclado_inicio(), parse_mode="Markdown")
+            pass
+
+    msg = await context.bot.send_photo(
+        chat_id=chat_id,
+        photo=URL_BANNER_TIENDAS,
+        caption=texto,
+        reply_markup=obtener_teclado_inicio(),
+        parse_mode="HTML"
+    )
+    context.user_data["menu_message_id"] = msg.message_id
+
+
+async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Elimina el menú interactivo activo del chat."""
+    if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+
+    # Borrar la orden /itzel que escribió el usuario para dejar el chat impecable
+    if update.message:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    # Borrar el mensaje del menú activo
+    menu_id = context.user_data.get("menu_message_id")
+    if menu_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=menu_id)
+        except Exception as e:
+            logger.warning(f"No se pudo borrar el menú: {e}")
+        context.user_data["menu_message_id"] = None
 
 
 async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, filtro: str):
@@ -192,27 +208,22 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "<b>🏢 SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if update.callback_query:
-        query = update.callback_query
+    query = update.callback_query
+    if query:
         await query.answer()
         try:
             await query.message.delete()
         except Exception:
             pass
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=URL_BANNER_TIENDAS,
-            caption=texto,
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
-    else:
-        await update.message.reply_photo(
-            photo=URL_BANNER_TIENDAS,
-            caption=texto,
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
+
+    msg = await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=URL_BANNER_TIENDAS,
+        caption=texto,
+        reply_markup=reply_markup,
+        parse_mode="HTML"
+    )
+    context.user_data["menu_message_id"] = msg.message_id
 
 
 async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -234,27 +245,22 @@ async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "<b>🏷️ SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if update.callback_query:
-        query = update.callback_query
+    query = update.callback_query
+    if query:
         await query.answer()
         try:
             await query.message.delete()
         except Exception:
             pass
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=URL_BANNER_TIENDAS,
-            caption=texto,
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
-    else:
-        await update.message.reply_photo(
-            photo=URL_BANNER_TIENDAS,
-            caption=texto,
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
+
+    msg = await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=URL_BANNER_TIENDAS,
+        caption=texto,
+        reply_markup=reply_markup,
+        parse_mode="HTML"
+    )
+    context.user_data["menu_message_id"] = msg.message_id
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -263,7 +269,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "menu_start":
-        await start(update, context)
+        await comando_coby(update, context)
     elif data == "menu_tiendas":
         await menu_tiendas(update, context)
     elif data == "menu_categorias":
@@ -277,7 +283,7 @@ async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not await es_usuario_valido(update): return
     await update.message.reply_text(
         "⚠️ *Comando no reconocido o mal escrito.*\n\n"
-        "Usa `/start` para abrir el menú principal, `/categorias` para ver las categorías o `/tiendas` para ver las tiendas.",
+        "Usa `/coby` para abrir el menú principal de ofertas o `/itzel` para ocultarlo.",
         parse_mode="Markdown"
     )
 
@@ -297,8 +303,11 @@ def main():
 
     app = ApplicationBuilder().token(token).build()
 
-    # Comandos Principales
-    app.add_handler(CommandHandler("start", start))
+    # Comandos Especiales de Mostrar / Ocultar
+    app.add_handler(CommandHandler(["coby", "start"], comando_coby))
+    app.add_handler(CommandHandler("itzel", comando_itzel))
+
+    # Comandos Directos
     app.add_handler(CommandHandler("tiendas", menu_tiendas))
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
@@ -315,7 +324,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Manejador para comandos no registrados o mal escritos
+    # Manejador para comandos no registrados
     app.add_handler(MessageHandler(filters.COMMAND, comando_desconocido))
 
     # Manejador global de excepciones
