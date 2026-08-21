@@ -21,9 +21,6 @@ logger = logging.getLogger(__name__)
 ADMIN_IDS_RAW = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_ADMIN_ID", "")
 ADMINS_AUTORIZADOS = [aid.strip() for aid in ADMIN_IDS_RAW.split(",") if aid.strip()]
 
-# 🖼️ Enlace directo RAW a la imagen de tu banner en GitHub
-URL_BANNER_TIENDAS = "https://raw.githubusercontent.com/cobyzero8/rastreador-ofertas/main/banner.png"
-
 
 async def es_usuario_valido(update: Update) -> bool:
     if not ADMINS_AUTORIZADOS:
@@ -98,7 +95,7 @@ def obtener_teclado_inicio():
 # ---------------------------------------------------------
 
 async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el menú principal con banner y botones vistosos."""
+    """Muestra el menú principal con texto vistoso."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
@@ -109,7 +106,7 @@ async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    texto = "<b>🤖 CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
+    texto = "🤖 <b>CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
 
     if update.callback_query:
         query = update.callback_query
@@ -119,10 +116,9 @@ async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    msg = await context.bot.send_photo(
+    msg = await context.bot.send_message(
         chat_id=chat_id,
-        photo=URL_BANNER_TIENDAS,
-        caption=texto,
+        text=texto,
         reply_markup=obtener_teclado_inicio(),
         parse_mode="HTML"
     )
@@ -130,7 +126,7 @@ async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Elimina el menú interactivo activo del chat y el propio mensaje /itzel."""
+    """Elimina el menú interactivo activo del chat y el propio comando /itzel."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
@@ -158,11 +154,10 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
         query = update.callback_query
         await query.answer()
         chat_id = query.message.chat_id
-        
-        if query.message.photo:
-            await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-        else:
+        try:
             await query.edit_message_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
     else:
         await update.message.reply_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
         chat_id = update.effective_chat.id
@@ -198,7 +193,7 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
 
-    texto = "<b>🏢 SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
+    texto = "🏢 <b>SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     query = update.callback_query
@@ -209,10 +204,9 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    msg = await context.bot.send_photo(
+    msg = await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        photo=URL_BANNER_TIENDAS,
-        caption=texto,
+        text=texto,
         reply_markup=reply_markup,
         parse_mode="HTML"
     )
@@ -235,7 +229,7 @@ async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
 
-    texto = "<b>🏷️ SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
+    texto = "🏷️ <b>SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     query = update.callback_query
@@ -246,10 +240,9 @@ async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    msg = await context.bot.send_photo(
+    msg = await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        photo=URL_BANNER_TIENDAS,
-        caption=texto,
+        text=texto,
         reply_markup=reply_markup,
         parse_mode="HTML"
     )
