@@ -95,16 +95,29 @@ def obtener_teclado_inicio():
 # ---------------------------------------------------------
 
 async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el menú principal con texto vistoso."""
+    """Muestra el menú principal y limpia menús/comandos anteriores."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
+    # 1. Borrar el menú previo si existía
     menu_previo_id = context.user_data.get("menu_message_id")
     if menu_previo_id:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=menu_previo_id)
         except Exception:
             pass
+
+    # 2. Borrar la orden /coby previa si existía
+    cmd_previo_id = context.user_data.get("coby_cmd_id")
+    if cmd_previo_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=cmd_previo_id)
+        except Exception:
+            pass
+
+    # 3. Guardar el ID de este nuevo mensaje /coby si fue escrito por texto
+    if update.message:
+        context.user_data["coby_cmd_id"] = update.message.message_id
 
     texto = "🤖 <b>CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
 
@@ -126,16 +139,18 @@ async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Elimina el menú interactivo activo del chat y el propio comando /itzel."""
+    """Elimina el menú activo, el texto /coby del usuario y la propia orden /itzel."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
+    # 1. Borrar la orden /itzel escrita por el usuario
     if update.message:
         try:
             await update.message.delete()
         except Exception:
             pass
 
+    # 2. Borrar el mensaje donde está desplegado el menú
     menu_id = context.user_data.get("menu_message_id")
     if menu_id:
         try:
@@ -143,6 +158,15 @@ async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"No se pudo borrar el menú: {e}")
         context.user_data["menu_message_id"] = None
+
+    # 3. Borrar la orden /coby escrita previamente por el usuario
+    coby_cmd_id = context.user_data.get("coby_cmd_id")
+    if coby_cmd_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=coby_cmd_id)
+        except Exception as e:
+            logger.warning(f"No se pudo borrar el comando /coby: {e}")
+        context.user_data["coby_cmd_id"] = None
 
 
 async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, filtro: str):
