@@ -15,8 +15,11 @@ from patrol import revisar_ofertas
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Permite configurar tu ID personal (ADMIN) o usar TELEGRAM_CHAT_ID
-CHAT_ID_AUTORIZADO = os.environ.get("TELEGRAM_ADMIN_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
+# Permite obtener la ID de chat autorizada desde TELEGRAM_CHAT_ID o TELEGRAM_ADMIN_ID
+CHAT_ID_AUTORIZADO = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_ADMIN_ID", "")
+
+# 🖼️ Enlace de la imagen banner principal para el menú de tiendas (cámbiala por la tuya cuando desees)
+URL_BANNER_TIENDAS = "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?q=80&w=1000"
 
 
 async def es_usuario_valido(update: Update) -> bool:
@@ -34,8 +37,8 @@ async def es_usuario_valido(update: Update) -> bool:
     mensaje_denegado = (
         f"🚫 *Acceso no autorizado*\n\n"
         f"Tu ID actual de Telegram es: `{chat_actual}`\n"
-        f"ID configurado en Secrets: `{chat_permitido}`\n\n"
-        f"Asegúrate de registrar tu ID en `TELEGRAM_ADMIN_ID` o `TELEGRAM_CHAT_ID`."
+        f"ID configurado: `{chat_permitido}`\n\n"
+        f"Asegúrate de registrar tu ID en `TELEGRAM_CHAT_ID`."
     )
 
     if update.callback_query:
@@ -58,7 +61,6 @@ TIENDAS = [
 CATEGORIAS = []
 
 
-
 def obtener_teclado_inicio():
     keyboard = [
         [InlineKeyboardButton("🚀 Forzar Patrullaje Completo", callback_data="run_TODOS")],
@@ -77,8 +79,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "🤖 *Central de Control - Cazador de Ofertas*\n\nSelecciona una opción interactiva o usa los comandos directos:"
 
     if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(texto, reply_markup=obtener_teclado_inicio(), parse_mode="Markdown")
+        query = update.callback_query
+        await query.answer()
+        # Si venía de una foto, borramos el mensaje previo para mostrar el menú de inicio limpio
+        try:
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=texto,
+                reply_markup=obtener_teclado_inicio(),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await query.edit_message_text(texto, reply_markup=obtener_teclado_inicio(), parse_mode="Markdown")
     else:
         await update.message.reply_text(texto, reply_markup=obtener_teclado_inicio(), parse_mode="Markdown")
 
@@ -91,8 +104,13 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        await query.edit_message_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
         chat_id = query.message.chat_id
+        
+        # Si el mensaje anterior tenía foto, enviamos mensaje nuevo de confirmación
+        if query.message.photo:
+            await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
+        else:
+            await query.edit_message_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
     else:
         await update.message.reply_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
         chat_id = update.effective_chat.id
@@ -117,41 +135,75 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
 async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_usuario_valido(update): return
 
-    keyboard = [[InlineKeyboardButton(TIENDAS[i], callback_data=f"run_{TIENDAS[i]}"),
-                 InlineKeyboardButton(TIENDAS[i+1], callback_data=f"run_{TIENDAS[i+1]}")] 
-                for i in range(0, len(TIENDAS)-1, 2)]
-    if len(TIENDAS) % 2 != 0:
-        keyboard.append([InlineKeyboardButton(TIENDAS[-1], callback_data=f"run_{TIENDAS[-1]}")])
+    # Diseño de botones elegantes con corchetes en pares
+    keyboard = []
+    for i in range(0, len(TIENDAS), 2):
+        fila = []
+        btn1 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i]} 】", callback_data=f"run_{TIENDAS[i]}")
+        fila.append(btn1)
+        if i + 1 < len(TIENDAS):
+            btn2 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i+1]} 】", callback_data=f"run_{TIENDAS[i+1]}")
+            fila.append(btn2)
+        keyboard.append(fila)
 
-    keyboard.append([InlineKeyboardButton("⬅️ Volver al Menú", callback_data="menu_start")])
+    keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
 
-    texto = "🏬 *Selecciona una Tienda:*"
+    texto = "<b>🏢 SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+        query = update.callback_query
+        await query.answer()
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=URL_BANNER_TIENDAS,
+            caption=texto,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
     else:
-        await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_photo(
+            photo=URL_BANNER_TIENDAS,
+            caption=texto,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
 
 
 async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_usuario_valido(update): return
 
-    keyboard = [[InlineKeyboardButton(CATEGORIAS[i], callback_data=f"run_{CATEGORIAS[i]}"),
-                 InlineKeyboardButton(CATEGORIAS[i+1], callback_data=f"run_{CATEGORIAS[i+1]}")] 
-                for i in range(0, len(CATEGORIAS)-1, 2)]
-    if len(CATEGORIAS) % 2 != 0:
-        keyboard.append([InlineKeyboardButton(CATEGORIAS[-1], callback_data=f"run_{CATEGORIAS[-1]}")])
+    if not CATEGORIAS:
+        texto = "🏷️ *Menú de Categorías en mantenimiento para pruebas.*"
+        keyboard = [[InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")]]
+    else:
+        keyboard = [[InlineKeyboardButton(f"【 🏷️ {CATEGORIAS[i]} 】", callback_data=f"run_{CATEGORIAS[i]}"),
+                     InlineKeyboardButton(f"【 🏷️ {CATEGORIAS[i+1]} 】", callback_data=f"run_{CATEGORIAS[i+1]}")] 
+                    for i in range(0, len(CATEGORIAS)-1, 2)]
+        if len(CATEGORIAS) % 2 != 0:
+            keyboard.append([InlineKeyboardButton(f"【 🏷️ {CATEGORIAS[-1]} 】", callback_data=f"run_{CATEGORIAS[-1]}")])
+        keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
+        texto = "🏷️ *Selecciona una Categoría:*"
 
-    keyboard.append([InlineKeyboardButton("⬅️ Volver al Menú", callback_data="menu_start")])
-
-    texto = "🏷️ *Selecciona una Categoría:*"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
+        query = update.callback_query
+        await query.answer()
+        try:
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=texto,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await query.edit_message_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
     else:
         await update.message.reply_text(texto, reply_markup=reply_markup, parse_mode="Markdown")
 
@@ -214,7 +266,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Manejador para comandos no registrados o mal escritos (debe ir al final de la lista)
+    # Manejador para comandos no registrados o mal escritos
     app.add_handler(MessageHandler(filters.COMMAND, comando_desconocido))
 
     # Manejador global de excepciones
