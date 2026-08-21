@@ -44,6 +44,26 @@ async def es_usuario_valido(update: Update) -> bool:
     return False
 
 
+async def borrar_mensaje_usuario(update: Update):
+    """Borra inmediatamente el comando escrito por el usuario para dejar el chat limpio."""
+    if update.message:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+
+async def borrar_menu_previo(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Borra el mensaje del menú interactivo anterior para evitar duplicados."""
+    menu_id = context.user_data.get("menu_message_id")
+    if menu_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=menu_id)
+        except Exception:
+            pass
+        context.user_data["menu_message_id"] = None
+
+
 # ---------------------------------------------------------
 # Listas Oficiales de Tiendas Monitoreadas
 # ---------------------------------------------------------
@@ -91,43 +111,22 @@ def obtener_teclado_inicio():
 
 
 # ---------------------------------------------------------
-# Controladores Principales (/coby y /itzel)
+# Controladores Principales (/coby e /itzel)
 # ---------------------------------------------------------
 
 async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el menú principal y limpia menús/comandos anteriores."""
+    """Muestra el menú principal, elimina el texto /coby y borra el menú anterior."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
-    # 1. Borrar el menú previo si existía
-    menu_previo_id = context.user_data.get("menu_message_id")
-    if menu_previo_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=menu_previo_id)
-        except Exception:
-            pass
-
-    # 2. Borrar la orden /coby previa si existía
-    cmd_previo_id = context.user_data.get("coby_cmd_id")
-    if cmd_previo_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=cmd_previo_id)
-        except Exception:
-            pass
-
-    # 3. Guardar el ID de este nuevo mensaje /coby si fue escrito por texto
-    if update.message:
-        context.user_data["coby_cmd_id"] = update.message.message_id
+    await borrar_mensaje_usuario(update)
+    await borrar_menu_previo(context, chat_id)
 
     texto = "🤖 <b>CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
 
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -139,52 +138,32 @@ async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Elimina el menú activo, el texto /coby del usuario y la propia orden /itzel."""
+    """Elimina el menú activo y el comando /itzel escrito por el usuario."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
-    # 1. Borrar la orden /itzel escrita por el usuario
-    if update.message:
-        try:
-            await update.message.delete()
-        except Exception:
-            pass
-
-    # 2. Borrar el mensaje donde está desplegado el menú
-    menu_id = context.user_data.get("menu_message_id")
-    if menu_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=menu_id)
-        except Exception as e:
-            logger.warning(f"No se pudo borrar el menú: {e}")
-        context.user_data["menu_message_id"] = None
-
-    # 3. Borrar la orden /coby escrita previamente por el usuario
-    coby_cmd_id = context.user_data.get("coby_cmd_id")
-    if coby_cmd_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=coby_cmd_id)
-        except Exception as e:
-            logger.warning(f"No se pudo borrar el comando /coby: {e}")
-        context.user_data["coby_cmd_id"] = None
+    await borrar_mensaje_usuario(update)
+    await borrar_menu_previo(context, chat_id)
 
 
 async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, filtro: str):
+    """Ejecuta el escaneo borrando la orden escrita por el usuario."""
     if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+
+    await borrar_mensaje_usuario(update)
 
     filtro_limpio = filtro.replace("_", " ")
 
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        chat_id = query.message.chat_id
         try:
             await query.edit_message_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
         except Exception:
             await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
     else:
-        await update.message.reply_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-        chat_id = update.effective_chat.id
+        await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
 
     try:
         resumen = await asyncio.to_thread(revisar_ofertas, filtro)
@@ -203,7 +182,12 @@ async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, f
 
 
 async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Despliega la lista de tiendas borrando el mensaje del usuario."""
     if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+
+    await borrar_mensaje_usuario(update)
+    await borrar_menu_previo(context, chat_id)
 
     keyboard = []
     for i in range(0, len(TIENDAS), 2):
@@ -220,16 +204,11 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "🏢 <b>SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    query = update.callback_query
-    if query:
-        await query.answer()
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+    if update.callback_query:
+        await update.callback_query.answer()
 
     msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         text=texto,
         reply_markup=reply_markup,
         parse_mode="HTML"
@@ -238,7 +217,12 @@ async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Despliega la lista de categorías borrando el mensaje del usuario."""
     if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+
+    await borrar_mensaje_usuario(update)
+    await borrar_menu_previo(context, chat_id)
 
     keyboard = []
     keys = list(CATEGORIAS_MAP.keys())
@@ -256,16 +240,11 @@ async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = "🏷️ <b>SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    query = update.callback_query
-    if query:
-        await query.answer()
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
+    if update.callback_query:
+        await update.callback_query.answer()
 
     msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         text=texto,
         reply_markup=reply_markup,
         parse_mode="HTML"
@@ -291,6 +270,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await es_usuario_valido(update): return
+    await borrar_mensaje_usuario(update)
     await update.message.reply_text(
         "⚠️ *Comando no reconocido o mal escrito.*\n\n"
         "Usa `/coby` para abrir el menú principal de ofertas o `/itzel` para ocultarlo.",
