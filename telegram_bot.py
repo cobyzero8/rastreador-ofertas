@@ -52,10 +52,31 @@ async def es_usuario_valido(update: Update) -> bool:
 
 
 # ---------------------------------------------------------
-# Listas Oficiales (Modo Prueba: 1 Sola Tienda)
+# Listas Oficiales de Tiendas Monitoreadas
 # ---------------------------------------------------------
 TIENDAS = [
-    "EFE"
+    "ADIDAS",
+    "CARSA",
+    "COOLBOX",
+    "CURACAO",
+    "CYZONE",
+    "EFE",
+    "ESIKA",
+    "ESTILOS",
+    "FALABELLA",
+    "FOOTLOOSE",
+    "HIRAOKA",
+    "JBL",
+    "JUNTOZ",
+    "LBEL",
+    "NIKE",
+    "OECHSLE",
+    "PLATANITOS",
+    "PLAZA_VEA",
+    "PROMART",
+    "RIPLEY",
+    "THN",
+    "TRIATHLON"
 ]
 
 CATEGORIAS = []
