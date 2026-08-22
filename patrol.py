@@ -17,12 +17,12 @@ from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
 
-# Configuración de horas mínimas entre escaneos por tienda
+# Configuración de horas mínimas entre escaneos por tienda (Ajustadas a 1.5h para sincronizar con GitHub Actions)
 TIENDAS_CON_ENFRIAMIENTO = {
-    "JBL": 4.0,       # Mínimo 4 horas de espera
-    "ADIDAS": 4.0,    # Mínimo 4 horas de espera
-    "PLATANITOS": 12.0,
-    "RIPLEY": 6.0,
+    "JBL": 4,
+    "ADIDAS": 4,
+    "PLATANITOS": 4,
+    "RIPLEY": 4,
 }
 
 
@@ -123,7 +123,7 @@ def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS
 
 
 def tienda_necesita_patrullaje(
-    supabase_client, tienda: str, horas_espera: float = 4.0
+    supabase_client, tienda: str, horas_espera: float = 1.5
 ) -> bool:
     """
     Verifica si han pasado 'horas_espera' desde el último patrullaje registrado en health_checks.
@@ -296,7 +296,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     link_raw.split("?")[0].split("#")[0].rstrip("/")
                 )
 
-                imagen = str(prod.get("img", "")).strip()
+                imagen = str(prod.get("imagen", prod.get("img", ""))).strip()
 
                 if precio_oferta <= 0 or es_error_de_precio(precio_oferta, precio_regular):
                     continue
@@ -310,7 +310,17 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 )
 
                 if not res_existente.data:
-                    # Producto nuevo
+                    # 🟢 PRODUCTO NUEVO: Intenta notificar a Telegram primero
+                    exito_telegram = enviar_alerta_telegram(
+                        tienda=tienda,
+                        nombre=nombre_real,
+                        precio_oferta=precio_oferta,
+                        precio_regular=precio_regular,
+                        link=link_prod,
+                        imagen=imagen,
+                        tipo_alerta="NUEVO_PRODUCTO",
+                    )
+
                     datos_insert = {
                         "identificador": f"{tienda}-{categoria}",
                         "nombre_producto": nombre_real,
@@ -329,16 +339,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
                     if res_ins and res_ins.data:
                         total_productos_procesados += 1
-                        exito_telegram = enviar_alerta_telegram(
-                            tienda=tienda,
-                            nombre=nombre_real,
-                            precio_oferta=precio_oferta,
-                            precio_regular=precio_regular,
-                            link=link_prod,
-                            imagen=imagen,
-                            tipo_alerta="NUEVO_PRODUCTO",
-                        )
-
                         if exito_telegram:
                             total_ofertas_notificadas += 1
                             safe_log(
@@ -348,18 +348,18 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             time.sleep(1.5)
                         else:
                             safe_log(
-                                f"⚠️ Guardado en BD pero Telegram limitó la entrega: {nombre_real}",
+                                f"⚠️ Guardado en BD pero Telegram no entregó el mensaje: {nombre_real}",
                                 "warning",
                             )
 
                 else:
-                    # Producto existente
+                    # 🟡 PRODUCTO EXISTENTE: Evaluar si bajó de precio
                     reg_guardado = res_existente.data[0]
                     precio_guardado = safe_float(reg_guardado.get("precio"))
                     id_bd = reg_guardado.get("id")
 
                     if precio_oferta < precio_guardado:
-                        # Baja de precio
+                        # 1. Intentar enviar alerta a Telegram PRIMERO
                         exito_telegram = enviar_alerta_telegram(
                             tienda=tienda,
                             nombre=nombre_real,
@@ -370,19 +370,19 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             tipo_alerta="BAJA_PRECIO",
                         )
 
-                        datos_update = {
-                            "nombre_producto": nombre_real,
-                            "precio": precio_oferta,
-                            "precio_regular": max(precio_regular, precio_guardado),
-                            "imagen_producto": (
-                                imagen if imagen else reg_guardado.get("imagen_producto", "")
-                            ),
-                            "fecha": fecha_actual,
-                        }
-                        supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
-                        total_productos_procesados += 1
-
+                        # 2. SOLO actualizar el precio en BD si Telegram entregó la notificación
                         if exito_telegram:
+                            datos_update = {
+                                "nombre_producto": nombre_real,
+                                "precio": precio_oferta,
+                                "precio_regular": max(precio_regular, precio_guardado),
+                                "imagen_producto": (
+                                    imagen if imagen else reg_guardado.get("imagen_producto", "")
+                                ),
+                                "fecha": fecha_actual,
+                            }
+                            supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
+                            total_productos_procesados += 1
                             total_ofertas_notificadas += 1
                             safe_log(
                                 f"📉 Baja de precio (S/. {precio_guardado:.2f} ➔ S/. {precio_oferta:.2f}): {nombre_real}",
@@ -390,13 +390,14 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             )
                             time.sleep(1.5)
                         else:
+                            # Si Telegram falló, conservamos el precio antiguo en BD para reintentar en el próximo patrullaje
                             safe_log(
-                                f"⚠️ Actualizado en BD pero Telegram no entregó el mensaje: {nombre_real}",
+                                f"⚠️ Telegram no entregó la baja de precio para: {nombre_real}. Se reintentará en la siguiente corrida.",
                                 "warning",
                             )
 
                     else:
-                        # Precio constante o mayor
+                        # Precio constante o mayor: Actualizar fecha de rastreo
                         datos_update = {"fecha": fecha_actual}
                         if not reg_guardado.get("nombre_producto"):
                             datos_update["nombre_producto"] = nombre_real
