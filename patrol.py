@@ -17,12 +17,12 @@ from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
 
-# Configuración de horas mínimas entre escaneos por tienda (Ajustadas a 1.5h para sincronizar con GitHub Actions)
+# Configuración de horas mínimas entre escaneos por tienda (Sincronizado a 1.5h para el cron de GitHub)
 TIENDAS_CON_ENFRIAMIENTO = {
-    "JBL": 4,
-    "ADIDAS": 4,
-    "PLATANITOS": 4,
-    "RIPLEY": 4,
+    "JBL": 1.5,
+    "ADIDAS": 1.5,
+    "PLATANITOS": 1.5,
+    "RIPLEY": 1.5,
 }
 
 
@@ -329,6 +329,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         "imagen_producto": imagen,
                         "link_producto": link_prod,
                         "fecha": fecha_actual,
+                        "tipo_evento": "NUEVO",  # 👈 Registra tipo de evento NUEVO
                     }
 
                     res_ins = (
@@ -380,6 +381,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                                     imagen if imagen else reg_guardado.get("imagen_producto", "")
                                 ),
                                 "fecha": fecha_actual,
+                                "tipo_evento": "BAJA_PRECIO",  # 👈 Registra BAJA DE PRECIO
                             }
                             supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                             total_productos_procesados += 1
@@ -398,7 +400,10 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
                     else:
                         # Precio constante o mayor: Actualizar fecha de rastreo
-                        datos_update = {"fecha": fecha_actual}
+                        datos_update = {
+                            "fecha": fecha_actual,
+                            "tipo_evento": "CONSTANTE",  # 👈 Registra precio CONSTANTE
+                        }
                         if not reg_guardado.get("nombre_producto"):
                             datos_update["nombre_producto"] = nombre_real
 
@@ -427,3 +432,4 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     )
     safe_log(f"✅ {resumen}", "success")
     return resumen
+                
