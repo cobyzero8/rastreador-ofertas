@@ -9,6 +9,43 @@ from urllib.parse import urljoin
 from utils import sanitizar_url, safe_float, es_error_de_precio, safe_log
 from config import LISTA_USER_AGENTS
 
+def normalizar_imagen_falabella(raw_img, link_final):
+    """
+    Limpia y construye una URL de imagen válida para Falabella
+    compatible al 100% con la API de Telegram.
+    """
+    img_str = str(raw_img or "").strip()
+
+    # Si no hay imagen o es un SVG/data-uri, extraer ID del producto como fallback
+    if not img_str or len(img_str) < 10 or 'data:image' in img_str:
+        clean_url = link_final.split('?')[0].split('#')[0]
+        match_id = [t for t in clean_url.split('/') if t.isdigit() and len(t) >= 7]
+        if match_id:
+            return f"https://falabella.scene7.com/is/image/FalabellaPE/{match_id[-1]}_1?wid=800&hei=800&qlt=80"
+        return ""
+
+    # Limpiar comas y atributos de srcset
+    img_str = img_str.split(' ')[0].strip().rstrip(',')
+
+    # Corregir prefijos relativas (// o /)
+    if img_str.startswith('//'):
+        img_str = 'https:' + img_str
+    elif img_str.startswith('/'):
+        if '/is/image/' in img_str:
+            img_str = 'https://falabella.scene7.com' + img_str
+        else:
+            img_str = 'https://www.falabella.com.pe' + img_str
+    elif not img_str.startswith('http'):
+        img_str = 'https://' + img_str
+
+    # Optimizar Scene7 para Telegram
+    if 'scene7.com' in img_str:
+        base_img = img_str.split('?')[0]
+        img_str = f"{base_img}?wid=800&hei=800&qlt=80"
+
+    return img_str
+
+
 def motor_falabella(url, limite=999999.0, headers=None):
     """
     Scraper optimizado para Falabella Perú.
@@ -123,32 +160,22 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     if precio_regular == 0.0:
                         precio_regular = precio_oferta
 
-                    # 🟢 LLAMADA CORREGIDA: Se pasan los 3 parámetros posicionales
                     if precio_oferta < 10.0 or es_error_de_precio(precio_oferta, precio_regular, precio_regular) or precio_oferta > limite:
                         continue
 
-                    # 4. Extracción de Imagen HD
-                    img_url = ""
-                    media_list = item.get("mediaUrls") or item.get("media") or item.get("images") or []
+                    # 4. Extracción e higienizado de Imagen HD
+                    raw_img = ""
+                    media_list = item.get("mediaUrls") or item.get("media") or item.get("images") or item.get("multimedia") or []
                     if isinstance(media_list, list) and len(media_list) > 0:
                         first_m = media_list[0]
                         if isinstance(first_m, dict):
-                            img_url = first_m.get("url") or first_m.get("src") or ""
+                            raw_img = first_m.get("url") or first_m.get("src") or ""
                         elif isinstance(first_m, str):
-                            img_url = first_m
+                            raw_img = first_m
                     elif isinstance(media_list, dict):
-                        img_url = media_list.get("url") or media_list.get("src") or ""
+                        raw_img = media_list.get("url") or media_list.get("src") or ""
 
-                    if not img_url or len(img_url) < 15 or 'data:image' in img_url:
-                        clean_url = link_final.split('?')[0].split('#')[0]
-                        match_id = [t for t in clean_url.split('/') if t.isdigit() and len(t) >= 7]
-                        if match_id:
-                            img_url = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
-
-                    if str(img_url).startswith('//'):
-                        img_url = 'https:' + str(img_url)
-
-                    img_url = str(img_url).split(' ')[0].strip().rstrip(',')
+                    img_url = normalizar_imagen_falabella(raw_img, link_final)
 
                     productos.append({
                         "nombre": f"FALABELLA - {nombre}",
@@ -182,27 +209,19 @@ def motor_falabella(url, limite=999999.0, headers=None):
                     el_normal = t.find(attrs={"data-normal-price": True}) or t.select_one('[data-normal-price]')
                     precio_regular = safe_float(el_normal.get('data-normal-price')) if el_normal else precio_oferta
 
-                    # 🟢 LLAMADA CORREGIDA
                     if precio_oferta < 10.0 or es_error_de_precio(precio_oferta, precio_regular, precio_regular) or precio_oferta > limite:
                         continue
 
                     img_el = t.select_one('img[id^="testId-pod-image-"]') or t.find('img')
-                    img_url = ""
+                    raw_img = ""
                     if img_el:
                         for attr in ['data-srcset', 'srcset', 'data-src', 'src']:
                             val = img_el.get(attr)
                             if val and 'data:image' not in str(val) and len(str(val)) > 10:
-                                img_url = str(val).split(' ')[0].strip()
+                                raw_img = str(val).split(' ')[0].strip()
                                 break
 
-                    if not img_url or len(img_url) < 15:
-                        clean_url = link_final.split('?')[0].split('#')[0]
-                        match_id = [t for t in clean_url.split('/') if t.isdigit() and len(t) >= 7]
-                        if match_id:
-                            img_url = f"https://media.falabella.com/falabellaPE/{match_id[-1]}_01/w=800,h=800,fit=pad"
-
-                    if str(img_url).startswith('//'):
-                        img_url = 'https:' + str(img_url)
+                    img_url = normalizar_imagen_falabella(raw_img, link_final)
 
                     productos.append({
                         "nombre": f"FALABELLA - {nombre_txt}",
@@ -227,3 +246,4 @@ def motor_falabella(url, limite=999999.0, headers=None):
         safe_log(f"🚨 Error en motor Falabella: {e}", "error")
 
     return productos
+                                
