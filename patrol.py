@@ -17,20 +17,16 @@ from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
 
-# Configuración de horas mínimas entre escaneos por tienda (Sincronizado a 1.5h para el cron de GitHub)
+# Configuración de horas mínimas entre escaneos por tienda
 TIENDAS_CON_ENFRIAMIENTO = {
-    "JBL": 1.5,
-    "ADIDAS": 1.5,
-    "PLATANITOS": 1.5,
-    "RIPLEY": 1.5,
+    "JBL": 4,
+    "ADIDAS": 4,
+    "PLATANITOS": 4,
+    "RIPLEY": 4,
 }
 
 
 def cumple_filtro_categoria(filtro: str, identificador: str) -> bool:
-    """
-    Verifica si el identificador del radar coincide con el filtro solicitado,
-    soportando búsquedas por singular, plural y sinónimos.
-    """
     if not filtro or filtro == "TODOS":
         return True
 
@@ -62,10 +58,6 @@ def cumple_filtro_categoria(filtro: str, identificador: str) -> bool:
 
 
 def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS"):
-    """
-    Envía un único mensaje resumido a Telegram notificando qué URLs
-    fueron omitidas por estar desactivadas dentro del filtro solicitado.
-    """
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -80,10 +72,7 @@ def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS
         pass
 
     if not token or not chat_id:
-        safe_log(
-            "⚠️ No se enviará reporte a Telegram: faltan credenciales.",
-            "warning",
-        )
+        safe_log("⚠️ No se enviará reporte a Telegram: faltan credenciales.", "warning")
         return
 
     cant = len(lista_desactivados)
@@ -116,18 +105,10 @@ def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS
         requests.post(url_api, json=payload, timeout=10)
         safe_log("📲 Reporte de URLs inactivas enviado a Telegram.", "info")
     except Exception as e:
-        safe_log(
-            f"❌ Falló el envío del reporte de inactivos a Telegram: {e}",
-            "error",
-        )
+        safe_log(f"❌ Falló el envío del reporte de inactivos a Telegram: {e}", "error")
 
 
-def tienda_necesita_patrullaje(
-    supabase_client, tienda: str, horas_espera: float = 1.5
-) -> bool:
-    """
-    Verifica si han pasado 'horas_espera' desde el último patrullaje registrado en health_checks.
-    """
+def tienda_necesita_patrullaje(supabase_client, tienda: str, horas_espera: float = 1.5) -> bool:
     tienda_clean = str(tienda).upper().strip()
     try:
         res = (
@@ -146,9 +127,7 @@ def tienda_necesita_patrullaje(
                     ultimo_scan = ultimo_scan.replace(tzinfo=timezone.utc)
 
                 ahora = datetime.now(timezone.utc)
-                horas_pasadas = (
-                    ahora - ultimo_scan
-                ).total_seconds() / 3600.0
+                horas_pasadas = (ahora - ultimo_scan).total_seconds() / 3600.0
 
                 if horas_pasadas < horas_espera:
                     safe_log(
@@ -158,34 +137,23 @@ def tienda_necesita_patrullaje(
                     )
                     return False
     except Exception as e:
-        safe_log(
-            f"⚠️ No se pudo verificar timestamp de enfriamiento para {tienda_clean}: {e}",
-            "warning",
-        )
+        safe_log(f"⚠️ No se pudo verificar timestamp de enfriamiento para {tienda_clean}: {e}", "warning")
 
     return True
 
 
 def revisar_ofertas(filtro_categoria="TODOS"):
     if not supabase:
-        safe_log(
-            "🛑 No hay conexión con Supabase. Revisa SUPABASE_URL y SUPABASE_KEY.",
-            "error",
-        )
+        safe_log("🛑 No hay conexión con Supabase. Revisa SUPABASE_URL y SUPABASE_KEY.", "error")
         return "Fallo de conexión con Supabase: Credenciales faltantes."
 
-    safe_log(
-        f"🕵️‍♂️ Iniciando patrullaje con filtro: '{filtro_categoria}'", "info"
-    )
+    safe_log(f"🕵️‍♂️ Iniciando patrullaje con filtro: '{filtro_categoria}'", "info")
 
     try:
         query = supabase.table("radares").select("*")
         res_radares = query.execute()
         if not res_radares.data:
-            safe_log(
-                "⚠️ No se encontraron radares en la tabla 'radares'.",
-                "warning",
-            )
+            safe_log("⚠️ No se encontraron radares en la tabla 'radares'.", "warning")
             return "No hay radares registrados en la base de datos."
 
         radares = res_radares.data
@@ -195,9 +163,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
 
     tiendas_permitidas = {}
     for t_nombre, t_horas in TIENDAS_CON_ENFRIAMIENTO.items():
-        tiendas_permitidas[t_nombre] = tienda_necesita_patrullaje(
-            supabase, t_nombre, horas_espera=t_horas
-        )
+        tiendas_permitidas[t_nombre] = tienda_necesita_patrullaje(supabase, t_nombre, horas_espera=t_horas)
 
     zona_peru = timezone(timedelta(hours=-5))
     fecha_actual = datetime.now(zona_peru).strftime("%Y-%m-%d %H:%M:%S")
@@ -209,14 +175,11 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     for radar in radares:
         url = radar.get("url", "").strip()
         precio_max = safe_float(radar.get("precio_max", 999999))
-        identificador_base = str(
-            radar.get("identificador", "GENERAL-OTROS-PRODUCTO-TODAS")
-        ).upper()
+        identificador_base = str(radar.get("identificador", "GENERAL-OTROS-PRODUCTO-TODAS")).upper()
 
         if not url or not url.startswith("http"):
             continue
 
-        # 🟢 FILTRADO FLEXIBLE POR CATEGORÍA (Singular, Plural y Sinónimos)
         if not cumple_filtro_categoria(filtro_categoria, identificador_base):
             continue
 
@@ -225,55 +188,33 @@ def revisar_ofertas(filtro_categoria="TODOS"):
         categoria = parts[1] if len(parts) > 1 else "OTROS"
         tag = parts[2] if len(parts) > 2 else "PRODUCTO"
 
-        # Verificación de estado activo (sólo para los radares que cumplen el filtro)
         es_activo = radar.get("activo", True)
         if es_activo is False:
             safe_log(
                 f"⏸️ [{tienda}] OMITIDO: El radar '{identificador_base}' ({url}) está DESACTIVADO.",
                 "warning",
             )
-            desactivados_acumulados.append(
-                {"tienda": tienda, "tag": tag, "url": url}
-            )
+            desactivados_acumulados.append({"tienda": tienda, "tag": tag, "url": url})
             continue
 
-        if (
-            tienda in tiendas_permitidas
-            and not tiendas_permitidas[tienda]
-        ):
+        if tienda in tiendas_permitidas and not tiendas_permitidas[tienda]:
             continue
 
-        safe_log(
-            f"🔍 Escaneando radar [{tienda}] -> {url} (Límite S/. {precio_max:.2f})",
-            "info",
-        )
+        safe_log(f"🔍 Escaneando radar [{tienda}] -> {url} (Límite S/. {precio_max:.2f})", "info")
 
         productos_encontrados = []
         try:
-            productos_encontrados = escanear_tienda(
-                url, tienda, precio_max
-            )
+            productos_encontrados = escanear_tienda(url, tienda, precio_max)
         except Exception as ex_scrap:
-            safe_log(
-                f"❌ Error durante la extracción en {tienda}: {ex_scrap}",
-                "error",
-            )
+            safe_log(f"❌ Error durante la extracción en {tienda}: {ex_scrap}", "error")
 
-        cant_prods = (
-            len(productos_encontrados) if productos_encontrados else 0
-        )
-        safe_log(
-            f"📊 [{tienda}] Productos válidos extraídos: {cant_prods}",
-            "info",
-        )
+        cant_prods = len(productos_encontrados) if productos_encontrados else 0
+        safe_log(f"📊 [{tienda}] Productos válidos extraídos: {cant_prods}", "info")
 
         try:
             registrar_resultado_salud(supabase, tienda, cant_prods, url)
         except Exception as ex_health:
-            safe_log(
-                f"⚠️ No se pudo registrar salud para {tienda}: {ex_health}",
-                "warning",
-            )
+            safe_log(f"⚠️ No se pudo registrar salud para {tienda}: {ex_health}", "warning")
 
         if not productos_encontrados:
             continue
@@ -285,16 +226,12 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     continue
 
                 precio_oferta = safe_float(prod.get("precio"))
-                precio_regular = safe_float(
-                    prod.get("precio_regular", precio_oferta)
-                )
+                precio_regular = safe_float(prod.get("precio_regular", precio_oferta))
 
                 link_raw = str(prod.get("link", url)).strip()
                 if not link_raw or not link_raw.startswith("http"):
                     continue
-                link_prod = (
-                    link_raw.split("?")[0].split("#")[0].rstrip("/")
-                )
+                link_prod = link_raw.split("?")[0].split("#")[0].rstrip("/")
 
                 imagen = str(prod.get("imagen", prod.get("img", ""))).strip()
 
@@ -310,7 +247,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 )
 
                 if not res_existente.data:
-                    # 🟢 PRODUCTO NUEVO: Intenta notificar a Telegram primero
+                    # 🟢 PRODUCTO NUEVO: Intentar notificar a Telegram primero
                     exito_telegram = enviar_alerta_telegram(
                         tienda=tienda,
                         nombre=nombre_real,
@@ -321,37 +258,34 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         tipo_alerta="NUEVO_PRODUCTO",
                     )
 
-                    datos_insert = {
-                        "identificador": f"{tienda}-{categoria}",
-                        "nombre_producto": nombre_real,
-                        "precio": precio_oferta,
-                        "precio_regular": precio_regular,
-                        "imagen_producto": imagen,
-                        "link_producto": link_prod,
-                        "fecha": fecha_actual,
-                        "tipo_evento": "NUEVO",  # 👈 Registra tipo de evento NUEVO
-                    }
+                    # 🎯 SOLO si Telegram responde True, guardamos en la BD
+                    if exito_telegram:
+                        datos_insert = {
+                            "identificador": f"{tienda}-{categoria}",
+                            "nombre_producto": nombre_real,
+                            "precio": precio_oferta,
+                            "precio_regular": precio_regular,
+                            "imagen_producto": imagen,
+                            "link_producto": link_prod,
+                            "fecha": fecha_actual,
+                            "tipo_evento": "NUEVO",
+                        }
 
-                    res_ins = (
-                        supabase.table("historial_precios")
-                        .insert(datos_insert)
-                        .execute()
-                    )
+                        res_ins = supabase.table("historial_precios").insert(datos_insert).execute()
 
-                    if res_ins and res_ins.data:
-                        total_productos_procesados += 1
-                        if exito_telegram:
+                        if res_ins and res_ins.data:
+                            total_productos_procesados += 1
                             total_ofertas_notificadas += 1
                             safe_log(
-                                f"🆕 Producto nuevo notificado: {nombre_real} -> Alerta enviada",
+                                f"🆕 Producto nuevo notificado a Telegram y guardado: {nombre_real}",
                                 "success",
                             )
                             time.sleep(1.5)
-                        else:
-                            safe_log(
-                                f"⚠️ Guardado en BD pero Telegram no entregó el mensaje: {nombre_real}",
-                                "warning",
-                            )
+                    else:
+                        safe_log(
+                            f"⚠️ Telegram no entregó la alerta para {nombre_real}. No se guarda en BD para reintentar.",
+                            "warning",
+                        )
 
                 else:
                     # 🟡 PRODUCTO EXISTENTE: Evaluar si bajó de precio
@@ -360,7 +294,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     id_bd = reg_guardado.get("id")
 
                     if precio_oferta < precio_guardado:
-                        # 1. Intentar enviar alerta a Telegram PRIMERO
                         exito_telegram = enviar_alerta_telegram(
                             tienda=tienda,
                             nombre=nombre_real,
@@ -371,7 +304,6 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             tipo_alerta="BAJA_PRECIO",
                         )
 
-                        # 2. SOLO actualizar el precio en BD si Telegram entregó la notificación
                         if exito_telegram:
                             datos_update = {
                                 "nombre_producto": nombre_real,
@@ -381,7 +313,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                                     imagen if imagen else reg_guardado.get("imagen_producto", "")
                                 ),
                                 "fecha": fecha_actual,
-                                "tipo_evento": "BAJA_PRECIO",  # 👈 Registra BAJA DE PRECIO
+                                "tipo_evento": "BAJA_PRECIO",
                             }
                             supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                             total_productos_procesados += 1
@@ -392,17 +324,15 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             )
                             time.sleep(1.5)
                         else:
-                            # Si Telegram falló, conservamos el precio antiguo en BD para reintentar en el próximo patrullaje
                             safe_log(
-                                f"⚠️ Telegram no entregó la baja de precio para: {nombre_real}. Se reintentará en la siguiente corrida.",
+                                f"⚠️ Telegram no entregó la baja de precio para: {nombre_real}. Se reintentará luego.",
                                 "warning",
                             )
 
                     else:
-                        # Precio constante o mayor: Actualizar fecha de rastreo
                         datos_update = {
                             "fecha": fecha_actual,
-                            "tipo_evento": "CONSTANTE",  # 👈 Registra precio CONSTANTE
+                            "tipo_evento": "CONSTANTE",
                         }
                         if not reg_guardado.get("nombre_producto"):
                             datos_update["nombre_producto"] = nombre_real
@@ -410,15 +340,12 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                         total_productos_procesados += 1
                         safe_log(
-                            f"🕒 Producto en BD constante (S/. {precio_oferta:.2f}). Fecha actualizada.",
+                            f"🕒 Producto constante (S/. {precio_oferta:.2f}). Fecha actualizada.",
                             "info",
                         )
 
             except Exception as ex_prod:
-                safe_log(
-                    f"⚠️ Error procesando producto individual: {ex_prod}",
-                    "warning",
-                )
+                safe_log(f"⚠️ Error procesando producto individual: {ex_prod}", "warning")
                 continue
 
     if desactivados_acumulados:
@@ -432,4 +359,4 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     )
     safe_log(f"✅ {resumen}", "success")
     return resumen
-                
+        
