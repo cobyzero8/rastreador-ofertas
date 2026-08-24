@@ -1,83 +1,39 @@
 import os
 import requests
+import streamlit as st
 from utils import safe_log
 
-def obtener_secret(nombre_key):
-    """
-    Obtiene las credenciales priorizando Variables de Entorno (GitHub Actions)
-    y utilizando Streamlit Secrets como respaldo.
-    """
-    valor = os.environ.get(nombre_key)
-    if valor and str(valor).strip():
-        return str(valor).strip()
+def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, imagen="", tipo_alerta="NUEVO_PRODUCTO"):
+    token = None
+    chat_id = None
     
+    # Intentar obtener credenciales desde Streamlit Secrets
     try:
-        import streamlit as st
-        if hasattr(st, "secrets") and nombre_key in st.secrets:
-            return str(st.secrets[nombre_key]).strip()
+        if hasattr(st, "secrets"):
+            token = st.secrets.get("TELEGRAM_TOKEN")
+            chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
     except Exception:
         pass
 
-    return None
-
-
-def sanitizar_imagen_para_telegram(url_imagen):
-    """
-    Higieniza y transforma URLs de imágenes (especialmente de Falabella)
-    a formatos estándar CDN aceptados al 100% por la API de Telegram.
-    """
-    if not url_imagen:
-        return ""
-
-    url_clean = str(url_imagen).strip()
-
-    # Corregir protocolos relativos si existieran
-    if url_clean.startswith("//"):
-        url_clean = "https:" + url_clean
-
-    # 🛒 TRATAMIENTO ESPECIAL PARA FALABELLA
-    if "falabella" in url_clean.lower():
-        # Caso 1: URLs guardadas en BD tipo media.falabella.com.pe/falabellaPE/{sku_id}/public
-        if "/public" in url_clean:
-            partes = url_clean.replace("/public", "").split("/")
-            sku_id = partes[-1] if partes else ""
-            if sku_id and ("_" in sku_id or sku_id.isdigit()):
-                return f"https://falabella.scene7.com/is/image/FalabellaPE/{sku_id}?wid=800&hei=800&qlt=80"
-
-        # Caso 2: URLs de media.falabella.com
-        if "media.falabella.com" in url_clean:
-            clean_base = url_clean.split('?')[0].split('#')[0]
-            match_id = [t for t in clean_base.split('/') if ('_' in t or t.isdigit()) and len(t) >= 5]
-            if match_id:
-                sku_id = match_id[-1]
-                return f"https://falabella.scene7.com/is/image/FalabellaPE/{sku_id}?wid=800&hei=800&qlt=80"
-
-        # Caso 3: Ajuste de Scene7 para resolución óptima
-        if "scene7.com" in url_clean:
-            base_img = url_clean.split('?')[0]
-            return f"{base_img}?wid=800&hei=800&qlt=80"
-
-        # Caso 4: Truco de sufijo para forzar detección de formato en Telegram
-        if not any(url_clean.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-            return f"{url_clean}#.jpg"
-
-    return url_clean
-
-
-def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, imagen="", tipo_alerta="NUEVO_PRODUCTO"):
-    token = obtener_secret("TELEGRAM_TOKEN")
-    chat_id = obtener_secret("TELEGRAM_CHAT_ID")
+    # Intentar obtener credenciales desde Variables de Entorno (GitHub Actions)
+    if not token:
+        token = os.environ.get("TELEGRAM_TOKEN")
+    if not chat_id:
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
-        safe_log("⚠️ Credenciales de Telegram faltantes (TELEGRAM_TOKEN o TELEGRAM_CHAT_ID).", "warning")
+        safe_log("⚠️ Credenciales de Telegram faltantes.", "warning")
         return False
 
-    # 🟢 Procesar e higienizar la imagen antes de enviar a Telegram
-    imagen_procesada = sanitizar_imagen_para_telegram(imagen)
+    # 🟢 AJUSTE EXCLUSIVO PARA FALABELLA: Convierte /public a Scene7 para que Telegram no rechace sendPhoto
+    if imagen and "falabella" in str(imagen).lower() and "/public" in str(imagen):
+        sku_id = str(imagen).replace("/public", "").split("/")[-1]
+        imagen = f"https://falabella.scene7.com/is/image/FalabellaPE/{sku_id}?wid=800&hei=800"
 
-    # Sanitizar caracteres que puedan romper el formato HTML de Telegram
-    nombre_clean = str(nombre).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Sanitizar el nombre para evitar que caracteres < o > rompan el parseo HTML de Telegram
+    nombre_clean = str(nombre).replace("<", "&lt;").replace(">", "&gt;")
 
+    # 🎯 ENCABEZADOS Y TEXTO SEGÚN EL TIPO DE EVENTO
     if tipo_alerta == "BAJA_PRECIO":
         header = "📉 <b>¡EL PRODUCTO BAJÓ DE PRECIO APROVECHA COBY!</b> 📉"
         label_precio = "💰 <b>Nuevo Precio Menor:</b>"
@@ -98,16 +54,34 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
 
     mensaje += f"\n👉 <a href='{link}'><b>¡VER EN TIENDA!</b></a>"
 
-    # 🟢 INTENTO 1: Enviar con Foto (Usando la imagen higienizada)
-    if imagen_procesada and str(imagen_procesada).startswith("http"):
-        try:
-            url_photo = f"https://api.telegram.org/bot{token}/sendPhoto"
-            payload_photo = {
+    try:
+        if imagen and str(imagen).startswith("http"):
+            url_api = f"https://api.telegram.org/bot{token}/sendPhoto"
+            payload = {
                 "chat_id": chat_id,
-                "photo": imagen_procesada,
+                "photo": imagen,
                 "caption": mensaje,
                 "parse_mode": "HTML"
             }
+        else:
+            url_api = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = {
+                "chat_id": chat_id,
+                "text": mensaje,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False
+            }
+
+        resp = requests.post(url_api, json=payload, timeout=12)
+        if resp.status_code == 200:
+            return True
+        else:
+            safe_log(f"🚨 Telegram rechazó el mensaje (HTTP {resp.status_code}): {resp.text}", "error")
+            return False
+
+    except Exception as e:
+        safe_log(f"🚨 Error enviando a Telegram: {e}", "error")
+        return False
             resp_photo = requests.post(url_photo, json=payload_photo, timeout=10)
             if resp_photo.status_code == 200:
                 return True
