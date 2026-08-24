@@ -21,6 +21,35 @@ def obtener_secret(nombre_key):
     return None
 
 
+def calcular_termometro_oferta(precio_oferta, precio_regular):
+    """
+    Calcula una barra visual de calor y el nivel de recomendación 
+    según el porcentaje de descuento del producto.
+    """
+    if precio_regular <= 0 or precio_oferta >= precio_regular:
+        return "🔴⚪⚪⚪⚪ <b>0%</b> (<i>Sin descuento</i>)"
+
+    descuento_pct = ((precio_regular - precio_oferta) / precio_regular) * 100
+
+    if descuento_pct < 15:
+        barra = "🔴⚪⚪⚪⚪"
+        texto = "Poco conveniente"
+    elif descuento_pct < 30:
+        barra = "🟠🟠⚪⚪⚪"
+        texto = "Oferta regular"
+    elif descuento_pct < 45:
+        barra = "🟡🟡🟡⚪⚪"
+        texto = "Buena oferta"
+    elif descuento_pct < 60:
+        barra = "🟢🟢🟢🟢⚪"
+        texto = "¡Muy recomendable!"
+    else:
+        barra = "🔥🟢🟢🟢🟢"
+        texto = "¡OFERTÓN IMPERDIBLE!"
+
+    return f"{barra} <b>-{descuento_pct:.0f}%</b> (<i>{texto}</i>)"
+
+
 def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, imagen="", tipo_alerta="NUEVO_PRODUCTO"):
     token = obtener_secret("TELEGRAM_TOKEN")
     chat_id = obtener_secret("TELEGRAM_CHAT_ID")
@@ -49,7 +78,9 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
     
     if precio_regular > precio_oferta:
         ahorro = precio_regular - precio_oferta
+        termometro = calcular_termometro_oferta(precio_oferta, precio_regular)
         mensaje += f"🏷️ <b>Precio Regular / Anterior:</b> <s>S/. {precio_regular:.2f}</s> (Ahorro: S/. {ahorro:.2f})\n"
+        mensaje += f"🔥 <b>Nivel de Oferta:</b> {termometro}\n"
 
     mensaje += f"\n👉 <a href='{link}'><b>¡VER EN TIENDA!</b></a>"
 
