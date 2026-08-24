@@ -3,32 +3,31 @@ import requests
 import streamlit as st
 from utils import safe_log
 
-def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, imagen="", tipo_alerta="NUEVO_PRODUCTO"):
-    token = None
-    chat_id = None
+def obtener_secret(nombre_key):
+    """
+    Obtiene las credenciales priorizando Variables de Entorno (GitHub Actions)
+    y utilizando Streamlit Secrets como respaldo.
+    """
+    valor = os.environ.get(nombre_key)
+    if valor and str(valor).strip():
+        return str(valor).strip()
     
-    # Intentar obtener credenciales desde Streamlit Secrets
     try:
-        if hasattr(st, "secrets"):
-            token = st.secrets.get("TELEGRAM_TOKEN")
-            chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+        if hasattr(st, "secrets") and nombre_key in st.secrets:
+            return str(st.secrets[nombre_key]).strip()
     except Exception:
         pass
 
-    # Intentar obtener credenciales desde Variables de Entorno (GitHub Actions)
-    if not token:
-        token = os.environ.get("TELEGRAM_TOKEN")
-    if not chat_id:
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    return None
+
+
+def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, imagen="", tipo_alerta="NUEVO_PRODUCTO"):
+    token = obtener_secret("TELEGRAM_TOKEN")
+    chat_id = obtener_secret("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
         safe_log("⚠️ Credenciales de Telegram faltantes.", "warning")
         return False
-
-    # 🟢 AJUSTE EXCLUSIVO PARA FALABELLA: Convierte /public a Scene7 para que Telegram no rechace sendPhoto
-    if imagen and "falabella" in str(imagen).lower() and "/public" in str(imagen):
-        sku_id = str(imagen).replace("/public", "").split("/")[-1]
-        imagen = f"https://falabella.scene7.com/is/image/FalabellaPE/{sku_id}?wid=800&hei=800"
 
     # Sanitizar el nombre para evitar que caracteres < o > rompan el parseo HTML de Telegram
     nombre_clean = str(nombre).replace("<", "&lt;").replace(">", "&gt;")
@@ -54,44 +53,33 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
 
     mensaje += f"\n👉 <a href='{link}'><b>¡VER EN TIENDA!</b></a>"
 
-    try:
-        if imagen and str(imagen).startswith("http"):
-            url_api = f"https://api.telegram.org/bot{token}/sendPhoto"
-            payload = {
-                "chat_id": chat_id,
-                "photo": imagen,
-                "caption": mensaje,
-                "parse_mode": "HTML"
+    # 🟢 INTENTO 1: DESCARGAR IMAGEN Y SUBIR COMO ARCHIVO BINARIO (Evita bloqueos de CDN)
+    if imagen and str(imagen).startswith("http"):
+        try:
+            url_photo = f"https://api.telegram.org/bot{token}/sendPhoto"
+            headers_img = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-        else:
-            url_api = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {
-                "chat_id": chat_id,
-                "text": mensaje,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": False
-            }
-
-        resp = requests.post(url_api, json=payload, timeout=12)
-        if resp.status_code == 200:
-            return True
-        else:
-            safe_log(f"🚨 Telegram rechazó el mensaje (HTTP {resp.status_code}): {resp.text}", "error")
-            return False
-
-    except Exception as e:
-        safe_log(f"🚨 Error enviando a Telegram: {e}", "error")
-        return False
-            resp_photo = requests.post(url_photo, json=payload_photo, timeout=10)
-            if resp_photo.status_code == 200:
-                return True
             
-            safe_log(
-                f"⚠️ Telegram rechazó la foto de {tienda} (HTTP {resp_photo.status_code}). Reintentando como texto simple...",
-                "warning"
-            )
+            # Descargar bytes de la imagen
+            res_img = requests.get(imagen, headers=headers_img, timeout=8)
+            
+            if res_img.status_code == 200 and len(res_img.content) > 1000:
+                payload = {
+                    "chat_id": chat_id,
+                    "caption": mensaje,
+                    "parse_mode": "HTML"
+                }
+                files = {
+                    "photo": ("producto.jpg", res_img.content, "image/jpeg")
+                }
+                resp_photo = requests.post(url_photo, data=payload, files=files, timeout=12)
+                if resp_photo.status_code == 200:
+                    return True
+                
+                safe_log(f"⚠️ Telegram rechazó el archivo de la foto (HTTP {resp_photo.status_code}): {resp_photo.text}", "warning")
         except Exception as e_img:
-            safe_log(f"⚠️ Error al enviar foto: {e_img}. Reintentando como texto simple...", "warning")
+            safe_log(f"⚠️ Error al descargar/subir foto de {tienda}: {e_img}. Reintentando como texto...", "warning")
 
     # 🟢 INTENTO 2 / RESPALDO: Enviar solo texto HTML
     try:
@@ -112,3 +100,4 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
     except Exception as e_text:
         safe_log(f"🚨 Error enviando mensaje de texto a Telegram: {e_text}", "error")
         return False
+        
