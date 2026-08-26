@@ -65,17 +65,17 @@ async def borrar_menu_previo(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
 
 # ---------------------------------------------------------
-# Listas Oficiales de Tiendas Monitoreadas
+# Listas Oficiales de Tiendas Monitoreadas (Incluye SHOPSTAR)
 # ---------------------------------------------------------
 TIENDAS = [
     "ADIDAS", "CARSA", "COOLBOX", "CURACAO", "CYZONE", "EFE",
     "ESIKA", "ESTILOS", "FALABELLA", "FOOTLOOSE", "HIRAOKA", "JBL",
     "JUNTOZ", "LBEL", "NIKE", "OECHSLE", "PLATANITOS", "PLAZA_VEA",
-    "PROMART", "RIPLEY", "THN", "TRIATHLON"
+    "PROMART", "RIPLEY", "SHOPSTAR", "THN", "TRIATHLON"
 ]
 
 # ---------------------------------------------------------
-# Mapeo Oficial de Categorías
+# Mapeo Oficial de Categorías (Incluye CAMPANA EXTRACTORA)
 # ---------------------------------------------------------
 CATEGORIAS_MAP = {
     "PERFUMES": "🧪 PERFUMES",
@@ -94,6 +94,7 @@ CATEGORIAS_MAP = {
     "REFRIGERADORA": "❄️ REFRIGERADORA",
     "LAVADORA": "🧺 LAVADORA",
     "ELECTRODOMESTICOS": "🔌 ELECTRODOM.",
+    "CAMPANA_EXTRACTORA": "💨 CAMPANA EXT.",
     "CAMA": "🛏️ CAMA",
     "OTROS": "📦 OTROS"
 }
@@ -301,6 +302,9 @@ def main():
     app.add_handler(CommandHandler("tiendas", menu_tiendas))
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
+    
+    # Comandos de acceso rápido personalizados
+    app.add_handler(CommandHandler(["campana", "extractora"], lambda u, c: ejecutar_escaneo(u, c, "CAMPANA_EXTRACTORA")))
 
     # Comandos por Tienda
     for tienda in TIENDAS:
