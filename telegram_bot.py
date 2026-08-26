@@ -1,4 +1,5 @@
 import os
+import html
 import logging
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -325,17 +326,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "analizar_ia":
         await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
         
-        texto_original = query.message.caption or query.message.text or ""
-        
-        if "VEREDICTO IA:" in texto_original:
+        # Preservar formato HTML original para evitar que se rompa el mensaje de Telegram
+        texto_html = query.message.caption_html if query.message.caption else (query.message.text_html or "")
+        texto_plano = query.message.caption or query.message.text or ""
+
+        if "VEREDICTO IA:" in texto_html:
             await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
             return
 
-        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_original)
-        nuevo_texto = f"{texto_original}\n\n{veredicto}"
+        # Consultar análisis a Gemini con el texto plano
+        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano)
+        nuevo_texto = f"{texto_html}\n\n{veredicto}"
 
         try:
             if query.message.caption:
+                # Respetar el límite de 1024 caracteres en descripciones de imagen
+                if len(nuevo_texto) > 1024:
+                    nuevo_texto = nuevo_texto[:1020] + "..."
+                
                 await query.edit_message_caption(
                     caption=nuevo_texto, 
                     parse_mode="HTML",
@@ -350,6 +358,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             logger.error(f"Error editando mensaje con veredicto IA: {e}")
+            await query.answer(f"🚨 No se pudo editar el mensaje: {e}", show_alert=True)
 
 
 async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
