@@ -55,7 +55,7 @@ def obtener_tiendas_dinamicas():
     tiendas_base = [
         "GENERAL", "ADIDAS", "FALABELLA", "MARATHON", "RIPLEY", "PUMA", "NIKE", 
         "TRIATHLON", "JBL", "SAMSUNG", "PLAZA_VEA", "TOTTUS", "METRO", 
-        "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM", "EFE"
+        "PLATANITOS", "FOOTLOOSE", "ESTILOS", "NATURA", "HM", "EFE", "SHOPSTAR"
     ]
     try:
         res = supabase.table("radares").select("identificador").execute()
@@ -152,7 +152,7 @@ def botonera_independiente():
             st.session_state.filtro_activo = "CELULAR"
 
     st.write("**Hogar y Electrodomésticos:**")
-    h1, h2, h3, h4, h5 = st.columns(5)
+    h1, h2, h3, h4, h5, h6 = st.columns(6)
     with h1:
         if st.button("💻 PC / LAPTOP", use_container_width=True, type="primary" if st.session_state.filtro_activo == "PC" else "secondary"):
             st.session_state.filtro_activo = "PC"
@@ -168,6 +168,9 @@ def botonera_independiente():
     with h5:
         if st.button("🛏️ CAMA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CAMA" else "secondary"):
             st.session_state.filtro_activo = "CAMA"
+    with h6:
+        if st.button("💨 CAMPANA", use_container_width=True, type="primary" if st.session_state.filtro_activo == "CAMPANA EXTRACTORA" else "secondary"):
+            st.session_state.filtro_activo = "CAMPANA EXTRACTORA"
 
     st.info(f"📍 **Filtro seleccionado actualmente:** `{st.session_state.filtro_activo}`")
 
@@ -217,6 +220,7 @@ if menu == "📈 Ver Dashboard / Ofertas":
         elif f_activo == "LAVADORA": query = query.or_("identificador.ilike.%LAVADORA%,identificador.ilike.%LAVADO%")
         elif f_activo == "ELECTRODOMESTICOS": query = query.ilike("identificador", "%ELECTRO%")
         elif f_activo == "CAMA": query = query.or_("identificador.ilike.%CAMA%,identificador.ilike.%COLCHON%")
+        elif f_activo == "CAMPANA EXTRACTORA": query = query.or_("identificador.ilike.%CAMPANA%,identificador.ilike.%EXTRACTORA%")
 
         res_h = query.limit(1000).execute()
 
@@ -359,7 +363,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
     except Exception:
         pass
     lista_tiendas = obtener_tiendas_dinamicas()
-    cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Cama", "Otros"]
+    cats_form = ["Perfumes", "Zapatillas", "Ropa (Medias)", "Ropa (Polos)", "Ropa (Casacas/Poleras)", "Ropa (Shorts)", "Ropa (Buzos)", "Audifonos", "TV", "Parlante", "Barra de sonido", "Celular", "PC / Laptop", "Refrigeradora", "Lavadora", "Electrodomesticos", "Campana Extractora", "Cama", "Otros"]
 
     with st.container(border=True):
         col_tit, col_canc = st.columns([6, 1])
@@ -403,7 +407,7 @@ elif menu == "🛠️ Configurar Radares y URLs":
                     "tv": "TV", "parlante": "PARLANTE", "barra": "BARRA_DE_SONIDO",
                     "celular": "CELULAR", "pc": "PC", "laptop": "PC",
                     "refrigeradora": "REFRIGERADORA", "lavadora": "LAVADORA",
-                    "electro": "ELECTRODOMESTICOS", "cama": "CAMA", "colchon": "CAMA"
+                    "electro": "ELECTRODOMESTICOS", "campana": "CAMPANA_EXTRACTORA", "extractora": "CAMPANA_EXTRACTORA", "cama": "CAMA", "colchon": "CAMA"
                 }
                 cat_final = next((val for key, val in cat_map.items() if key in cl), "OTROS")
 
