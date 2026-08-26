@@ -16,6 +16,8 @@ from notifications import enviar_alerta_telegram
 from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
+# Variable global para evitar spam del reporte de inactivos
+ULTIMO_ENVIO_INACTIVOS = 0
 
 # Configuración de horas mínimas entre escaneos por tienda (Protección de créditos)
 TIENDAS_CON_ENFRIAMIENTO = {
@@ -23,7 +25,7 @@ TIENDAS_CON_ENFRIAMIENTO = {
     "ADIDAS": 4,
     "PLATANITOS": 4,
     "RIPLEY": 4,
-    
+    "SHOPSTAR": 4,
 }
 
 
@@ -61,6 +63,14 @@ def cumple_filtro_categoria(filtro: str, identificador: str) -> bool:
 
 
 def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS"):
+    global ULTIMO_ENVIO_INACTIVOS
+    ahora = time.time()
+
+    # ⏱️ COOLDOWN DE 6 HORAS (21600 seg) PARA EVITAR SPAM DE REPORTES DE PAUSADOS
+    if (ahora - ULTIMO_ENVIO_INACTIVOS) < 21600:
+        safe_log("⏳ Reporte de radares inactivos omitido para evitar spam (ya se envió recientemente).", "info")
+        return
+
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -105,8 +115,10 @@ def enviar_reporte_inactivos_telegram(lista_desactivados, filtro_aplicado="TODOS
     }
 
     try:
-        requests.post(url_api, json=payload, timeout=10)
-        safe_log("📲 Reporte de URLs inactivas enviado a Telegram.", "info")
+        resp = requests.post(url_api, json=payload, timeout=10)
+        if resp.status_code == 200:
+            ULTIMO_ENVIO_INACTIVOS = ahora
+            safe_log("📲 Reporte de URLs inactivas enviado a Telegram.", "info")
     except Exception as e:
         safe_log(f"❌ Falló el envío del reporte de inactivos a Telegram: {e}", "error")
 
