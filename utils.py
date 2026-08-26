@@ -1,4 +1,5 @@
 import re
+import json
 import logging
 import streamlit as st
 import os
@@ -45,10 +46,8 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes.
         """
 
-        # Lista base de fallback
         modelos_a_probar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'models/gemini-1.5-flash', 'gemini-pro']
 
-        # Detección dinámica de modelos habilitados para tu API Key
         try:
             for m in genai.list_models():
                 if 'generateContent' in m.supported_generation_methods:
@@ -82,6 +81,105 @@ def analizar_producto_con_gemini(texto_oferta):
         )
     except Exception as e:
         return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
+
+def interpretar_busqueda_gemini(texto_busqueda):
+    """
+    Usa Gemini para convertir frases en lenguaje natural en un JSON con filtros de búsqueda.
+    """
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        return None
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("GEMINI_API_KEY")
+        except Exception:
+            pass
+
+    if not api_key:
+        return None
+
+    try:
+        genai.configure(api_key=api_key)
+
+        prompt = f"""
+        Convierte la siguiente frase de búsqueda de un usuario en un JSON estricto para filtrar una base de datos e-commerce en Perú.
+
+        Búsqueda del usuario: "{texto_busqueda}"
+
+        Categorías válidas en la BD:
+        [PERFUMES, ZAPATILLAS, POLOS, CASACAS, SHORTS, BUZOS, MEDIAS, AUDIFONOS, TV, PARLANTE, BARRA_DE_SONIDO, CELULAR, PC, REFRIGERADORA, LAVADORA, ELECTRODOMESTICOS, CAMPANA_EXTRACTORA, CAMA, OTROS]
+
+        Responde ÚNICAMENTE en formato JSON estricto con esta estructura:
+        {{
+            "categoria": "NOMBRE_CATEGORIA_O_NULL",
+            "precio_max": numero_o_null,
+            "palabras_clave": ["palabra1", "palabra2"]
+        }}
+        """
+
+        modelos_a_probar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'models/gemini-1.5-flash', 'gemini-pro']
+        try:
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    nombre_m = m.name.replace('models/', '')
+                    if nombre_m not in modelos_a_probar:
+                        modelos_a_probar.insert(0, nombre_m)
+        except Exception:
+            pass
+
+        for nombre_modelo in modelos_a_probar:
+            try:
+                model = genai.GenerativeModel(nombre_modelo)
+                res = model.generate_content(
+                    prompt, 
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                if res and res.text:
+                    return json.loads(res.text.strip())
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return None
+
+def buscar_productos_por_ia(supabase_client, texto_busqueda):
+    """
+    Interpreta la frase del usuario con Gemini y consulta Supabase con los criterios obtenidos.
+    """
+    criterios = interpretar_busqueda_gemini(texto_busqueda)
+    if not criterios or not supabase_client:
+        return None, []
+
+    try:
+        query = supabase_client.table("historial_precios").select(
+            "nombre_producto, precio, precio_regular, link_producto, imagen_producto, identificador"
+        )
+
+        cat = criterios.get("categoria")
+        if cat and str(cat).upper() not in ["NULL", "NONE", "OTROS", ""]:
+            query = query.ilike("identificador", f"%{cat}%")
+
+        p_max = criterios.get("precio_max")
+        if p_max and safe_float(p_max) > 0:
+            query = query.lte("precio", safe_float(p_max))
+
+        keywords = criterios.get("palabras_clave", [])
+        for kw in keywords:
+            if len(str(kw)) >= 3:
+                query = query.ilike("nombre_producto", f"%{kw}%")
+
+        res = query.order("precio", desc=False).limit(5).execute()
+        productos = res.data if res and res.data else []
+
+        return criterios, productos
+    except Exception as e:
+        safe_log(f"Error consultando Supabase para búsqueda IA: {e}", "error")
+        return criterios, []
 
 def safe_log(mensaje, tipo="info"):
     """Imprime mensajes en consola y los envía a Streamlit únicamente si la UI está activa."""
