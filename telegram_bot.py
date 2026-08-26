@@ -326,7 +326,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "analizar_ia":
         await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
         
-        # Preservar formato HTML original para evitar que se rompa el mensaje de Telegram
         texto_html = query.message.caption_html if query.message.caption else (query.message.text_html or "")
         texto_plano = query.message.caption or query.message.text or ""
 
@@ -334,22 +333,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
             return
 
-        # Consultar análisis a Gemini con el texto plano
         veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano)
-        nuevo_texto = f"{texto_html}\n\n{veredicto}"
 
         try:
             if query.message.caption:
-                # Respetar el límite de 1024 caracteres en descripciones de imagen
-                if len(nuevo_texto) > 1024:
-                    nuevo_texto = nuevo_texto[:1020] + "..."
+                # 🎯 Recorte seguro en texto plano antes de escapar HTML
+                limite_max = 1020
+                nuevo_texto_tentativo = f"{texto_html}\n\n{veredicto}"
                 
+                if len(nuevo_texto_tentativo) > limite_max:
+                    espacio_plano = limite_max - len(veredicto) - 15
+                    if espacio_plano > 30:
+                        base_escapada = html.escape(texto_plano[:espacio_plano]) + "..."
+                        nuevo_texto = f"{base_escapada}\n\n{veredicto}"
+                    else:
+                        nuevo_texto = f"📦 <b>Oferta</b>\n\n{veredicto}"
+                else:
+                    nuevo_texto = nuevo_texto_tentativo
+
                 await query.edit_message_caption(
                     caption=nuevo_texto, 
                     parse_mode="HTML",
                     reply_markup=query.message.reply_markup
                 )
             else:
+                nuevo_texto = f"{texto_html}\n\n{veredicto}"
                 await query.edit_message_text(
                     text=nuevo_texto, 
                     parse_mode="HTML", 
