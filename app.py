@@ -31,6 +31,11 @@ for secret_key, value in st.secrets.items():
 @st.cache_resource
 def iniciar_bot_telegram_en_la_nube():
     try:
+        # Verificar si ya hay una instancia corriendo para no duplicar procesos
+        for proc in subprocess.Popen(["ps", "aux"], stdout=subprocess.PIPE).communicate()[0].decode().split("\n"):
+            if "telegram_bot.py" in proc:
+                return None
+
         return subprocess.Popen([sys.executable, "telegram_bot.py"])
     except Exception as e:
         st.error(f"Error iniciando bot de Telegram en segundo plano: {e}")
