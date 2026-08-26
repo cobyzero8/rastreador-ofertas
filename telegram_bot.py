@@ -11,6 +11,7 @@ from telegram.ext import (
     filters,
 )
 from patrol import revisar_ofertas
+from utils import analizar_producto_con_gemini
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -267,6 +268,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("run_"):
         filtro = data.replace("run_", "")
         await ejecutar_escaneo(update, context, filtro)
+
+    # 🧠 MANEJADOR DEL BOTÓN "ANALIZAR CON IA"
+    elif data == "analizar_ia":
+        await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
+        
+        texto_original = query.message.caption or query.message.text or ""
+        
+        if "VEREDICTO IA:" in texto_original:
+            await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
+            return
+
+        # Consulta asíncrona a Gemini usando el texto de la tarjeta
+        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_original)
+        nuevo_texto = f"{texto_original}\n\n{veredicto}"
+
+        try:
+            if query.message.caption:
+                await query.edit_message_caption(
+                    caption=nuevo_texto, 
+                    parse_mode="HTML",
+                    reply_markup=query.message.reply_markup
+                )
+            else:
+                await query.edit_message_text(
+                    text=nuevo_texto, 
+                    parse_mode="HTML", 
+                    disable_web_page_preview=True,
+                    reply_markup=query.message.reply_markup
+                )
+        except Exception as e:
+            logger.error(f"Error editando mensaje con veredicto IA: {e}")
 
 
 async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
