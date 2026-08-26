@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 from config import supabase
 from patrol import revisar_ofertas
-from utils import analizar_producto_con_gemini, buscar_productos_por_ia
+from utils import analizar_producto_con_gemini
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def obtener_teclado_inicio():
 
 
 # ---------------------------------------------------------
-# Controladores Principales (/coby, /itzel, /buscar y /pausados)
+# Controladores Principales (/coby, /itzel y /pausados)
 # ---------------------------------------------------------
 
 async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,14 +150,14 @@ async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra la lista de URLs y radares desactivados bajo demanda desde Supabase."""
+    """Muestra la lista de URLs y radares desactivados desde la tabla 'radares' en Supabase."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
 
     await borrar_mensaje_usuario(update)
 
     try:
-        res = supabase.table("configuracion_radares").select("tienda, tag, url").eq("activo", False).execute()
+        res = supabase.table("radares").select("identificador, url, activo").eq("activo", False).execute()
         inactivos = res.data or []
     except Exception as e:
         await context.bot.send_message(
@@ -178,10 +178,9 @@ async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lineas = []
     for item in inactivos[:10]:
-        tienda = item.get("tienda", "TIENDA")
-        tag = item.get("tag", "TAG")
-        url = item.get("url", "#")
-        lineas.append(f"• <b>{tienda}</b> | <code>{tag}</code>\n  └ 🔗 <a href='{url}'>Ver URL Pausada</a>")
+        identificador = item.get("identificador") or "RADAR PAUSADO"
+        url = item.get("url") or "#"
+        lineas.append(f"• <b>{identificador}</b>\n  └ 🔗 <a href='{url}'>Ver URL Pausada</a>")
 
     if cant > 10:
         lineas.append(f"\n<i>...y {cant - 10} URLs pausadas más.</i>")
@@ -190,74 +189,13 @@ async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>⏸️ REPORTE DE RADARES PAUSADOS</b>\n\n"
         f"Actualmente hay <b>{cant} URL(s)</b> desactivadas:\n\n"
         + "\n".join(lineas) +
-        f"\n\n💡 <i>Puedes reactivarlas desde el panel web de Streamlit.</i>"
+        f"\n\n💡 <i>Puedes reactivarlas desde la UI de Streamlit o cambiando 'activo' a TRUE en Supabase.</i>"
     )
 
     await context.bot.send_message(
         chat_id=chat_id,
         text=mensaje,
         parse_mode="HTML",
-        disable_web_page_preview=True
-    )
-
-
-async def comando_buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa búsquedas en lenguaje natural mediante Gemini y Supabase."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    if not context.args:
-        await update.message.reply_html(
-            "🔍 <b>USO DEL COMANDO /BUSCAR:</b>\n\n"
-            "Escribe <code>/buscar</code> seguido de lo que deseas encontrar en lenguaje natural.\n\n"
-            "<b>Ejemplos:</b>\n"
-            "• <code>/buscar lavadora de más de 10kg por menos de 1000 soles</code>\n"
-            "• <code>/buscar zapatillas nike por menos de 200 soles</code>\n"
-            "• <code>/buscar tv lg qned por menos de 1500 soles</code>"
-        )
-        return
-
-    query_texto = " ".join(context.args)
-    msg_espera = await context.bot.send_message(
-        chat_id=chat_id, 
-        text=f"🧠 <i>Interpretando búsqueda con Gemini:</i> \"<b>{query_texto}</b>\"...", 
-        parse_mode="HTML"
-    )
-
-    criterios, resultados = await asyncio.to_thread(
-        buscar_productos_por_ia, supabase, query_texto
-    )
-
-    if not resultados:
-        txt_cat = criterios.get('categoria', 'General') if criterios else 'General'
-        txt_max = f" hasta S/. {criterios.get('precio_max')}" if criterios and criterios.get('precio_max') else ""
-        
-        await msg_espera.edit_text(
-            f"🔎 <b>Búsqueda finalizada:</b>\n"
-            f"<i>Criterios detectados:</i> Categoría: <code>{txt_cat}</code>{txt_max}\n\n"
-            f"❌ No se encontraron productos en la base de datos que coincidan con esa descripción.",
-            parse_mode="HTML"
-        )
-        return
-
-    lineas = [f"🔎 <b>RESULTADOS PARA:</b> \"<i>{query_texto}</i>\"\n"]
-    for idx, p in enumerate(resultados, 1):
-        p_o = float(p.get("precio") or 0)
-        p_r = float(p.get("precio_regular") or p_o)
-        nombre = p.get("nombre_producto", "Producto")
-        link = p.get("link_producto", "#")
-        
-        ahorro_txt = f" (<s>S/. {p_r:.2f}</s>)" if p_r > p_o else ""
-        lineas.append(
-            f"{idx}. <b>{nombre}</b>\n"
-            f"   💰 <b>S/. {p_o:.2f}</b>{ahorro_txt}\n"
-            f"   🔗 <a href='{link}'>Ver en Tienda</a>\n"
-        )
-
-    texto_final = "\n".join(lineas)
-    await msg_espera.edit_text(
-        texto_final, 
-        parse_mode="HTML", 
         disable_web_page_preview=True
     )
 
@@ -419,7 +357,7 @@ async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE
     await borrar_mensaje_usuario(update)
     await update.message.reply_text(
         "⚠️ *Comando no reconocido o mal escrito.*\n\n"
-        "Usa `/coby` para abrir el menú principal, `/buscar [texto]` para consultar productos con IA o `/pausados` para ver radares inactivos.",
+        "Usa `/coby` para abrir el menú principal de ofertas o `/pausados` para ver radares inactivos.",
         parse_mode="Markdown"
     )
 
@@ -443,16 +381,12 @@ def main():
     app.add_handler(CommandHandler(["coby", "start"], comando_coby))
     app.add_handler(CommandHandler("itzel", comando_itzel))
 
-    # Comandos Directos e IA
-    app.add_handler(CommandHandler("buscar", comando_buscar))
+    # Comandos Directos
     app.add_handler(CommandHandler(["pausados", "inactivos"], comando_pausados))
     app.add_handler(CommandHandler("tiendas", menu_tiendas))
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
     
-    # Comandos de acceso rápido personalizados
-    app.add_handler(CommandHandler(["campana", "extractora"], lambda u, c: ejecutar_escaneo(u, c, "CAMPANA_EXTRACTORA")))
-
     # Comandos por Tienda
     for tienda in TIENDAS:
         cmd = f"tienda_{tienda.lower()}"
