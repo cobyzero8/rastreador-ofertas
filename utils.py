@@ -10,6 +10,36 @@ from streamlit.runtime.scriptrunner import get_script_run_ctx
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
+
+def obtener_modelos_gemini_activos(genai):
+    """
+    Obtiene dinámicamente los modelos que soportan generación de contenido en tu API Key.
+    """
+    modelos_prioritarios = [
+        'gemini-1.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-pro',
+        'models/gemini-1.5-flash',
+        'gemini-pro'
+    ]
+    try:
+        modelos_remotos = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                nombre_limpio = m.name.replace('models/', '')
+                modelos_remotos.append(nombre_limpio)
+                modelos_remotos.append(m.name)
+        
+        # Colocar los modelos detectados por la API al inicio
+        for mod in reversed(modelos_remotos):
+            if mod not in modelos_prioritarios:
+                modelos_prioritarios.insert(0, mod)
+    except Exception:
+        pass
+
+    return modelos_prioritarios
+
+
 def analizar_producto_con_gemini(texto_oferta):
     """
     Analiza el texto de una oferta enviada a Telegram usando Gemini
@@ -46,17 +76,7 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes.
         """
 
-        modelos_a_probar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'models/gemini-1.5-flash', 'gemini-pro']
-
-        try:
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    nombre_m = m.name.replace('models/', '')
-                    if nombre_m not in modelos_a_probar:
-                        modelos_a_probar.insert(0, nombre_m)
-        except Exception:
-            pass
-
+        modelos_a_probar = obtener_modelos_gemini_activos(genai)
         response = None
         ultimo_error = ""
 
@@ -81,6 +101,7 @@ def analizar_producto_con_gemini(texto_oferta):
         )
     except Exception as e:
         return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
+
 
 def interpretar_busqueda_gemini(texto_busqueda):
     """
@@ -121,15 +142,7 @@ def interpretar_busqueda_gemini(texto_busqueda):
         }}
         """
 
-        modelos_a_probar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'models/gemini-1.5-flash', 'gemini-pro']
-        try:
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    nombre_m = m.name.replace('models/', '')
-                    if nombre_m not in modelos_a_probar:
-                        modelos_a_probar.insert(0, nombre_m)
-        except Exception:
-            pass
+        modelos_a_probar = obtener_modelos_gemini_activos(genai)
 
         for nombre_modelo in modelos_a_probar:
             try:
@@ -146,6 +159,7 @@ def interpretar_busqueda_gemini(texto_busqueda):
         pass
 
     return None
+
 
 def buscar_productos_por_ia(supabase_client, texto_busqueda):
     """
@@ -181,6 +195,7 @@ def buscar_productos_por_ia(supabase_client, texto_busqueda):
         safe_log(f"Error consultando Supabase para búsqueda IA: {e}", "error")
         return criterios, []
 
+
 def safe_log(mensaje, tipo="info"):
     """Imprime mensajes en consola y los envía a Streamlit únicamente si la UI está activa."""
     prefijos = {
@@ -208,6 +223,7 @@ def safe_log(mensaje, tipo="info"):
     except Exception:
         pass
 
+
 def sanitizar_url(url):
     """Limpia y normaliza URLs para evitar errores de formato."""
     if not url:
@@ -217,6 +233,7 @@ def sanitizar_url(url):
         url = "https://" + url
     parsed = urlparse(url)
     return urlunparse(parsed)
+
 
 def safe_float(val):
     """Convierte de forma segura cualquier valor a float."""
@@ -230,6 +247,7 @@ def safe_float(val):
             return float(s)
         except Exception:
             return 0.0
+
 
 def limpiar_precio_pnp(texto):
     """Extrae y convierte precios en formato de soles peruanos a número float."""
@@ -251,6 +269,7 @@ def limpiar_precio_pnp(texto):
             return 0.0
     return 0.0
 
+
 def es_error_de_precio(precio, precio_regular=0.0, precio_anterior=0.0):
     """
     Valida si un precio es un error evidente (ej. S/. 1.00) 
@@ -269,6 +288,7 @@ def es_error_de_precio(precio, precio_regular=0.0, precio_anterior=0.0):
         return False
     except Exception:
         return False
+
 
 def extraer_productos_json_universal(data):
     """Recorre recursivamente un objeto JSON buscando estructuras de productos."""
@@ -302,6 +322,7 @@ def extraer_productos_json_universal(data):
                 unicos.append(p)
     return unicos
 
+
 def extraer_numeros_dict(d, lista_salida):
     """Extrae de forma recursiva valores numéricos de un diccionario."""
     if isinstance(d, dict):
@@ -313,6 +334,7 @@ def extraer_numeros_dict(d, lista_salida):
     elif isinstance(d, list):
         for item in d:
             extraer_numeros_dict(item, lista_salida)
+
 
 def encontrar_foto_fala(prod_dict):
     """Extrae la URL de imagen desde la estructura JSON de Falabella."""
