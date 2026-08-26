@@ -12,7 +12,7 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 def analizar_producto_con_gemini(texto_oferta):
     """
     Analiza el texto de una oferta enviada a Telegram usando Gemini
-    y genera un veredicto crítico y directo con tolerancia a fallos de modelo.
+    y genera un veredicto crítico y directo con detección dinámica de modelos.
     """
     try:
         import google.generativeai as genai
@@ -33,14 +33,6 @@ def analizar_producto_con_gemini(texto_oferta):
     try:
         genai.configure(api_key=api_key)
 
-        # Lista de nombres de modelos para fallback automático
-        modelos_disponibles = [
-            'gemini-1.5-flash-latest',
-            'gemini-1.5-flash',
-            'gemini-2.0-flash',
-            'gemini-1.0-pro'
-        ]
-
         prompt = f"""
         Actúa como un cazador de ofertas e-commerce en Perú.
         Analiza el siguiente producto extraído de una tienda:
@@ -53,18 +45,34 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes.
         """
 
+        # Lista base de fallback
+        modelos_a_probar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'models/gemini-1.5-flash', 'gemini-pro']
+
+        # Detección dinámica de modelos habilitados para tu API Key
+        try:
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    nombre_m = m.name.replace('models/', '')
+                    if nombre_m not in modelos_a_probar:
+                        modelos_a_probar.insert(0, nombre_m)
+        except Exception:
+            pass
+
         response = None
-        for nombre_modelo in modelos_disponibles:
+        ultimo_error = ""
+
+        for nombre_modelo in modelos_a_probar:
             try:
                 model = genai.GenerativeModel(nombre_modelo)
                 response = model.generate_content(prompt)
                 if response and response.text:
                     break
-            except Exception:
+            except Exception as e_mod:
+                ultimo_error = str(e_mod)
                 continue
 
         if not response or not response.text:
-            return "⚠️ <i>No se pudo conectar con ningún modelo activo de Gemini.</i>"
+            return f"⚠️ <i>Error de conexión con Gemini: {ultimo_error}</i>"
 
         veredicto = response.text.strip()
 
