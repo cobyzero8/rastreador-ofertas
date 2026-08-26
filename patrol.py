@@ -51,6 +51,8 @@ def cumple_filtro_categoria(filtro: str, identificador: str) -> bool:
         "LAVADORA": ["LAVADORA", "LAVADO", "LAVASECADORA"],
         "ELECTRODOMESTICOS": ["ELECTRO"],
         "CAMA": ["CAMA", "COLCHON", "TARIMA"],
+        "CAMPANA EXTRACTORA": ["CAMPANA", "EXTRACTORA", "EXTRACTOR", "CAMPANAS"],
+        "CAMPANA": ["CAMPANA", "EXTRACTORA", "EXTRACTOR", "CAMPANAS"],
     }
 
     palabras_clave = diccionario_sinonimos.get(filtro_clean, [filtro_clean])
