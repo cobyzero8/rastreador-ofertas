@@ -17,12 +17,13 @@ from health_monitor import registrar_resultado_salud
 from utils import safe_log, es_error_de_precio, safe_float
 
 
-# Configuración de horas mínimas entre escaneos por tienda
+# Configuración de horas mínimas entre escaneos por tienda (Protección de créditos)
 TIENDAS_CON_ENFRIAMIENTO = {
     "JBL": 4,
     "ADIDAS": 4,
     "PLATANITOS": 4,
     "RIPLEY": 4,
+    
 }
 
 
@@ -361,4 +362,3 @@ def revisar_ofertas(filtro_categoria="TODOS"):
     )
     safe_log(f"✅ {resumen}", "success")
     return resumen
-        
