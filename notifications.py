@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import streamlit as st
 from utils import safe_log
@@ -84,6 +85,13 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
 
     mensaje += f"\n👉 <a href='{link}'><b>¡VER EN TIENDA!</b></a>"
 
+    # 🧠 Botón interactivo para consultar a Gemini bajo demanda
+    teclado_ia = {
+        "inline_keyboard": [
+            [{"text": "🧠 Analizar con IA", "callback_data": "analizar_ia"}]
+        ]
+    }
+
     # 🟢 INTENTO 1: DESCARGAR IMAGEN Y SUBIR COMO ARCHIVO BINARIO (Evita bloqueos de CDN)
     if imagen and str(imagen).startswith("http"):
         try:
@@ -99,7 +107,8 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
                 payload = {
                     "chat_id": chat_id,
                     "caption": mensaje,
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "reply_markup": json.dumps(teclado_ia)
                 }
                 files = {
                     "photo": ("producto.jpg", res_img.content, "image/jpeg")
@@ -119,7 +128,8 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
             "chat_id": chat_id,
             "text": mensaje,
             "parse_mode": "HTML",
-            "disable_web_page_preview": False
+            "disable_web_page_preview": False,
+            "reply_markup": teclado_ia
         }
         resp_text = requests.post(url_text, json=payload_text, timeout=10)
         if resp_text.status_code == 200:
@@ -131,4 +141,3 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
     except Exception as e_text:
         safe_log(f"🚨 Error enviando mensaje de texto a Telegram: {e_text}", "error")
         return False
-        
