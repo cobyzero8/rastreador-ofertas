@@ -2,7 +2,6 @@ import re
 import logging
 import streamlit as st
 import os
-import google.generativeai as genai
 from urllib.parse import urlparse, urlunparse
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
@@ -15,6 +14,11 @@ def analizar_producto_con_gemini(texto_oferta):
     Analiza el texto de una oferta enviada a Telegram usando Gemini
     y genera un veredicto crítico y directo.
     """
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        return "⚠️ <i>Librería 'google-generativeai' no instalada en el entorno.</i>"
+
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         try:
@@ -51,6 +55,7 @@ def analizar_producto_con_gemini(texto_oferta):
         )
     except Exception as e:
         return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
+
 def safe_log(mensaje, tipo="info"):
     """Imprime mensajes en consola y los envía a Streamlit únicamente si la UI está activa."""
     prefijos = {
