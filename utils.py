@@ -11,43 +11,15 @@ logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(loggi
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 
-def obtener_modelos_gemini_activos(genai):
-    """
-    Obtiene dinámicamente los modelos que soportan generación de contenido en tu API Key.
-    """
-    modelos_prioritarios = [
-        'gemini-1.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-pro',
-        'models/gemini-1.5-flash',
-        'gemini-pro'
-    ]
-    try:
-        modelos_remotos = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                nombre_limpio = m.name.replace('models/', '')
-                modelos_remotos.append(nombre_limpio)
-                modelos_remotos.append(m.name)
-        
-        for mod in reversed(modelos_remotos):
-            if mod not in modelos_prioritarios:
-                modelos_prioritarios.insert(0, mod)
-    except Exception:
-        pass
-
-    return modelos_prioritarios
-
-
 def analizar_producto_con_gemini(texto_oferta):
     """
-    Analiza el texto de una oferta enviada a Telegram usando Gemini
+    Analiza el texto de una oferta enviada a Telegram usando el nuevo SDK 'google-genai'
     y genera un veredicto crítico y directo sanitizado para Telegram HTML.
     """
     try:
-        import google.generativeai as genai
+        from google import genai
     except ImportError:
-        return "⚠️ <i>Librería 'google-generativeai' no instalada en el entorno.</i>"
+        return "⚠️ <i>Librería 'google-genai' no instalada en el entorno. Revisa requirements.txt.</i>"
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -61,7 +33,8 @@ def analizar_producto_con_gemini(texto_oferta):
         return "⚠️ <i>Falta configurar GEMINI_API_KEY en variables de entorno o secrets.</i>"
 
     try:
-        genai.configure(api_key=api_key)
+        # Nuevo cliente oficial del SDK google-genai
+        client = genai.Client(api_key=api_key)
 
         prompt = f"""
         Actúa como un cazador de ofertas e-commerce en Perú.
@@ -75,14 +48,21 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        modelos_a_probar = obtener_modelos_gemini_activos(genai)
+        modelos_oficiales = [
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash'
+        ]
+
         response = None
         ultimo_error = ""
 
-        for nombre_modelo in modelos_a_probar:
+        for nombre_modelo in modelos_oficiales:
             try:
-                model = genai.GenerativeModel(nombre_modelo)
-                res = model.generate_content(prompt)
+                res = client.models.generate_content(
+                    model=nombre_modelo,
+                    contents=prompt
+                )
                 if res and res.text:
                     response = res
                     break
