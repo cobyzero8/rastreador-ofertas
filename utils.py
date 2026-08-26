@@ -48,10 +48,11 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
+       # Modelos oficiales válidos en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-2.5-flash',
-            'gemini-2.0-flash',
-            'gemini-1.5-flash'
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+            'gemini-2.0-flash'
         ]
 
         response = None
