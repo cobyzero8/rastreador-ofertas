@@ -114,7 +114,7 @@ def obtener_teclado_inicio():
 
 
 # ---------------------------------------------------------
-# Controladores Principales (/coby, /itzel y /buscar)
+# Controladores Principales (/coby, /itzel, /buscar y /pausados)
 # ---------------------------------------------------------
 
 async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,6 +147,58 @@ async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await borrar_mensaje_usuario(update)
     await borrar_menu_previo(context, chat_id)
+
+
+async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra la lista de URLs y radares desactivados bajo demanda desde Supabase."""
+    if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+
+    await borrar_mensaje_usuario(update)
+
+    try:
+        res = supabase.table("configuracion_radares").select("tienda, tag, url").eq("activo", False).execute()
+        inactivos = res.data or []
+    except Exception as e:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"🚨 Error consultando Supabase: `{e}`", 
+            parse_mode="Markdown"
+        )
+        return
+
+    cant = len(inactivos)
+    if cant == 0:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="✅ *Todos los radares están activos.* No hay URLs pausadas.", 
+            parse_mode="Markdown"
+        )
+        return
+
+    lineas = []
+    for item in inactivos[:10]:
+        tienda = item.get("tienda", "TIENDA")
+        tag = item.get("tag", "TAG")
+        url = item.get("url", "#")
+        lineas.append(f"• <b>{tienda}</b> | <code>{tag}</code>\n  └ 🔗 <a href='{url}'>Ver URL Pausada</a>")
+
+    if cant > 10:
+        lineas.append(f"\n<i>...y {cant - 10} URLs pausadas más.</i>")
+
+    mensaje = (
+        f"<b>⏸️ REPORTE DE RADARES PAUSADOS</b>\n\n"
+        f"Actualmente hay <b>{cant} URL(s)</b> desactivadas:\n\n"
+        + "\n".join(lineas) +
+        f"\n\n💡 <i>Puedes reactivarlas desde el panel web de Streamlit.</i>"
+    )
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=mensaje,
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
 
 
 async def comando_buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -367,7 +419,7 @@ async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE
     await borrar_mensaje_usuario(update)
     await update.message.reply_text(
         "⚠️ *Comando no reconocido o mal escrito.*\n\n"
-        "Usa `/coby` para abrir el menú principal de ofertas, `/buscar [texto]` para consultar productos con IA o `/itzel` para ocultarlo.",
+        "Usa `/coby` para abrir el menú principal, `/buscar [texto]` para consultar productos con IA o `/pausados` para ver radares inactivos.",
         parse_mode="Markdown"
     )
 
@@ -393,6 +445,7 @@ def main():
 
     # Comandos Directos e IA
     app.add_handler(CommandHandler("buscar", comando_buscar))
+    app.add_handler(CommandHandler(["pausados", "inactivos"], comando_pausados))
     app.add_handler(CommandHandler("tiendas", menu_tiendas))
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
