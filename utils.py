@@ -13,7 +13,7 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 def analizar_producto_con_gemini(texto_oferta):
     """
-    Analiza el texto de una oferta enviada a Telegram usando el nuevo SDK 'google-genai'
+    Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
     y genera un veredicto crítico y directo sanitizado para Telegram HTML.
     """
     try:
@@ -33,7 +33,7 @@ def analizar_producto_con_gemini(texto_oferta):
         return "⚠️ <i>Falta configurar GEMINI_API_KEY en variables de entorno o secrets.</i>"
 
     try:
-        # Nuevo cliente oficial del SDK google-genai
+        # Cliente oficial del SDK google-genai
         client = genai.Client(api_key=api_key)
 
         prompt = f"""
@@ -48,11 +48,11 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-       # Modelos oficiales válidos en la API de Google GenAI
+        # Modelos vigentes en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-1.5-flash',
-            'gemini-1.5-pro',
-            'gemini-2.0-flash'
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
+            'gemini-3.6-flash'
         ]
 
         response = None
