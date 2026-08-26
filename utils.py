@@ -12,7 +12,7 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 def analizar_producto_con_gemini(texto_oferta):
     """
     Analiza el texto de una oferta enviada a Telegram usando Gemini
-    y genera un veredicto crítico y directo.
+    y genera un veredicto crítico y directo con tolerancia a fallos de modelo.
     """
     try:
         import google.generativeai as genai
@@ -32,7 +32,14 @@ def analizar_producto_con_gemini(texto_oferta):
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        # Lista de nombres de modelos para fallback automático
+        modelos_disponibles = [
+            'gemini-1.5-flash-latest',
+            'gemini-1.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.0-pro'
+        ]
 
         prompt = f"""
         Actúa como un cazador de ofertas e-commerce en Perú.
@@ -46,9 +53,21 @@ def analizar_producto_con_gemini(texto_oferta):
         Sé directo, crítico y no saludes.
         """
 
-        response = model.generate_content(prompt)
+        response = None
+        for nombre_modelo in modelos_disponibles:
+            try:
+                model = genai.GenerativeModel(nombre_modelo)
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    break
+            except Exception:
+                continue
+
+        if not response or not response.text:
+            return "⚠️ <i>No se pudo conectar con ningún modelo activo de Gemini.</i>"
+
         veredicto = response.text.strip()
-        
+
         return (
             f"🧠 <b>VEREDICTO IA:</b>\n"
             f"<blockquote><i>{veredicto}</i></blockquote>"
