@@ -1,6 +1,8 @@
 import re
 import logging
 import streamlit as st
+import os
+import google.generativeai as genai
 from urllib.parse import urlparse, urlunparse
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
@@ -8,6 +10,47 @@ from streamlit.runtime.scriptrunner import get_script_run_ctx
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
+def analizar_producto_con_gemini(texto_oferta):
+    """
+    Analiza el texto de una oferta enviada a Telegram usando Gemini
+    y genera un veredicto crítico y directo.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("GEMINI_API_KEY")
+        except Exception:
+            pass
+
+    if not api_key:
+        return "⚠️ <i>Falta configurar GEMINI_API_KEY en variables de entorno o secrets.</i>"
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        prompt = f"""
+        Actúa como un cazador de ofertas e-commerce en Perú.
+        Analiza el siguiente producto extraído de una tienda:
+
+        {texto_oferta}
+
+        Responde en MÁXIMO 2 ORACIONES:
+        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real.
+        2. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
+        Sé directo, crítico y no saludes.
+        """
+
+        response = model.generate_content(prompt)
+        veredicto = response.text.strip()
+        
+        return (
+            f"🧠 <b>VEREDICTO IA:</b>\n"
+            f"<blockquote><i>{veredicto}</i></blockquote>"
+        )
+    except Exception as e:
+        return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
 def safe_log(mensaje, tipo="info"):
     """Imprime mensajes en consola y los envía a Streamlit únicamente si la UI está activa."""
     prefijos = {
