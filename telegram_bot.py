@@ -213,9 +213,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             if query.message.caption:
+                limite_max = 1024
                 nuevo_texto = f"{texto_html}\n\n{veredicto}"
-                if len(nuevo_texto) > 1024:
-                    nuevo_texto = f"📦 <b>Oferta Analizada</b>\n\n{veredicto}"
+                
+                # Si supera 1024 caracteres, recortamos la parte inferior del texto original sin borrar la info principal
+                if len(nuevo_texto) > limite_max:
+                    espacio_disponible = limite_max - len(veredicto) - 10
+                    texto_cortado = texto_html[:espacio_disponible].rsplit('\n', 1)[0]
+                    nuevo_texto = f"{texto_cortado}\n\n{veredicto}"
 
                 await query.edit_message_caption(
                     caption=nuevo_texto, 
@@ -236,7 +241,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 logger.error(f"Error IA: {e}")
                 await query.answer(f"🚨 Error: {e}", show_alert=True)
-
 
 def main():
     token = os.environ.get("TELEGRAM_TOKEN")
