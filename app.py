@@ -1,4 +1,3 @@
-import test_gemini
 import os
 import sys
 import time
