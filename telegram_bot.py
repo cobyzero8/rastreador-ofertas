@@ -2,6 +2,7 @@ import os
 import html
 import logging
 import asyncio
+import streamlit as st
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,6 +12,16 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+
+# Cargar automáticamente credenciales desde los secrets de Streamlit
+try:
+    if hasattr(st, "secrets"):
+        for key, value in st.secrets.items():
+            if isinstance(value, str):
+                os.environ[key] = value
+except Exception:
+    pass
+
 from config import supabase
 from patrol import revisar_ofertas
 from utils import analizar_producto_con_gemini
@@ -18,37 +29,18 @@ from utils import analizar_producto_con_gemini
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------
-# Control de Acceso Privado (Administradores)
-# ---------------------------------------------------------
 ADMIN_IDS_RAW = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_ADMIN_ID", "")
 ADMINS_AUTORIZADOS = [aid.strip() for aid in ADMIN_IDS_RAW.split(",") if aid.strip()]
 
 
 async def es_usuario_valido(update: Update) -> bool:
     if not ADMINS_AUTORIZADOS:
-        logger.warning("⚠️ No hay IDs de Administrador configurados. Acceso totalmente bloqueado.")
         return False
-
     chat_actual = str(update.effective_chat.id)
-
-    if chat_actual in ADMINS_AUTORIZADOS:
-        return True
-
-    logger.warning(f"⚠️ Intento de acceso no autorizado desde ID: [{chat_actual}]")
-
-    mensaje_bloqueo = "🚫 <b>Acceso Restringido.</b>\nEste bot es privado y solo responde a administradores autorizados."
-
-    if update.callback_query:
-        await update.callback_query.answer("🚫 No tienes permisos.", show_alert=True)
-    elif update.message:
-        await update.message.reply_html(mensaje_bloqueo)
-
-    return False
+    return chat_actual in ADMINS_AUTORIZADOS
 
 
 async def borrar_mensaje_usuario(update: Update):
-    """Borra inmediatamente el comando escrito por el usuario para dejar el chat limpio."""
     if update.message:
         try:
             await update.message.delete()
@@ -57,7 +49,6 @@ async def borrar_mensaje_usuario(update: Update):
 
 
 async def borrar_menu_previo(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Borra el mensaje del menú interactivo anterior para evitar duplicados."""
     menu_id = context.user_data.get("menu_message_id")
     if menu_id:
         try:
@@ -67,9 +58,6 @@ async def borrar_menu_previo(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         context.user_data["menu_message_id"] = None
 
 
-# ---------------------------------------------------------
-# Listas Oficiales de Tiendas Monitoreadas (Incluye SHOPSTAR)
-# ---------------------------------------------------------
 TIENDAS = [
     "ADIDAS", "CARSA", "COOLBOX", "CURACAO", "CYZONE", "EFE",
     "ESIKA", "ESTILOS", "FALABELLA", "FOOTLOOSE", "HIRAOKA", "JBL",
@@ -77,29 +65,14 @@ TIENDAS = [
     "PROMART", "RIPLEY", "SHOPSTAR", "THN", "TRIATHLON"
 ]
 
-# ---------------------------------------------------------
-# Mapeo Oficial de Categorías (Incluye CAMPANA EXTRACTORA)
-# ---------------------------------------------------------
 CATEGORIAS_MAP = {
-    "PERFUMES": "🧪 PERFUMES",
-    "ZAPATILLAS": "👟 ZAPATILLAS",
-    "POLOS": "👕 POLOS",
-    "CASACAS": "🧥 CASACAS",
-    "SHORTS": "🩳 SHORTS",
-    "BUZOS": "👖 BUZOS",
-    "MEDIAS": "🧦 MEDIAS",
-    "AUDIFONOS": "🎧 AUDÍFONOS",
-    "TV": "📺 TV",
-    "PARLANTE": "🔊 PARLANTE",
-    "BARRA_DE_SONIDO": "🎵 B. SONIDO",
-    "CELULAR": "📱 CELULAR",
-    "PC": "💻 PC / LAPTOP",
-    "REFRIGERADORA": "❄️ REFRIGERADORA",
-    "LAVADORA": "🧺 LAVADORA",
-    "ELECTRODOMESTICOS": "🔌 ELECTRODOM.",
-    "CAMPANA_EXTRACTORA": "💨 CAMPANA EXT.",
-    "CAMA": "🛏️ CAMA",
-    "OTROS": "📦 OTROS"
+    "PERFUMES": "🧪 PERFUMES", "ZAPATILLAS": "👟 ZAPATILLAS", "POLOS": "👕 POLOS",
+    "CASACAS": "🧥 CASACAS", "SHORTS": "🩳 SHORTS", "BUZOS": "👖 BUZOS",
+    "MEDIAS": "🧦 MEDIAS", "AUDIFONOS": "🎧 AUDÍFONOS", "TV": "📺 TV",
+    "PARLANTE": "🔊 PARLANTE", "BARRA_DE_SONIDO": "🎵 B. SONIDO", "CELULAR": "📱 CELULAR",
+    "PC": "💻 PC / LAPTOP", "REFRIGERADORA": "❄️ REFRIGERADORA", "LAVADORA": "🧺 LAVADORA",
+    "ELECTRODOMESTICOS": "🔌 ELECTRODOM.", "CAMPANA_EXTRACTORA": "💨 CAMPANA EXT.",
+    "CAMA": "🛏️ CAMA", "OTROS": "📦 OTROS"
 }
 
 CATEGORIAS = list(CATEGORIAS_MAP.keys())
@@ -114,27 +87,15 @@ def obtener_teclado_inicio():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ---------------------------------------------------------
-# Controladores Principales (/coby, /itzel y /pausados)
-# ---------------------------------------------------------
-
 async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el menú principal, elimina el texto /coby y borra el menú anterior."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
-
     await borrar_mensaje_usuario(update)
     await borrar_menu_previo(context, chat_id)
 
-    texto = "🤖 <b>CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
-
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-
     msg = await context.bot.send_message(
         chat_id=chat_id,
-        text=texto,
+        text="🤖 <b>CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar:",
         reply_markup=obtener_teclado_inicio(),
         parse_mode="HTML"
     )
@@ -142,168 +103,85 @@ async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Elimina el menú activo y el comando /itzel escrito por el usuario."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
-
     await borrar_mensaje_usuario(update)
     await borrar_menu_previo(context, chat_id)
 
 
 async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra la lista de URLs y radares desactivados desde la tabla 'radares' en Supabase."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
-
     await borrar_mensaje_usuario(update)
 
     try:
         res = supabase.table("radares").select("identificador, url, activo").eq("activo", False).execute()
         inactivos = res.data or []
     except Exception as e:
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"🚨 Error consultando Supabase: `{e}`", 
-            parse_mode="Markdown"
-        )
+        await context.bot.send_message(chat_id=chat_id, text=f"🚨 Error consultando Supabase: `{e}`", parse_mode="Markdown")
         return
 
     cant = len(inactivos)
     if cant == 0:
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text="✅ *Todos los radares están activos.* No hay URLs pausadas.", 
-            parse_mode="Markdown"
-        )
+        await context.bot.send_message(chat_id=chat_id, text="✅ *Todos los radares están activos.*", parse_mode="Markdown")
         return
 
-    lineas = []
-    for item in inactivos[:10]:
-        identificador = item.get("identificador") or "RADAR PAUSADO"
-        url = item.get("url") or "#"
-        lineas.append(f"• <b>{identificador}</b>\n  └ 🔗 <a href='{url}'>Ver URL Pausada</a>")
-
-    if cant > 10:
-        lineas.append(f"\n<i>...y {cant - 10} URLs pausadas más.</i>")
-
-    mensaje = (
-        f"<b>⏸️ REPORTE DE RADARES PAUSADOS</b>\n\n"
-        f"Actualmente hay <b>{cant} URL(s)</b> desactivadas:\n\n"
-        + "\n".join(lineas) +
-        f"\n\n💡 <i>Puedes reactivarlas desde la UI de Streamlit o cambiando 'activo' a TRUE en Supabase.</i>"
-    )
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=mensaje,
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
+    lineas = [f"• <b>{item.get('identificador', 'RADAR')}</b>\n  └ 🔗 <a href='{item.get('url', '#')}'>Ver URL</a>" for item in inactivos[:10]]
+    mensaje = f"<b>⏸️ RADARES PAUSADOS ({cant})</b>\n\n" + "\n".join(lineas)
+    await context.bot.send_message(chat_id=chat_id, text=mensaje, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, filtro: str):
-    """Ejecuta el escaneo borrando la orden escrita por el usuario."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
-
     await borrar_mensaje_usuario(update)
 
     filtro_limpio = filtro.replace("_", " ")
-
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        try:
-            await query.edit_message_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-        except Exception:
-            await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-    else:
-        await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
+    await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
 
     try:
         resumen = await asyncio.to_thread(revisar_ofertas, filtro)
-
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"✅ Escaneo [{filtro_limpio}] finalizado:\n\n{resumen}"
-        )
+        await context.bot.send_message(chat_id=chat_id, text=f"✅ Escaneo [{filtro_limpio}] finalizado:\n\n{resumen}")
     except Exception as e:
-        logger.error(f"Error ejecutando escaneo para {filtro}: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ Ocurrió un error al procesar el escaneo de *{filtro_limpio}*:\n`{e}`",
-            parse_mode="Markdown"
-        )
+        logger.error(f"Error escaneo: {e}")
 
 
 async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Despliega la lista de tiendas borrando el mensaje del usuario."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
-
     await borrar_mensaje_usuario(update)
     await borrar_menu_previo(context, chat_id)
 
     keyboard = []
     for i in range(0, len(TIENDAS), 2):
-        fila = []
-        btn1 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i]} 】", callback_data=f"run_{TIENDAS[i]}")
-        fila.append(btn1)
+        fila = [InlineKeyboardButton(f"【 🏪 {TIENDAS[i]} 】", callback_data=f"run_{TIENDAS[i]}")]
         if i + 1 < len(TIENDAS):
-            btn2 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i+1]} 】", callback_data=f"run_{TIENDAS[i+1]}")
-            fila.append(btn2)
+            fila.append(InlineKeyboardButton(f"【 🏪 {TIENDAS[i+1]} 】", callback_data=f"run_{TIENDAS[i+1]}"))
         keyboard.append(fila)
 
     keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-
-    texto = "🏢 <b>SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if update.callback_query:
-        await update.callback_query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
+    msg = await context.bot.send_message(chat_id=chat_id, text="🏢 <b>SELECCIONA UNA TIENDA:</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     context.user_data["menu_message_id"] = msg.message_id
 
 
 async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Despliega la lista de categorías borrando el mensaje del usuario."""
     if not await es_usuario_valido(update): return
     chat_id = update.effective_chat.id
-
     await borrar_mensaje_usuario(update)
     await borrar_menu_previo(context, chat_id)
 
     keyboard = []
     keys = list(CATEGORIAS_MAP.keys())
     for i in range(0, len(keys), 2):
-        fila = []
         k1 = keys[i]
-        fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k1]} 】", callback_data=f"run_{k1}"))
+        fila = [InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k1]} 】", callback_data=f"run_{k1}")]
         if i + 1 < len(keys):
             k2 = keys[i+1]
             fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k2]} 】", callback_data=f"run_{k2}"))
         keyboard.append(fila)
 
     keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-
-    texto = "🏷️ <b>SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if update.callback_query:
-        await update.callback_query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
+    msg = await context.bot.send_message(chat_id=chat_id, text="🏷️ <b>SELECCIONA UNA CATEGORÍA:</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     context.user_data["menu_message_id"] = msg.message_id
 
 
@@ -319,10 +197,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_categorias":
         await menu_categorias(update, context)
     elif data.startswith("run_"):
-        filtro = data.replace("run_", "")
-        await ejecutar_escaneo(update, context, filtro)
+        await ejecutar_escaneo(update, context, data.replace("run_", ""))
 
-    # 🧠 MANEJADOR DEL BOTÓN "ANALIZAR CON IA"
     elif data == "analizar_ia":
         await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
         
@@ -337,18 +213,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             if query.message.caption:
-                limite_max = 1020
-                nuevo_texto_tentativo = f"{texto_html}\n\n{veredicto}"
-                
-                if len(nuevo_texto_tentativo) > limite_max:
-                    espacio_plano = limite_max - len(veredicto) - 15
-                    if espacio_plano > 30:
-                        base_escapada = html.escape(texto_plano[:espacio_plano]) + "..."
-                        nuevo_texto = f"{base_escapada}\n\n{veredicto}"
-                    else:
-                        nuevo_texto = f"📦 <b>Oferta</b>\n\n{veredicto}"
-                else:
-                    nuevo_texto = nuevo_texto_tentativo
+                nuevo_texto = f"{texto_html}\n\n{veredicto}"
+                if len(nuevo_texto) > 1024:
+                    nuevo_texto = f"📦 <b>Oferta Analizada</b>\n\n{veredicto}"
 
                 await query.edit_message_caption(
                     caption=nuevo_texto, 
@@ -365,583 +232,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             if "Message is not modified" in str(e):
-                await query.answer("⚠️ Este análisis ya se encuentra actualizado en el mensaje.", show_alert=True)
+                await query.answer("⚠️ Este análisis ya está en el mensaje.", show_alert=True)
             else:
-                logger.error(f"Error editando mensaje con veredicto IA: {e}")
-                await query.answer(f"🚨 No se pudo editar el mensaje: {e}", show_alert=True)
+                logger.error(f"Error IA: {e}")
+                await query.answer(f"🚨 Error: {e}", show_alert=True)
 
 
-async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await es_usuario_valido(update): return
-    await borrar_mensaje_usuario(update)
-    await update.message.reply_text(
-        "⚠️ *Comando no reconocido o mal escrito.*\n\n"
-        "Usa `/coby` para abrir el menú principal de ofertas o `/pausados` para ver radares inactivos.",
-        parse_mode="Markdown"
-    )
-
-
-async def manejador_errores(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"🚨 Error no capturado en Telegram: {context.error}")
-
-
-# ---------------------------------------------------------
-# Inicialización
-# ---------------------------------------------------------
 def main():
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
-        print("❌ Error: TELEGRAM_TOKEN no configurado en variables de entorno.")
+        print("❌ Error: TELEGRAM_TOKEN no configurado.")
         return
 
     app = ApplicationBuilder().token(token).build()
 
-    # Comandos Especiales de Mostrar / Ocultar
     app.add_handler(CommandHandler(["coby", "start"], comando_coby))
     app.add_handler(CommandHandler("itzel", comando_itzel))
-
-    # Comandos Directos
     app.add_handler(CommandHandler(["pausados", "inactivos"], comando_pausados))
     app.add_handler(CommandHandler("tiendas", menu_tiendas))
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
-    
-    # Comandos por Tienda
-    for tienda in TIENDAS:
-        cmd = f"tienda_{tienda.lower()}"
-        app.add_handler(CommandHandler(cmd, lambda u, c, t=tienda: ejecutar_escaneo(u, c, t)))
 
-    # Comandos por Categoría
+    for tienda in TIENDAS:
+        app.add_handler(CommandHandler(f"tienda_{tienda.lower()}", lambda u, c, t=tienda: ejecutar_escaneo(u, c, t)))
+
     for cat in CATEGORIAS:
-        cmd = f"cat_{cat.lower()}"
-        app.add_handler(CommandHandler(cmd, lambda u, c, cat_val=cat: ejecutar_escaneo(u, c, cat_val)))
+        app.add_handler(CommandHandler(f"cat_{cat.lower()}", lambda u, c, cat_val=cat: ejecutar_escaneo(u, c, cat_val)))
 
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Manejador para comandos no registrados
-    app.add_handler(MessageHandler(filters.COMMAND, comando_desconocido))
-
-    # Manejador global de excepciones
-    app.add_error_handler(manejador_errores)
-
-    print("🤖 Bot de Telegram activo y escuchando comandos...")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
-        [InlineKeyboardButton("【 🏬 MENÚ DE TIENDAS 】", callback_data="menu_tiendas")],
-        [InlineKeyboardButton("【 🏷️ MENÚ DE CATEGORÍAS 】", callback_data="menu_categorias")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ---------------------------------------------------------
-# Controladores Principales (/coby, /itzel y /pausados)
-# ---------------------------------------------------------
-
-async def comando_coby(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el menú principal, elimina el texto /coby y borra el menú anterior."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-    await borrar_menu_previo(context, chat_id)
-
-    texto = "🤖 <b>CENTRAL DE CONTROL - COBY CAZADOR</b>\n\nSelecciona una opción para patrullar en tiempo real:"
-
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=obtener_teclado_inicio(),
-        parse_mode="HTML"
-    )
-    context.user_data["menu_message_id"] = msg.message_id
-
-
-async def comando_itzel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Elimina el menú activo y el comando /itzel escrito por el usuario."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-    await borrar_menu_previo(context, chat_id)
-
-
-async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra la lista de URLs y radares desactivados desde la tabla 'radares' en Supabase."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-
-    try:
-        res = supabase.table("radares").select("identificador, url, activo").eq("activo", False).execute()
-        inactivos = res.data or []
-    except Exception as e:
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"🚨 Error consultando Supabase: `{e}`", 
-            parse_mode="Markdown"
-        )
-        return
-
-    cant = len(inactivos)
-    if cant == 0:
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text="✅ *Todos los radares están activos.* No hay URLs pausadas.", 
-            parse_mode="Markdown"
-        )
-        return
-
-    lineas = []
-    for item in inactivos[:10]:
-        identificador = item.get("identificador") or "RADAR PAUSADO"
-        url = item.get("url") or "#"
-        lineas.append(f"• <b>{identificador}</b>\n  └ 🔗 <a href='{url}'>Ver URL Pausada</a>")
-
-    if cant > 10:
-        lineas.append(f"\n<i>...y {cant - 10} URLs pausadas más.</i>")
-
-    mensaje = (
-        f"<b>⏸️ REPORTE DE RADARES PAUSADOS</b>\n\n"
-        f"Actualmente hay <b>{cant} URL(s)</b> desactivadas:\n\n"
-        + "\n".join(lineas) +
-        f"\n\n💡 <i>Puedes reactivarlas desde la UI de Streamlit o cambiando 'activo' a TRUE en Supabase.</i>"
-    )
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=mensaje,
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
-
-
-async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, filtro: str):
-    """Ejecuta el escaneo borrando la orden escrita por el usuario."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-
-    filtro_limpio = filtro.replace("_", " ")
-
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        try:
-            await query.edit_message_text(f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-        except Exception:
-            await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-    else:
-        await context.bot.send_message(chat_id=chat_id, text=f"🔍 Escaneando filtro: *{filtro_limpio}*...", parse_mode="Markdown")
-
-    try:
-        resumen = await asyncio.to_thread(revisar_ofertas, filtro)
-
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"✅ Escaneo [{filtro_limpio}] finalizado:\n\n{resumen}"
-        )
-    except Exception as e:
-        logger.error(f"Error ejecutando escaneo para {filtro}: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ Ocurrió un error al procesar el escaneo de *{filtro_limpio}*:\n`{e}`",
-            parse_mode="Markdown"
-        )
-
-
-async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Despliega la lista de tiendas borrando el mensaje del usuario."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-    await borrar_menu_previo(context, chat_id)
-
-    keyboard = []
-    for i in range(0, len(TIENDAS), 2):
-        fila = []
-        btn1 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i]} 】", callback_data=f"run_{TIENDAS[i]}")
-        fila.append(btn1)
-        if i + 1 < len(TIENDAS):
-            btn2 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i+1]} 】", callback_data=f"run_{TIENDAS[i+1]}")
-            fila.append(btn2)
-        keyboard.append(fila)
-
-    keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-
-    texto = "🏢 <b>SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if update.callback_query:
-        await update.callback_query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-    context.user_data["menu_message_id"] = msg.message_id
-
-
-async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Despliega la lista de categorías borrando el mensaje del usuario."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-    await borrar_menu_previo(context, chat_id)
-
-    keyboard = []
-    keys = list(CATEGORIAS_MAP.keys())
-    for i in range(0, len(keys), 2):
-        fila = []
-        k1 = keys[i]
-        fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k1]} 】", callback_data=f"run_{k1}"))
-        if i + 1 < len(keys):
-            k2 = keys[i+1]
-            fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k2]} 】", callback_data=f"run_{k2}"))
-        keyboard.append(fila)
-
-    keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-
-    texto = "🏷️ <b>SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if update.callback_query:
-        await update.callback_query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-    context.user_data["menu_message_id"] = msg.message_id
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await es_usuario_valido(update): return
-    query = update.callback_query
-    data = query.data
-
-    if data == "menu_start":
-        await comando_coby(update, context)
-    elif data == "menu_tiendas":
-        await menu_tiendas(update, context)
-    elif data == "menu_categorias":
-        await menu_categorias(update, context)
-    elif data.startswith("run_"):
-        filtro = data.replace("run_", "")
-        await ejecutar_escaneo(update, context, filtro)
-
-    # 🧠 MANEJADOR DEL BOTÓN "ANALIZAR CON IA"
-    elif data == "analizar_ia":
-        await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
-        
-        texto_html = query.message.caption_html if query.message.caption else (query.message.text_html or "")
-        texto_plano = query.message.caption or query.message.text or ""
-
-        if "VEREDICTO IA:" in texto_html:
-            await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
-            return
-
-        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano)
-
-        try:
-            if query.message.caption:
-                limite_max = 1020
-                nuevo_texto_tentativo = f"{texto_html}\n\n{veredicto}"
-                
-                if len(nuevo_texto_tentativo) > limite_max:
-                    espacio_plano = limite_max - len(veredicto) - 15
-                    if espacio_plano > 30:
-                        base_escapada = html.escape(texto_plano[:espacio_plano]) + "..."
-                        nuevo_texto = f"{base_escapada}\n\n{veredicto}"
-                    else:
-                        nuevo_texto = f"📦 <b>Oferta</b>\n\n{veredicto}"
-                else:
-                    nuevo_texto = nuevo_texto_tentativo
-
-                await query.edit_message_caption(
-                    caption=nuevo_texto, 
-                    parse_mode="HTML",
-                    reply_markup=query.message.reply_markup
-                )
-            else:
-                nuevo_texto = f"{texto_html}\n\n{veredicto}"
-                await query.edit_message_text(
-                    text=nuevo_texto, 
-                    parse_mode="HTML", 
-                    disable_web_page_preview=True,
-                    reply_markup=query.message.reply_markup
-                )
-        except Exception as e:
-            if "Message is not modified" in str(e):
-                await query.answer("⚠️ Este análisis ya se encuentra actualizado en el mensaje.", show_alert=True)
-            else:
-                logger.error(f"Error editando mensaje con veredicto IA: {e}")
-                await query.answer(f"🚨 No se pudo editar el mensaje: {e}", show_alert=True)
-
-
-async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await es_usuario_valido(update): return
-    await borrar_mensaje_usuario(update)
-    await update.message.reply_text(
-        "⚠️ *Comando no reconocido o mal escrito.*\n\n"
-        "Usa `/coby` para abrir el menú principal de ofertas o `/pausados` para ver radares inactivos.",
-        parse_mode="Markdown"
-    )
-
-
-async def manejador_errores(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"🚨 Error no capturado en Telegram: {context.error}")
-
-
-# ---------------------------------------------------------
-# Inicialización
-# ---------------------------------------------------------
-def main():
-    token = os.environ.get("TELEGRAM_TOKEN")
-    if not token:
-        print("❌ Error: TELEGRAM_TOKEN no configurado en variables de entorno.")
-        return
-
-    app = ApplicationBuilder().token(token).build()
-
-    # Comandos Especiales de Mostrar / Ocultar
-    app.add_handler(CommandHandler(["coby", "start"], comando_coby))
-    app.add_handler(CommandHandler("itzel", comando_itzel))
-
-    # Comandos Directos
-    app.add_handler(CommandHandler(["pausados", "inactivos"], comando_pausados))
-    app.add_handler(CommandHandler("tiendas", menu_tiendas))
-    app.add_handler(CommandHandler("categorias", menu_categorias))
-    app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
-    
-    # Comandos por Tienda
-    for tienda in TIENDAS:
-        cmd = f"tienda_{tienda.lower()}"
-        app.add_handler(CommandHandler(cmd, lambda u, c, t=tienda: ejecutar_escaneo(u, c, t)))
-
-    # Comandos por Categoría
-    for cat in CATEGORIAS:
-        cmd = f"cat_{cat.lower()}"
-        app.add_handler(CommandHandler(cmd, lambda u, c, cat_val=cat: ejecutar_escaneo(u, c, cat_val)))
-
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    # Manejador para comandos no registrados
-    app.add_handler(MessageHandler(filters.COMMAND, comando_desconocido))
-
-    # Manejador global de excepciones
-    app.add_error_handler(manejador_errores)
-
-    print("🤖 Bot de Telegram activo y escuchando comandos...")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
-        )
-
-
-async def menu_tiendas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Despliega la lista de tiendas borrando el mensaje del usuario."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-    await borrar_menu_previo(context, chat_id)
-
-    keyboard = []
-    for i in range(0, len(TIENDAS), 2):
-        fila = []
-        btn1 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i]} 】", callback_data=f"run_{TIENDAS[i]}")
-        fila.append(btn1)
-        if i + 1 < len(TIENDAS):
-            btn2 = InlineKeyboardButton(f"【 🏪 {TIENDAS[i+1]} 】", callback_data=f"run_{TIENDAS[i+1]}")
-            fila.append(btn2)
-        keyboard.append(fila)
-
-    keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-
-    texto = "🏢 <b>SELECCIONA UNA TIENDA PARA PATRULLAR:</b>"
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if update.callback_query:
-        await update.callback_query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-    context.user_data["menu_message_id"] = msg.message_id
-
-
-async def menu_categorias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Despliega la lista de categorías borrando el mensaje del usuario."""
-    if not await es_usuario_valido(update): return
-    chat_id = update.effective_chat.id
-
-    await borrar_mensaje_usuario(update)
-    await borrar_menu_previo(context, chat_id)
-
-    keyboard = []
-    keys = list(CATEGORIAS_MAP.keys())
-    for i in range(0, len(keys), 2):
-        fila = []
-        k1 = keys[i]
-        fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k1]} 】", callback_data=f"run_{k1}"))
-        if i + 1 < len(keys):
-            k2 = keys[i+1]
-            fila.append(InlineKeyboardButton(f"【 {CATEGORIAS_MAP[k2]} 】", callback_data=f"run_{k2}"))
-        keyboard.append(fila)
-
-    keyboard.append([InlineKeyboardButton("【 ⬅️ VOLVER AL MENÚ 】", callback_data="menu_start")])
-
-    texto = "🏷️ <b>SELECCIONA UNA CATEGORÍA PARA PATRULLAR:</b>"
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if update.callback_query:
-        await update.callback_query.answer()
-
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=texto,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-    context.user_data["menu_message_id"] = msg.message_id
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await es_usuario_valido(update): return
-    query = update.callback_query
-    data = query.data
-
-    if data == "menu_start":
-        await comando_coby(update, context)
-    elif data == "menu_tiendas":
-        await menu_tiendas(update, context)
-    elif data == "menu_categorias":
-        await menu_categorias(update, context)
-    elif data.startswith("run_"):
-        filtro = data.replace("run_", "")
-        await ejecutar_escaneo(update, context, filtro)
-
-    # 🧠 MANEJADOR DEL BOTÓN "ANALIZAR CON IA"
-    elif data == "analizar_ia":
-        await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
-        
-        texto_html = query.message.caption_html if query.message.caption else (query.message.text_html or "")
-        texto_plano = query.message.caption or query.message.text or ""
-
-        if "VEREDICTO IA:" in texto_html:
-            await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
-            return
-
-        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano)
-
-        try:
-            if query.message.caption:
-                # 🎯 Recorte seguro en texto plano antes de escapar HTML
-                limite_max = 1020
-                nuevo_texto_tentativo = f"{texto_html}\n\n{veredicto}"
-                
-                if len(nuevo_texto_tentativo) > limite_max:
-                    espacio_plano = limite_max - len(veredicto) - 15
-                    if espacio_plano > 30:
-                        base_escapada = html.escape(texto_plano[:espacio_plano]) + "..."
-                        nuevo_texto = f"{base_escapada}\n\n{veredicto}"
-                    else:
-                        nuevo_texto = f"📦 <b>Oferta</b>\n\n{veredicto}"
-                else:
-                    nuevo_texto = nuevo_texto_tentativo
-
-                await query.edit_message_caption(
-                    caption=nuevo_texto, 
-                    parse_mode="HTML",
-                    reply_markup=query.message.reply_markup
-                )
-            else:
-                nuevo_texto = f"{texto_html}\n\n{veredicto}"
-                await query.edit_message_text(
-                    text=nuevo_texto, 
-                    parse_mode="HTML", 
-                    disable_web_page_preview=True,
-                    reply_markup=query.message.reply_markup
-                )
-        except Exception as e:
-            logger.error(f"Error editando mensaje con veredicto IA: {e}")
-            await query.answer(f"🚨 No se pudo editar el mensaje: {e}", show_alert=True)
-
-
-async def comando_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await es_usuario_valido(update): return
-    await borrar_mensaje_usuario(update)
-    await update.message.reply_text(
-        "⚠️ *Comando no reconocido o mal escrito.*\n\n"
-        "Usa `/coby` para abrir el menú principal de ofertas o `/pausados` para ver radares inactivos.",
-        parse_mode="Markdown"
-    )
-
-
-async def manejador_errores(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"🚨 Error no capturado en Telegram: {context.error}")
-
-
-# ---------------------------------------------------------
-# Inicialización
-# ---------------------------------------------------------
-def main():
-    token = os.environ.get("TELEGRAM_TOKEN")
-    if not token:
-        print("❌ Error: TELEGRAM_TOKEN no configurado en variables de entorno.")
-        return
-
-    app = ApplicationBuilder().token(token).build()
-
-    # Comandos Especiales de Mostrar / Ocultar
-    app.add_handler(CommandHandler(["coby", "start"], comando_coby))
-    app.add_handler(CommandHandler("itzel", comando_itzel))
-
-    # Comandos Directos
-    app.add_handler(CommandHandler(["pausados", "inactivos"], comando_pausados))
-    app.add_handler(CommandHandler("tiendas", menu_tiendas))
-    app.add_handler(CommandHandler("categorias", menu_categorias))
-    app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
-    
-    # Comandos por Tienda
-    for tienda in TIENDAS:
-        cmd = f"tienda_{tienda.lower()}"
-        app.add_handler(CommandHandler(cmd, lambda u, c, t=tienda: ejecutar_escaneo(u, c, t)))
-
-    # Comandos por Categoría
-    for cat in CATEGORIAS:
-        cmd = f"cat_{cat.lower()}"
-        app.add_handler(CommandHandler(cmd, lambda u, c, cat_val=cat: ejecutar_escaneo(u, c, cat_val)))
-
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    # Manejador para comandos no registrados
-    app.add_handler(MessageHandler(filters.COMMAND, comando_desconocido))
-
-    # Manejador global de excepciones
-    app.add_error_handler(manejador_errores)
-
-    print("🤖 Bot de Telegram activo y escuchando comandos...")
+    print("🤖 Bot de Telegram activo y escuchando...")
     app.run_polling()
 
 
