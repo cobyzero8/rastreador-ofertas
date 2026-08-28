@@ -12,7 +12,7 @@ from config import LISTA_USER_AGENTS
 def motor_shopstar(url, limite=999999.0, headers=None):
     """
     Scraper optimizado para Shopstar Perú (VTEX IO).
-    Soporta tanto páginas de catálogo/categoría como enlaces directos de producto (PDP /p).
+    Soporta páginas de catálogo/categoría y fichas directas de producto (PDP /p).
     """
     if headers is None:
         user_agent = random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -47,6 +47,9 @@ def motor_shopstar(url, limite=999999.0, headers=None):
 
         soup = BeautifulSoup(texto_html, 'html.parser')
 
+        # Palabras reservadas a descartar como títulos válidos
+        NOMBRES_INVALIDOS = ["FILTROS", "INICIO", "HOME", "SHOPSTAR", "COCINA", "ELECTROHOGAR", "CAMPANAS EXTRACTORAS"]
+
         # ==========================================
         # CASO A: FICHA DIRECTA DE PRODUCTO (PDP /p)
         # ==========================================
@@ -56,38 +59,26 @@ def motor_shopstar(url, limite=999999.0, headers=None):
             precio_regular = 0.0
             img_url = ""
 
-            # 1. Metadatos OpenGraph / Titular H1 (Alta precisión en VTEX)
-            meta_og_title = soup.find("meta", property="og:title") or soup.find("meta", attrs={"name": "title"})
-            meta_og_img = soup.find("meta", property="og:image")
-            
-            if meta_og_title and meta_og_title.get("content"):
-                nombre = meta_og_title["content"].strip().upper()
-            
-            if meta_og_img and meta_og_img.get("content"):
-                img_url = meta_og_img["content"].strip()
-
-            if not nombre:
-                h1_el = soup.find("h1") or soup.select_one("span[class*='productBrand']")
-                if h1_el:
-                    nombre = h1_el.text.strip().upper()
-
-            # 2. Extracción de Precios desde JSON-LD de Producto
+            # 1. Extracción de Datos desde JSON-LD Oficial de Producto VTEX
             scripts_json = soup.find_all("script", type="application/ld+json")
             for script in scripts_json:
                 if not script.string: continue
                 try:
                     data = json.loads(script.string)
                     if isinstance(data, dict) and data.get("@type") == "Product":
-                        if not nombre:
-                            nombre = str(data.get("name") or "").strip().upper()
-                        
+                        n_cand = str(data.get("name") or "").strip().upper()
+                        if n_cand and not any(inv in n_cand for inv in NOMBRES_INVALIDOS):
+                            nombre = n_cand
+
                         offers = data.get("offers", {})
-                        if isinstance(offers, list) and offers:
-                            offers = offers[0]
-                        
+                        if isinstance(offers, list) and offers: offers = offers[0]
+
                         if isinstance(offers, dict):
-                            precio_oferta = safe_float(offers.get("price") or offers.get("lowPrice"))
-                            precio_regular = safe_float(offers.get("highPrice") or precio_oferta)
+                            p_off = safe_float(offers.get("price") or offers.get("lowPrice"))
+                            p_reg = safe_float(offers.get("highPrice") or p_off)
+                            if p_off > 10.0:
+                                precio_oferta = p_off
+                                precio_regular = max(p_reg, p_off)
 
                         img_raw = data.get("image")
                         if isinstance(img_raw, list) and img_raw: img_raw = img_raw[0]
@@ -95,19 +86,59 @@ def motor_shopstar(url, limite=999999.0, headers=None):
                 except Exception:
                     pass
 
-            # 3. Fallback de Precios en HTML si falla el JSON
+            # 2. Fallback de Nombre si no se obtuvo por JSON-LD
+            if not nombre or any(inv == nombre for inv in NOMBRES_INVALIDOS):
+                tit_el = soup.select_one("h1[class*='productName'], span[class*='productBrand'], h1")
+                if tit_el and tit_el.text:
+                    n_cand = tit_el.text.strip().upper()
+                    if len(n_cand) >= 5 and not any(inv == n_cand for inv in NOMBRES_INVALIDOS):
+                        nombre = n_cand
+
+            if not nombre or any(inv == nombre for inv in NOMBRES_INVALIDOS):
+                meta_og = soup.find("meta", property="og:title") or soup.find("meta", attrs={"name": "title"})
+                if meta_og and meta_og.get("content"):
+                    n_cand = meta_og["content"].split("|")[0].split("-")[0].strip().upper()
+                    if len(n_cand) >= 5 and not any(inv == n_cand for inv in NOMBRES_INVALIDOS):
+                        nombre = n_cand
+
+            # 3. Fallback de Precios en HTML (Restringido al área PDP activa para evitar recomendados)
             if precio_oferta <= 0:
-                price_spans = soup.select("span[class*='currencyInteger'], span[class*='sellingPrice'], span[class*='price']")
-                valores = [safe_float(sp.text) for sp in price_spans if safe_float(sp.text) > 10.0]
-                if valores:
-                    precio_oferta = min(valores)
-                    precio_regular = max(valores)
+                pdp_scope = soup.select_one("section[class*='product'], div[class*='pdp'], div[class*='productDetails']") or soup
+
+                # Precios VTEX Mercury
+                list_price_el = pdp_scope.select_one("span[class*='listPriceValue'], span[class*='listPrice']")
+                sell_price_el = pdp_scope.select_one("span[class*='sellingPriceValue'], span[class*='sellingPrice']")
+
+                if sell_price_el: precio_oferta = safe_float(sell_price_el.text)
+                if list_price_el: precio_regular = safe_float(list_price_el.text)
+
+                if precio_oferta <= 0:
+                    price_spans = pdp_scope.select("span[class*='currencyContainer'], span[class*='price']")
+                    valores = []
+                    for sp in price_spans:
+                        # Excluir precios de carruseles recomendados o laterales
+                        if sp.find_parent(class_=re.compile(r"(shelf|slider|carousel|related|recommendation)", re.I)):
+                            continue
+                        v = safe_float(sp.text)
+                        if v > 10.0:
+                            valores.append(v)
+                    if valores:
+                        precio_oferta = min(valores)
+                        precio_regular = max(valores)
 
             if precio_regular <= 0:
                 precio_regular = precio_oferta
 
-            if img_url.startswith("//"):
-                img_url = "https:" + img_url
+            # 4. Fallback de Imagen
+            if not img_url:
+                meta_img = soup.find("meta", property="og:image")
+                if meta_img and meta_img.get("content"):
+                    img_url = meta_img["content"].strip()
+
+            if img_url.startswith("//"): img_url = "https:" + img_url
+
+            # Limpiar prefijos duplicados
+            nombre = re.sub(r"^SHOPSTAR\s*-\s*", "", nombre, flags=re.I).strip()
 
             if nombre and len(nombre) >= 5 and precio_oferta >= 10.0 and precio_oferta <= limite:
                 return [{
@@ -126,7 +157,6 @@ def motor_shopstar(url, limite=999999.0, headers=None):
             if not script.string: continue
             content = script.string.strip()
 
-            # Descartar schemas de navegación (Evita capturar "FILTROS", "INICIO", etc.)
             if '"@type":"BreadcrumbList"' in content or '"@type": "BreadcrumbList"' in content:
                 continue
 
@@ -154,8 +184,8 @@ def motor_shopstar(url, limite=999999.0, headers=None):
 
                         link_final = urljoin("https://www.shopstar.pe", link_rel)
                         nombre_txt = str(item.get("name") or "").strip().upper()
-                        
-                        if len(nombre_txt) < 5 or nombre_txt in ["FILTROS", "INICIO", "COCINA", "HOME"]:
+
+                        if len(nombre_txt) < 5 or any(inv == nombre_txt for inv in NOMBRES_INVALIDOS):
                             continue
 
                         offers = item.get("offers", {})
@@ -198,7 +228,7 @@ def motor_shopstar(url, limite=999999.0, headers=None):
 
                     tit_el = t.find(["span", "h2", "h3", "p"], class_=re.compile(r"(productBrand|productName|brandName|title)", re.I))
                     nombre_txt = tit_el.text.strip().upper() if tit_el else ""
-                    if len(nombre_txt) < 5 or nombre_txt in ["FILTROS", "INICIO", "COCINA"]:
+                    if len(nombre_txt) < 5 or any(inv == nombre_txt for inv in NOMBRES_INVALIDOS):
                         continue
 
                     precios_texto = t.find_all(text=re.compile(r"S/\.?\s*\d+", re.I))
