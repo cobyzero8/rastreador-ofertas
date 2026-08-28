@@ -50,11 +50,10 @@ def analizar_producto_con_gemini(texto_oferta):
         4. Responde en MÁXIMO 2 ORACIONES. Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Modelos vigentes en la API de Google GenAI
+        # Modelos vigentes y 100% estables en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-2.5-flash',
-            'gemini-2.5-pro',
-            'gemini-3.6-flash'
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
         ]
 
         response = None
@@ -77,7 +76,7 @@ def analizar_producto_con_gemini(texto_oferta):
                 ultimo_error = str(e_mod)
                 continue
 
-        # 2. Fallback: Si falla la búsqueda en red, intentar consulta estándar con tus modelos
+        # 2. Fallback: Si falla la búsqueda en red, intentar consulta estándar sin herramientas
         if not response or not response.text:
             for nombre_modelo in modelos_oficiales:
                 try:
@@ -264,4 +263,4 @@ def encontrar_foto_fala(prod_dict):
             return val.get('url') or val.get('src') or ""
             
     return ""
-            
+                                          
