@@ -200,23 +200,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await ejecutar_escaneo(update, context, data.replace("run_", ""))
 
     elif data == "analizar_ia":
-        await query.answer("🧠 Analizando oferta con Gemini...", show_alert=False)
+        await query.answer("🧠 Analizando oferta e historial...", show_alert=False)
         
         texto_html = query.message.caption_html if query.message.caption else (query.message.text_html or "")
         texto_plano = query.message.caption or query.message.text or ""
 
-        if "VEREDICTO IA:" in texto_html:
+        if "VEREDICTO IA" in texto_html:
             await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
             return
 
-        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano)
+        # 1. Consultar historial de precios en Supabase (si aplica)
+        historial_texto = ""
+        try:
+            # Puedes ajustar el nombre de la tabla según tu base de datos si difiere
+            res_historia = supabase.table("historial_ofertas").select("precio, fecha").order("fecha", desc=True).limit(5).execute()
+            registros = res_historia.data or []
+            if registros:
+                lineas_hist = [f"- S/. {r.get('precio')} ({r.get('fecha', 'Fecha pasada')})" for r in registros]
+                historial_texto = "\n".join(lineas_hist)
+        except Exception:
+            pass
+
+        # 2. Enviar a Gemini junto con el historial recolectado
+        veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano, historial_texto)
 
         try:
             if query.message.caption:
                 limite_max = 1024
                 nuevo_texto = f"{texto_html}\n\n{veredicto}"
                 
-                # Si supera 1024 caracteres, recortamos la parte inferior del texto original sin borrar la info principal
+                # Si supera 1024 caracteres, recortamos la parte inferior sin perder la info principal
                 if len(nuevo_texto) > limite_max:
                     espacio_disponible = limite_max - len(veredicto) - 10
                     texto_cortado = texto_html[:espacio_disponible].rsplit('\n', 1)[0]
@@ -241,6 +254,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 logger.error(f"Error IA: {e}")
                 await query.answer(f"🚨 Error: {e}", show_alert=True)
+
 
 def main():
     token = os.environ.get("TELEGRAM_TOKEN")
@@ -271,3 +285,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
