@@ -14,13 +14,12 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 def analizar_producto_con_gemini(texto_oferta):
     """
     Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
-    con búsqueda web (Grounding) en Perú y veredicto crítico sanitizado para Telegram HTML.
+    y genera un veredicto crítico y directo sanitizado para Telegram HTML.
     """
     try:
         from google import genai
-        from google.genai import types
     except ImportError:
-        return "⚠️ <i>Librería 'google-genai' o 'types' no instalada en el entorno. Revisa requirements.txt.</i>"
+        return "⚠️ <i>Librería 'google-genai' no instalada en el entorno. Revisa requirements.txt.</i>"
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -43,31 +42,27 @@ def analizar_producto_con_gemini(texto_oferta):
 
         {texto_oferta}
 
-        INSTRUCCIONES:
-        1. Utiliza Google Search para verificar el precio real de este producto o modelo en otras tiendas peruanas (Falabella, Ripley, Hiraoka, Oechsle, Mercado Libre, etc.).
-        2. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real contrastándolo con el mercado.
-        3. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
-        4. Responde en MÁXIMO 2 ORACIONES. Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
+        Responde en MÁXIMO 2 ORACIONES:
+        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real.
+        2. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
+        Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Modelos vigentes y 100% estables en la API de Google GenAI
+        # Modelos vigentes en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-1.5-flash',
-            'gemini-1.5-pro'
+            'gemini-2.5-flash',
+            'gemini-2.5-pro',
+            'gemini-3.6-flash'
         ]
 
         response = None
         ultimo_error = ""
 
-        # 1. Intentar consulta con Google Search (Grounding) activo
         for nombre_modelo in modelos_oficiales:
             try:
                 res = client.models.generate_content(
                     model=nombre_modelo,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[{"google_search": {}}]
-                    )
+                    contents=prompt
                 )
                 if res and res.text:
                     response = res
@@ -76,21 +71,6 @@ def analizar_producto_con_gemini(texto_oferta):
                 ultimo_error = str(e_mod)
                 continue
 
-        # 2. Fallback: Si falla la búsqueda en red, intentar consulta estándar sin herramientas
-        if not response or not response.text:
-            for nombre_modelo in modelos_oficiales:
-                try:
-                    res = client.models.generate_content(
-                        model=nombre_modelo,
-                        contents=prompt
-                    )
-                    if res and res.text:
-                        response = res
-                        break
-                except Exception as e_mod:
-                    ultimo_error = str(e_mod)
-                    continue
-
         if not response or not response.text:
             return f"⚠️ <i>Error de conexión con Gemini: {ultimo_error}</i>"
 
@@ -98,7 +78,7 @@ def analizar_producto_con_gemini(texto_oferta):
         veredicto_clean = html.escape(response.text.strip())
 
         return (
-            f"🧠 <b>VEREDICTO IA (MERCADO PERÚ):</b>\n"
+            f"🧠 <b>VEREDICTO IA:</b>\n"
             f"<blockquote><i>{veredicto_clean}</i></blockquote>"
         )
     except Exception as e:
@@ -263,4 +243,3 @@ def encontrar_foto_fala(prod_dict):
             return val.get('url') or val.get('src') or ""
             
     return ""
-                                          
