@@ -13,13 +13,14 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 def analizar_producto_con_gemini(texto_oferta):
     """
-    Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
-    y genera un veredicto crítico y directo sanitizado para Telegram HTML.
+    Analiza la oferta usando Gemini con Google Search (Grounding en Perú)
+    y cuenta con respaldo (fallback) en caso de que no halle el modelo exacto.
     """
     try:
         from google import genai
+        from google.genai import types
     except ImportError:
-        return "⚠️ <i>Librería 'google-genai' no instalada en el entorno. Revisa requirements.txt.</i>"
+        return "⚠️ <i>Librería 'google-genai' no instalada. Revisa requirements.txt.</i>"
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -33,56 +34,65 @@ def analizar_producto_con_gemini(texto_oferta):
         return "⚠️ <i>Falta configurar GEMINI_API_KEY en variables de entorno o secrets.</i>"
 
     try:
-        # Cliente oficial del SDK google-genai
         client = genai.Client(api_key=api_key)
 
         prompt = f"""
         Actúa como un cazador de ofertas e-commerce en Perú.
-        Analiza el siguiente producto extraído de una tienda:
+        Analiza este producto:
 
         {texto_oferta}
 
-        Responde en MÁXIMO 2 ORACIONES:
-        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real.
-        2. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
-        Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
+        INSTRUCCIONES:
+        1. Busca en Google si este producto o modelo existe en otras tiendas de Perú (Falabella, Ripley, Hiraoka, Mercado Libre, etc.) y a qué precio se vende realmente.
+        2. Si encuentras precios en Perú, compara y di si el "Precio Regular" está inflado o si el descuento es real.
+        3. Si NO encuentras el modelo exacto, evalúa según el promedio de mercado para esa categoría de producto en Perú.
+        4. Responde en MÁXIMO 2 ORACIONES directas y críticas. Sin saludos ni tags HTML prohibidos.
         """
 
-        # Modelos vigentes en la API de Google GenAI
-        modelos_oficiales = [
-            'gemini-2.5-flash',
-            'gemini-2.5-pro',
-            'gemini-3.6-flash'
-        ]
+        modelos = ['gemini-2.5-flash', 'gemini-1.5-flash']
+        response_text = None
 
-        response = None
-        ultimo_error = ""
-
-        for nombre_modelo in modelos_oficiales:
+        # 1. Intentar consulta con Google Search (Grounding)
+        for mod in modelos:
             try:
                 res = client.models.generate_content(
-                    model=nombre_modelo,
-                    contents=prompt
+                    model=mod,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[{"google_search": {}}]  # Habilita búsqueda en vivo en Google
+                    )
                 )
                 if res and res.text:
-                    response = res
+                    response_text = res.text
                     break
-            except Exception as e_mod:
-                ultimo_error = str(e_mod)
+            except Exception:
                 continue
 
-        if not response or not response.text:
-            return f"⚠️ <i>Error de conexión con Gemini: {ultimo_error}</i>"
+        # 2. Fallback: Si falla Google Search, intentar consulta estándar sin herramientas
+        if not response_text:
+            for mod in modelos:
+                try:
+                    res = client.models.generate_content(
+                        model=mod,
+                        contents=prompt
+                    )
+                    if res and res.text:
+                        response_text = res.text
+                        break
+                except Exception:
+                    continue
 
-        # Sanitizar el texto para evitar que rompa el parseo HTML de Telegram
-        veredicto_clean = html.escape(response.text.strip())
+        if not response_text:
+            return "⚠️ <i>No se pudo obtener el análisis de la IA en este momento.</i>"
+
+        veredicto_clean = html.escape(response_text.strip())
 
         return (
-            f"🧠 <b>VEREDICTO IA:</b>\n"
+            f"🧠 <b>VEREDICTO IA (MERCADO PERÚ):</b>\n"
             f"<blockquote><i>{veredicto_clean}</i></blockquote>"
         )
     except Exception as e:
-        return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
+        return f"⚠️ <i>Error consultando a Gemini: {e}</i>"
 
 
 def safe_log(mensaje, tipo="info"):
@@ -243,3 +253,4 @@ def encontrar_foto_fala(prod_dict):
             return val.get('url') or val.get('src') or ""
             
     return ""
+                
