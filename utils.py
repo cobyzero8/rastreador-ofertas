@@ -48,15 +48,16 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         {contexto_historial}
 
         Responde en MÁXIMO 2 ORACIONES:
-        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real, tomando en cuenta el historial si lo hubiera.
+        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real, tomando en cuenta el historial de precios anteriores si lo hubiera.
         2. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
         # Modelos vigentes en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-1.5-flash',
-            'gemini-1.5-pro'
+            'gemini-2.0-flash',
+            'gemini-flash',
+            'gemini-pro'
         ]
 
         response = None
@@ -98,9 +99,7 @@ def safe_log(mensaje, tipo="info"):
         "error": "🚨",
         "caption": "💬"
     }
-    icono = prefijos.get(tipo, "📌")
     print(f"[{tipo.upper()}] {mensaje}")
-
     try:
         if get_script_run_ctx() is not None:
             if tipo == "caption":
@@ -164,20 +163,14 @@ def limpiar_precio_pnp(texto):
 
 
 def es_error_de_precio(precio, precio_regular=0.0, precio_anterior=0.0):
-    """
-    Valida si un precio es un error evidente (ej. S/. 1.00) 
-    o si representa un descuento sospechoso e irreal (> 95% de caída).
-    """
+    """Valida si un precio es un error evidente o irreal."""
     try:
         p_oferta = safe_float(precio)
         p_reg = safe_float(precio_regular)
-        
         if p_oferta <= 0 or p_oferta < 5.0:
             return True
-            
         if p_reg > 0 and (p_oferta / p_reg) < 0.05:
             return True
-            
         return False
     except Exception:
         return False
@@ -189,16 +182,13 @@ def extraer_productos_json_universal(data):
     if isinstance(data, dict):
         if any(k in data for k in ['displayName', 'productName', 'title']) and any(k in data for k in ['prices', 'price', 'salePrice', 'url', 'link']):
             productos.append(data)
-        
         for clave in ['products', 'results', 'items', 'elements', 'itemListElement', 'mainEntity']:
             if clave in data and isinstance(data[clave], list):
                 for item in data[clave]:
                     productos.extend(extraer_productos_json_universal(item))
-                    
         for k, v in data.items():
             if k not in ['products', 'results', 'items', 'elements', 'itemListElement']:
                 productos.extend(extraer_productos_json_universal(v))
-                
     elif isinstance(data, list):
         for item in data:
             productos.extend(extraer_productos_json_universal(item))
@@ -217,7 +207,6 @@ def extraer_productos_json_universal(data):
 
 
 def extraer_numeros_dict(d, lista_salida):
-    """Extrae de forma recursiva valores numéricos de un diccionario."""
     if isinstance(d, dict):
         for k, v in d.items():
             if isinstance(v, (int, float)) and v > 0:
@@ -230,10 +219,8 @@ def extraer_numeros_dict(d, lista_salida):
 
 
 def encontrar_foto_fala(prod_dict):
-    """Extrae la URL de imagen desde la estructura JSON de Falabella."""
     if not isinstance(prod_dict, dict):
         return ""
-    
     for key in ['mediaUrls', 'images', 'image', 'primaryImageUrl', 'iconUrl']:
         val = prod_dict.get(key)
         if isinstance(val, list) and len(val) > 0:
@@ -245,6 +232,5 @@ def encontrar_foto_fala(prod_dict):
             return val
         elif isinstance(val, dict):
             return val.get('url') or val.get('src') or ""
-            
     return ""
-                    
+                            
