@@ -11,10 +11,10 @@ logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(loggi
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 
-def analizar_producto_con_gemini(texto_oferta):
+def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
     """
     Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
-    y genera un veredicto crítico y directo sanitizado para Telegram HTML.
+    incorporando el historial de precios y generando un veredicto sanitizado para Telegram HTML.
     """
     try:
         from google import genai
@@ -36,23 +36,27 @@ def analizar_producto_con_gemini(texto_oferta):
         # Cliente oficial del SDK google-genai
         client = genai.Client(api_key=api_key)
 
+        contexto_historial = ""
+        if historial_precios:
+            contexto_historial = f"\nHISTORIAL DE PRECIOS REGISTRADOS ANTERIORMENTE:\n{historial_precios}\n"
+
         prompt = f"""
         Actúa como un cazador de ofertas e-commerce en Perú.
         Analiza el siguiente producto extraído de una tienda:
 
         {texto_oferta}
+        {contexto_historial}
 
         Responde en MÁXIMO 2 ORACIONES:
-        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real.
+        1. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real, tomando en cuenta el historial si lo hubiera.
         2. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
         # Modelos vigentes en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-2.5-flash',
-            'gemini-2.5-pro',
-            'gemini-3.6-flash'
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
         ]
 
         response = None
@@ -78,7 +82,7 @@ def analizar_producto_con_gemini(texto_oferta):
         veredicto_clean = html.escape(response.text.strip())
 
         return (
-            f"🧠 <b>VEREDICTO IA:</b>\n"
+            f"🧠 <b>VEREDICTO IA + HISTORIAL:</b>\n"
             f"<blockquote><i>{veredicto_clean}</i></blockquote>"
         )
     except Exception as e:
@@ -243,3 +247,4 @@ def encontrar_foto_fala(prod_dict):
             return val.get('url') or val.get('src') or ""
             
     return ""
+                    
