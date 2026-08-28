@@ -13,13 +13,14 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 def analizar_producto_con_gemini(texto_oferta):
     """
-    Analiza la oferta utilizando un enfoque técnico y analítico avanzado,
-    optimizado para auditoría de precios en el mercado peruano de forma estable.
+    Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
+    con búsqueda web (Grounding) en Perú y veredicto crítico sanitizado para Telegram HTML.
     """
     try:
         from google import genai
+        from google.genai import types
     except ImportError:
-        return "⚠️ <i>Librería 'google-genai' no instalada en el entorno. Revisa requirements.txt.</i>"
+        return "⚠️ <i>Librería 'google-genai' o 'types' no instalada en el entorno. Revisa requirements.txt.</i>"
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -33,38 +34,41 @@ def analizar_producto_con_gemini(texto_oferta):
         return "⚠️ <i>Falta configurar GEMINI_API_KEY en variables de entorno o secrets.</i>"
 
     try:
-        # Inicializar el cliente oficial del SDK google-genai
+        # Cliente oficial del SDK google-genai
         client = genai.Client(api_key=api_key)
 
-        # Prompt estructurado con rigor técnico y analítico
         prompt = f"""
-        Actúa como un motor analítico de auditoría de precios e-commerce especializado en el mercado peruano.
-        Analiza el siguiente payload de producto extraído:
+        Actúa como un cazador de ofertas e-commerce en Perú.
+        Analiza el siguiente producto extraído de una tienda:
 
         {texto_oferta}
 
-        INSTRUCCIONES TÉCNICAS:
-        1. Evalúa métricamente si el 'Precio Regular / Anterior' presenta inflación artificial o anclaje de descuento deshonesto frente al 'Precio Encontrado'.
-        2. Determina la viabilidad de la compra basándote en el comportamiento histórico de precios para este tipo de artículos en Perú (Ripley, Falabella, Oechsle, Plaza Vea, etc.).
-        3. Estructura tu respuesta estrictamente en un bloque conciso de máximo 2 oraciones directas, técnicas y formales.
-        4. No saludes, no uses introducciones conversacionales y evita el uso de etiquetas HTML prohibidas (< o >).
+        INSTRUCCIONES:
+        1. Utiliza Google Search para verificar el precio real de este producto o modelo en otras tiendas peruanas (Falabella, Ripley, Hiraoka, Oechsle, Mercado Libre, etc.).
+        2. Evalúa si el "Precio Regular" parece inflado artificialmente o si el descuento es real contrastándolo con el mercado.
+        3. Di claramente si CONVIENE COMPRAR O NO por ese valor en soles.
+        4. Responde en MÁXIMO 2 ORACIONES. Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Modelos vigentes y estables en la API de Google GenAI
+        # Modelos vigentes en la API de Google GenAI
         modelos_oficiales = [
             'gemini-2.5-flash',
-            'gemini-1.5-flash',
-            'gemini-2.5-pro'
+            'gemini-2.5-pro',
+            'gemini-3.6-flash'
         ]
 
         response = None
         ultimo_error = ""
 
+        # 1. Intentar consulta con Google Search (Grounding) activo
         for nombre_modelo in modelos_oficiales:
             try:
                 res = client.models.generate_content(
                     model=nombre_modelo,
-                    contents=prompt
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[{"google_search": {}}]
+                    )
                 )
                 if res and res.text:
                     response = res
@@ -73,14 +77,29 @@ def analizar_producto_con_gemini(texto_oferta):
                 ultimo_error = str(e_mod)
                 continue
 
+        # 2. Fallback: Si falla la búsqueda en red, intentar consulta estándar con tus modelos
+        if not response or not response.text:
+            for nombre_modelo in modelos_oficiales:
+                try:
+                    res = client.models.generate_content(
+                        model=nombre_modelo,
+                        contents=prompt
+                    )
+                    if res and res.text:
+                        response = res
+                        break
+                except Exception as e_mod:
+                    ultimo_error = str(e_mod)
+                    continue
+
         if not response or not response.text:
             return f"⚠️ <i>Error de conexión con Gemini: {ultimo_error}</i>"
 
-        # Sanitizar el texto para el formato HTML de Telegram
+        # Sanitizar el texto para evitar que rompa el parseo HTML de Telegram
         veredicto_clean = html.escape(response.text.strip())
 
         return (
-            f"🤖 <b>AUDITORÍA TÉCNICA DE PRECIO (IA):</b>\n"
+            f"🧠 <b>VEREDICTO IA (MERCADO PERÚ):</b>\n"
             f"<blockquote><i>{veredicto_clean}</i></blockquote>"
         )
     except Exception as e:
@@ -245,4 +264,4 @@ def encontrar_foto_fala(prod_dict):
             return val.get('url') or val.get('src') or ""
             
     return ""
-    
+            
