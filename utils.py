@@ -33,7 +33,6 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         return "⚠️ <i>Falta configurar GEMINI_API_KEY en variables de entorno o secrets.</i>"
 
     try:
-        # Cliente oficial del SDK google-genai
         client = genai.Client(api_key=api_key)
 
         contexto_historial = ""
@@ -53,10 +52,11 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Modelos oficiales vigentes y correctos en la API de Google GenAI
+        # Modelos vigentes confirmados por tus registros de API
         modelos_oficiales = [
-            'gemini-1.5-flash',
-            'gemini-1.5-pro'
+            'gemini-3.6-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash'
         ]
 
         response = None
@@ -78,7 +78,6 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         if not response or not response.text:
             return f"⚠️ <i>Error de conexión con Gemini: {ultimo_error}</i>"
 
-        # Sanitizar el texto para evitar que rompa el parseo HTML de Telegram
         veredicto_clean = html.escape(response.text.strip())
 
         return (
@@ -87,6 +86,7 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         )
     except Exception as e:
         return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
+
 
 
 def safe_log(mensaje, tipo="info"):
