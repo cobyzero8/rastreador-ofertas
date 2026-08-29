@@ -53,11 +53,10 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Modelos vigentes en la API de Google GenAI
+        # Modelos oficiales vigentes y correctos en la API de Google GenAI
         modelos_oficiales = [
-            'gemini-2.0-flash',
-            'gemini-flash',
-            'gemini-pro'
+            'gemini-1.5-flash',
+            'gemini-1.5-pro'
         ]
 
         response = None
@@ -233,4 +232,4 @@ def encontrar_foto_fala(prod_dict):
         elif isinstance(val, dict):
             return val.get('url') or val.get('src') or ""
     return ""
-                            
+    
