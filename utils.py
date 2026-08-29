@@ -14,7 +14,7 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
     """
     Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
-    incorporando el historial de precios y generando un veredicto sanitizado para Telegram HTML.
+    de forma directa y rápida utilizando el modelo oficial vigente.
     """
     try:
         from google import genai
@@ -52,33 +52,16 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Modelos vigentes confirmados por tus registros de API
-        modelos_oficiales = [
-            'gemini-3.6-flash',
-            'gemini-2.0-flash',
-            'gemini-1.5-flash'
-        ]
+        # Llamada directa al modelo optimizado para una respuesta inmediata
+        res = client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt
+        )
 
-        response = None
-        ultimo_error = ""
+        if not res or not res.text:
+            return "⚠️ <i>Error de conexión con Gemini.</i>"
 
-        for nombre_modelo in modelos_oficiales:
-            try:
-                res = client.models.generate_content(
-                    model=nombre_modelo,
-                    contents=prompt
-                )
-                if res and res.text:
-                    response = res
-                    break
-            except Exception as e_mod:
-                ultimo_error = str(e_mod)
-                continue
-
-        if not response or not response.text:
-            return f"⚠️ <i>Error de conexión con Gemini: {ultimo_error}</i>"
-
-        veredicto_clean = html.escape(response.text.strip())
+        veredicto_clean = html.escape(res.text.strip())
 
         return (
             f"🧠 <b>VEREDICTO IA + HISTORIAL:</b>\n"
@@ -86,6 +69,7 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         )
     except Exception as e:
         return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
+
 
 
 
