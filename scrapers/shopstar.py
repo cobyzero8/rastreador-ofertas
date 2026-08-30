@@ -4,15 +4,33 @@ import random
 import re
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from utils import sanitizar_url, safe_float, es_error_de_precio, safe_log
 from config import LISTA_USER_AGENTS
 
+# Palabras reservadas a descartar como títulos válidos
+NOMBRES_INVALIDOS = {
+    "FILTROS", "FILTRO", "INICIO", "HOME", "SHOPSTAR", "COCINA", 
+    "ELECTROHOGAR", "CAMPANAS EXTRACTORAS", "CAMPANA EXTRACTORA", 
+    "VER TODO", "CATALOGO", "ACCESORIOS", "PRODUCTOS"
+}
+
+def es_nombre_valido(nombre):
+    if not nombre or len(nombre) < 5:
+        return False
+    n_clean = nombre.strip().upper()
+    if n_clean in NOMBRES_INVALIDOS:
+        return False
+    palabras = n_clean.split()
+    if len(palabras) == 1 and palabras[0] in NOMBRES_INVALIDOS:
+        return False
+    return True
+
 def motor_shopstar(url, limite=999999.0, headers=None):
     """
-    Scraper optimizado para Shopstar Perú (VTEX IO).
-    Soporta páginas de catálogo/categoría y fichas directas de producto (PDP /p).
+    Scraper optimizado y robusto para Shopstar Perú (VTEX IO).
+    Soporta catálogo por VTEX Search API, window.__STATE__, JSON-LD y fallback HTML.
     """
     if headers is None:
         user_agent = random.choice(LISTA_USER_AGENTS) if 'LISTA_USER_AGENTS' in globals() else "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -22,259 +40,234 @@ def motor_shopstar(url, limite=999999.0, headers=None):
             "Accept-Language": "es-PE,es;q=0.9,en;q=0.8",
         }
 
-    productos = []
     url = sanitizar_url(url)
-    es_pdp = '/p' in url.split('?')[0].lower()
+    parsed_url = urlparse(url)
+    es_pdp = '/p' in parsed_url.path.lower()
+    productos = []
 
+    # =========================================================================
+    # ESTRATEGIA 1: API OFICIAL VTEX CATALOG SEARCH (Para Categorías / Busquedas)
+    # =========================================================================
+    if not es_pdp:
+        try:
+            ruta_categoria = parsed_url.path.rstrip('/')
+            api_url = f"https://www.shopstar.pe/api/catalog_system/pub/products/search{ruta_categoria}"
+            
+            resp_api = requests.get(api_url, headers=headers, timeout=10, verify=False)
+            if resp_api.status_code == 200:
+                data_api = resp_api.json()
+                if isinstance(data_api, list) and data_api:
+                    for item in data_api:
+                        try:
+                            p_name = str(item.get("productName") or "").strip().upper()
+                            brand = str(item.get("brand") or "").strip().upper()
+
+                            if isinstance(item.get("brand"), dict):
+                                brand = str(item.get("brand", {}).get("name") or "").strip().upper()
+
+                            full_title = f"{brand} {p_name}" if (brand and brand not in p_name) else p_name
+                            full_title = re.sub(r"^SHOPSTAR\s*-\s*", "", full_title, flags=re.I).strip()
+
+                            if not es_nombre_valido(full_title):
+                                continue
+
+                            link_rel = item.get("link") or item.get("linkText") or ""
+                            if link_rel:
+                                link_final = urljoin("https://www.shopstar.pe", link_rel)
+                                if '/p' not in link_final.lower():
+                                    link_final += '/p'
+                            else:
+                                continue
+
+                            # Extraer Imagen
+                            img_url = ""
+                            items_sku = item.get("items") or []
+                            for sku in items_sku:
+                                images = sku.get("images") or []
+                                if images and isinstance(images, list):
+                                    img_url = images[0].get("imageUrl") or ""
+                                    if img_url: break
+
+                            if img_url.startswith("//"): img_url = "https:" + img_url
+
+                            # Extraer Precios
+                            p_off = 0.0
+                            p_reg = 0.0
+                            for sku in items_sku:
+                                sellers = sku.get("sellers") or []
+                                for seller in sellers:
+                                    comm = seller.get("commertialOffer") or {}
+                                    price = safe_float(comm.get("Price") or comm.get("spotPrice"))
+                                    list_price = safe_float(comm.get("ListPrice") or price)
+                                    
+                                    if price > 5.0:
+                                        if p_off == 0.0 or price < p_off: p_off = price
+                                        if list_price > p_reg: p_reg = list_price
+
+                            if p_off <= 0 or es_error_de_precio(p_off, p_reg, p_reg) or p_off > limite:
+                                continue
+
+                            productos.append({
+                                "nombre": f"SHOPSTAR - {full_title}",
+                                "precio": p_off,
+                                "precio_regular": max(p_reg, p_off),
+                                "link": link_final,
+                                "img": img_url
+                            })
+                        except Exception:
+                            continue
+
+                    if productos:
+                        return productos
+        except Exception:
+            pass
+
+    # =========================================================================
+    # OBTENER HTML DE LA PÁGINA (Para PDP o si la API no retornó)
+    # =========================================================================
     try:
         texto_html = ""
         status_code = 0
         for intento in range(1, 3):
             try:
-                resp = requests.get(url, headers=headers, timeout=15, verify=False)
+                resp = requests.get(url, headers=headers, timeout=12, verify=False)
                 texto_html = resp.text
                 status_code = resp.status_code
             except Exception:
                 pass
 
-            if status_code == 200 and len(texto_html) > 5000:
+            if status_code == 200 and len(texto_html) > 3000:
                 break
-            else:
-                time.sleep(random.uniform(1.0, 2.5))
+            time.sleep(random.uniform(0.8, 1.5))
 
-        if status_code != 200 or len(texto_html) < 5000:
+        if status_code != 200 or len(texto_html) < 3000:
             return []
 
         soup = BeautifulSoup(texto_html, 'html.parser')
 
-        # Palabras reservadas a descartar como títulos válidos
-        NOMBRES_INVALIDOS = ["FILTROS", "INICIO", "HOME", "SHOPSTAR", "COCINA", "ELECTROHOGAR", "CAMPANAS EXTRACTORAS"]
+        # =========================================================================
+        # ESTRATEGIA 2: EXTRAER DESDE window.__STATE__ (VTEX IO React Context)
+        # =========================================================================
+        try:
+            match_state = re.search(r'window\.__STATE__\s*=\s*(\{.*?\});?\s*(?:</script>|\n)', texto_html, re.DOTALL)
+            if match_state:
+                state_data = json.loads(match_state.group(1))
+                for key, val in state_data.items():
+                    if isinstance(val, dict) and 'productName' in val:
+                        p_name = str(val.get('productName') or '').strip().upper()
+                        brand = str(val.get('brand') or '').strip().upper()
+                        link_text = str(val.get('linkText') or val.get('link') or '').strip()
 
-        # ==========================================
-        # CASO A: FICHA DIRECTA DE PRODUCTO (PDP /p)
-        # ==========================================
-        if es_pdp:
-            nombre = ""
-            precio_oferta = 0.0
-            precio_regular = 0.0
-            img_url = ""
+                        full_title = f"{brand} {p_name}" if (brand and brand not in p_name) else p_name
+                        full_title = re.sub(r"^SHOPSTAR\s*-\s*", "", full_title, flags=re.I).strip()
 
-            # 1. Extracción de Datos desde JSON-LD Oficial de Producto VTEX
-            scripts_json = soup.find_all("script", type="application/ld+json")
-            for script in scripts_json:
-                if not script.string: continue
-                try:
-                    data = json.loads(script.string)
-                    if isinstance(data, dict) and data.get("@type") == "Product":
-                        n_cand = str(data.get("name") or "").strip().upper()
-                        if n_cand and not any(inv in n_cand for inv in NOMBRES_INVALIDOS):
-                            nombre = n_cand
+                        if not es_nombre_valido(full_title):
+                            continue
 
+                        if link_text:
+                            if not link_text.startswith('http'):
+                                link_text = '/' + link_text.lstrip('/')
+                                if '/p' not in link_text.lower():
+                                    link_text += '/p'
+                                link_final = urljoin("https://www.shopstar.pe", link_text)
+                            else:
+                                link_final = link_text
+                        else:
+                            link_final = url
+
+                        p_off = 0.0
+                        p_reg = 0.0
+                        img_url = ""
+
+                        items = val.get('items') or []
+                        for item_ref in items:
+                            item_obj = item_ref
+                            if isinstance(item_ref, dict) and 'id' in item_ref:
+                                item_key = f"Item:{item_ref['id']}"
+                                item_obj = state_data.get(item_key, item_ref)
+
+                            if isinstance(item_obj, dict):
+                                images = item_obj.get('images') or []
+                                if images and isinstance(images, list) and not img_url:
+                                    img_first = images[0]
+                                    if isinstance(img_first, dict):
+                                        img_url = img_first.get('imageUrl') or ""
+
+                                sellers = item_obj.get('sellers') or []
+                                for seller in sellers:
+                                    if isinstance(seller, dict):
+                                        comm = seller.get('commertialOffer') or {}
+                                        price = safe_float(comm.get('Price') or comm.get('spotPrice'))
+                                        l_price = safe_float(comm.get('ListPrice') or price)
+                                        if price > 5.0:
+                                            if p_off == 0.0 or price < p_off: p_off = price
+                                            if l_price > p_reg: p_reg = l_price
+
+                        if p_off > 0 and p_off <= limite and not es_error_de_precio(p_off, p_reg, p_reg):
+                            if p_reg <= 0: p_reg = p_off
+                            if img_url.startswith("//"): img_url = "https:" + img_url
+
+                            productos.append({
+                                "nombre": f"SHOPSTAR - {full_title}",
+                                "precio": p_off,
+                                "precio_regular": max(p_reg, p_off),
+                                "link": link_final,
+                                "img": img_url
+                            })
+        except Exception:
+            pass
+
+        if productos:
+            vistos = set()
+            unicos = []
+            for p in productos:
+                if p["link"] not in vistos:
+                    vistos.add(p["link"])
+                    unicos.append(p)
+            return unicos
+
+        # =========================================================================
+        # ESTRATEGIA 3: JSON-LD OFICIAL (Para PDP / Fichas Individuales)
+        # =========================================================================
+        scripts_json = soup.find_all("script", type="application/ld+json")
+        for script in scripts_json:
+            if not script.string: continue
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict) and data.get("@type") == "Product":
+                    p_name = str(data.get("name") or "").strip().upper()
+                    brand_data = data.get("brand") or {}
+                    brand_name = str(brand_data.get("name") if isinstance(brand_data, dict) else brand_data).strip().upper()
+
+                    full_title = f"{brand_name} {p_name}" if (brand_name and brand_name not in p_name) else p_name
+                    full_title = re.sub(r"^SHOPSTAR\s*-\s*", "", full_title, flags=re.I).strip()
+
+                    if es_nombre_valido(full_title):
                         offers = data.get("offers", {})
                         if isinstance(offers, list) and offers: offers = offers[0]
 
                         if isinstance(offers, dict):
                             p_off = safe_float(offers.get("price") or offers.get("lowPrice"))
                             p_reg = safe_float(offers.get("highPrice") or p_off)
-                            if p_off > 10.0:
-                                precio_oferta = p_off
-                                precio_regular = max(p_reg, p_off)
 
-                        img_raw = data.get("image")
-                        if isinstance(img_raw, list) and img_raw: img_raw = img_raw[0]
-                        if isinstance(img_raw, str) and not img_url: img_url = img_raw
-                except Exception:
-                    pass
+                            img_raw = data.get("image")
+                            if isinstance(img_raw, list) and img_raw: img_raw = img_raw[0]
+                            img_url = str(img_raw).strip() if isinstance(img_raw, str) else ""
+                            if img_url.startswith("//"): img_url = "https:" + img_url
 
-            # 2. Fallback de Nombre si no se obtuvo por JSON-LD
-            if not nombre or any(inv == nombre for inv in NOMBRES_INVALIDOS):
-                tit_el = soup.select_one("h1[class*='productName'], span[class*='productBrand'], h1")
-                if tit_el and tit_el.text:
-                    n_cand = tit_el.text.strip().upper()
-                    if len(n_cand) >= 5 and not any(inv == n_cand for inv in NOMBRES_INVALIDOS):
-                        nombre = n_cand
-
-            if not nombre or any(inv == nombre for inv in NOMBRES_INVALIDOS):
-                meta_og = soup.find("meta", property="og:title") or soup.find("meta", attrs={"name": "title"})
-                if meta_og and meta_og.get("content"):
-                    n_cand = meta_og["content"].split("|")[0].split("-")[0].strip().upper()
-                    if len(n_cand) >= 5 and not any(inv == n_cand for inv in NOMBRES_INVALIDOS):
-                        nombre = n_cand
-
-            # 3. Fallback de Precios en HTML (Restringido al área PDP activa para evitar recomendados)
-            if precio_oferta <= 0:
-                pdp_scope = soup.select_one("section[class*='product'], div[class*='pdp'], div[class*='productDetails']") or soup
-
-                # Precios VTEX Mercury
-                list_price_el = pdp_scope.select_one("span[class*='listPriceValue'], span[class*='listPrice']")
-                sell_price_el = pdp_scope.select_one("span[class*='sellingPriceValue'], span[class*='sellingPrice']")
-
-                if sell_price_el: precio_oferta = safe_float(sell_price_el.text)
-                if list_price_el: precio_regular = safe_float(list_price_el.text)
-
-                if precio_oferta <= 0:
-                    price_spans = pdp_scope.select("span[class*='currencyContainer'], span[class*='price']")
-                    valores = []
-                    for sp in price_spans:
-                        # Excluir precios de carruseles recomendados o laterales
-                        if sp.find_parent(class_=re.compile(r"(shelf|slider|carousel|related|recommendation)", re.I)):
-                            continue
-                        v = safe_float(sp.text)
-                        if v > 10.0:
-                            valores.append(v)
-                    if valores:
-                        precio_oferta = min(valores)
-                        precio_regular = max(valores)
-
-            if precio_regular <= 0:
-                precio_regular = precio_oferta
-
-            # 4. Fallback de Imagen
-            if not img_url:
-                meta_img = soup.find("meta", property="og:image")
-                if meta_img and meta_img.get("content"):
-                    img_url = meta_img["content"].strip()
-
-            if img_url.startswith("//"): img_url = "https:" + img_url
-
-            # Limpiar prefijos duplicados
-            nombre = re.sub(r"^SHOPSTAR\s*-\s*", "", nombre, flags=re.I).strip()
-
-            if nombre and len(nombre) >= 5 and precio_oferta >= 10.0 and precio_oferta <= limite:
-                return [{
-                    "nombre": f"SHOPSTAR - {nombre}",
-                    "precio": precio_oferta,
-                    "precio_regular": max(precio_regular, precio_oferta),
-                    "link": url,
-                    "img": img_url
-                }]
-
-        # ==========================================
-        # CASO B: PÁGINAS DE LISTADO / CATEGORÍA
-        # ==========================================
-        scripts_json = soup.find_all("script", type=re.compile(r"json", re.I))
-        for script in scripts_json:
-            if not script.string: continue
-            content = script.string.strip()
-
-            if '"@type":"BreadcrumbList"' in content or '"@type": "BreadcrumbList"' in content:
-                continue
-
-            if '"@type":"Product"' in content or '"@type":"ItemList"' in content:
-                try:
-                    data = json.loads(content)
-                    items_raw = []
-
-                    if isinstance(data, dict):
-                        if data.get("@type") == "ItemList":
-                            items_raw = data.get("itemListElement", [])
-                        elif data.get("@type") == "Product":
-                            items_raw = [data]
-                    elif isinstance(data, list):
-                        items_raw = data
-
-                    for item_wrap in items_raw:
-                        item = item_wrap.get("item", item_wrap) if isinstance(item_wrap, dict) else {}
-                        if not isinstance(item, dict) or item.get("@type") == "BreadcrumbList":
-                            continue
-
-                        link_rel = item.get("url") or item.get("@id") or ""
-                        if not link_rel or ('/p' not in link_rel and '/product/' not in link_rel):
-                            continue
-
-                        link_final = urljoin("https://www.shopstar.pe", link_rel)
-                        nombre_txt = str(item.get("name") or "").strip().upper()
-
-                        if len(nombre_txt) < 5 or any(inv == nombre_txt for inv in NOMBRES_INVALIDOS):
-                            continue
-
-                        offers = item.get("offers", {})
-                        if isinstance(offers, list) and offers: offers = offers[0]
-
-                        precio_oferta = safe_float(offers.get("price") or offers.get("lowPrice"))
-                        precio_regular = safe_float(offers.get("highPrice") or precio_oferta)
-                        if precio_regular <= 0: precio_regular = precio_oferta
-
-                        if precio_oferta < 10.0 or es_error_de_precio(precio_oferta, precio_regular, precio_regular) or precio_oferta > limite:
-                            continue
-
-                        img_raw = item.get("image") or ""
-                        if isinstance(img_raw, list) and img_raw: img_raw = img_raw[0]
-                        elif isinstance(img_raw, dict): img_raw = img_raw.get("url") or ""
-
-                        img_url = str(img_raw).strip()
-                        if img_url.startswith("//"): img_url = "https:" + img_url
-
-                        productos.append({
-                            "nombre": f"SHOPSTAR - {nombre_txt}",
-                            "precio": precio_oferta,
-                            "precio_regular": max(precio_regular, precio_oferta),
-                            "link": link_final,
-                            "img": img_url
-                        })
-                except Exception:
-                    pass
-
-        # Fallback HTML para Tarjetas en Catálogo
-        if not productos:
-            items = soup.find_all(["div", "article"], class_=re.compile(r"(vtex-product-summary|productSummary|galleryItem)", re.I))
-            for t in items:
-                try:
-                    a_el = t.find("a", href=True)
-                    if not a_el or not a_el["href"] or '/p' not in a_el["href"]:
-                        continue
-
-                    link_final = urljoin("https://www.shopstar.pe", a_el["href"])
-
-                    tit_el = t.find(["span", "h2", "h3", "p"], class_=re.compile(r"(productBrand|productName|brandName|title)", re.I))
-                    nombre_txt = tit_el.text.strip().upper() if tit_el else ""
-                    if len(nombre_txt) < 5 or any(inv == nombre_txt for inv in NOMBRES_INVALIDOS):
-                        continue
-
-                    precios_texto = t.find_all(text=re.compile(r"S/\.?\s*\d+", re.I))
-                    valores_encontrados = [safe_float(re.sub(r"[^\d.]", "", pt.replace(",", "."))) for pt in precios_texto]
-                    valores_encontrados = [v for v in valores_encontrados if v > 10.0]
-
-                    if not valores_encontrados: continue
-
-                    precio_oferta = min(valores_encontrados)
-                    precio_regular = max(valores_encontrados)
-
-                    if precio_oferta < 10.0 or es_error_de_precio(precio_oferta, precio_regular, precio_regular) or precio_oferta > limite:
-                        continue
-
-                    img_el = t.find("img")
-                    img_url = ""
-                    if img_el:
-                        for attr in ["src", "data-src", "srcset"]:
-                            val = img_el.get(attr)
-                            if val and "data:image" not in str(val):
-                                img_url = str(val).split(" ")[0].strip()
-                                break
-
-                    if img_url.startswith("//"): img_url = "https:" + img_url
-
-                    productos.append({
-                        "nombre": f"SHOPSTAR - {nombre_txt}",
-                        "precio": precio_oferta,
-                        "precio_regular": max(precio_regular, precio_oferta),
-                        "link": link_final,
-                        "img": img_url
-                    })
-                except Exception:
-                    continue
-
-        # Deduplicar resultados por URL
-        vistos = set()
-        productos_unicos = []
-        for p in productos:
-            if p["link"] not in vistos:
-                vistos.add(p["link"])
-                productos_unicos.append(p)
-
-        return productos_unicos
+                            if p_off >= 10.0 and p_off <= limite and not es_error_de_precio(p_off, p_reg, p_reg):
+                                return [{
+                                    "nombre": f"SHOPSTAR - {full_title}",
+                                    "precio": p_off,
+                                    "precio_regular": max(p_reg, p_off),
+                                    "link": url,
+                                    "img": img_url
+                                }]
+            except Exception:
+                pass
 
     except Exception as e:
         safe_log(f"🚨 Error en motor Shopstar: {e}", "error")
 
     return productos
+                                    
