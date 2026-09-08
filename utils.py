@@ -11,6 +11,31 @@ logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(loggi
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 
+def extraer_clave_modelo(nombre_producto):
+    """
+    Limpia y normaliza el nombre del producto para extraer la marca y modelo clave,
+    permitiendo el seguimiento multitienda.
+    Ejemplo: 'OECHSLE - TABLET LENOVO TAB M11 WIFI 128GB' -> 'LENOVO TAB M11'
+    """
+    if not nombre_producto:
+        return ""
+    
+    # Quitar prefijos comunes de tiendas y caracteres especiales
+    clean = re.sub(r"^(SHOPSTAR|FALABELLA|RIPLEY|OECHSLE|PROMART|CARSA|EFE|CURACAO|PLAZA_VEA|HIRAOKA|COOLBOX|JBL|ADIDAS|NIKE)\s*[-:]?\s*", "", str(nombre_producto), flags=re.I)
+    clean = re.sub(r"[^\w\s]", " ", clean)
+    
+    # Palabras comunes a ignorar para el matcheo multitienda
+    palabras_ignorar = {
+        "NUEVO", "OFERTA", "INCLUYE", "FUNDA", "LAPIZ", "WIFI", "CON", "ENVIO", 
+        "GRATIS", "EN", "CAMA", "TABLET", "COLOR", "NEGRO", "BLANCO", "AZUL", 
+        "PACK", "COMBO", "OFERTON", "DESCUENTO"
+    }
+    tokens = [p for p in clean.upper().split() if p not in palabras_ignorar and len(p) > 1]
+    
+    # Retornar los primeros 3 a 4 términos significativos (Marca + Modelo)
+    return " ".join(tokens[:4])
+
+
 def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
     """
     Analiza el texto de una oferta enviada a Telegram usando el SDK 'google-genai'
@@ -52,7 +77,6 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         Sé directo, crítico y no saludes. No utilices caracteres HTML como < o >.
         """
 
-        # Llamada directa al modelo optimizado para una respuesta inmediata
         res = client.models.generate_content(
             model='gemini-3.6-flash',
             contents=prompt
@@ -71,17 +95,8 @@ def analizar_producto_con_gemini(texto_oferta, historial_precios=None):
         return f"⚠️ <i>Error al consultar a Gemini: {e}</i>"
 
 
-
-
 def safe_log(mensaje, tipo="info"):
     """Imprime mensajes en consola y los envía a Streamlit únicamente si la UI está activa."""
-    prefijos = {
-        "info": "ℹ️",
-        "success": "✅",
-        "warning": "⚠️",
-        "error": "🚨",
-        "caption": "💬"
-    }
     print(f"[{tipo.upper()}] {mensaje}")
     try:
         if get_script_run_ctx() is not None:
@@ -216,4 +231,3 @@ def encontrar_foto_fala(prod_dict):
         elif isinstance(val, dict):
             return val.get('url') or val.get('src') or ""
     return ""
-    
