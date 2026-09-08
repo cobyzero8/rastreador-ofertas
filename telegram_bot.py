@@ -25,7 +25,7 @@ except Exception:
 
 from config import supabase
 from patrol import revisar_ofertas
-from utils import analizar_producto_con_gemini, extraer_clave_modelo
+from utils import analizar_producto_con_gemini, extraer_clave_modelo, limpiar_precio_pnp
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,6 +130,39 @@ async def comando_pausados(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lineas = [f"• <b>{item.get('identificador', 'RADAR')}</b>\n  └ 🔗 <a href='{item.get('url', '#')}'>Ver URL</a>" for item in inactivos[:10]]
     mensaje = f"<b>⏸️ RADARES PAUSADOS ({cant})</b>\n\n" + "\n".join(lineas)
     await context.bot.send_message(chat_id=chat_id, text=mensaje, parse_mode="HTML", disable_web_page_preview=True)
+
+
+async def comando_seguidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await es_usuario_valido(update): return
+    chat_id = update.effective_chat.id
+    await borrar_mensaje_usuario(update)
+
+    try:
+        res = supabase.table("productos_seguidos").select("*").eq("activo", True).order("fecha_registro", desc=True).execute()
+        items = res.data or []
+    except Exception as e:
+        await context.bot.send_message(chat_id=chat_id, text=f"🚨 Error consultando Supabase: {e}")
+        return
+
+    if not items:
+        await context.bot.send_message(chat_id=chat_id, text="ℹ️ *No tienes productos en seguimiento actualmente.*", parse_mode="Markdown")
+        return
+
+    await context.bot.send_message(chat_id=chat_id, text=f"📌 <b>TUS PRODUCTOS EN SEGUIMIENTO ({len(items)}):</b>", parse_mode="HTML")
+
+    for item in items:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑️ Dejar de Seguir", callback_data=f"unfollow_{item['id']}")]
+        ])
+        precio_val = item.get('precio_guardado')
+        precio_txt = f"S/. {float(precio_val):.2f}" if precio_val else "No registrado"
+
+        txt = (
+            f"🎯 <b>{item.get('nombre_producto', 'Producto')}</b>\n"
+            f"💰 <b>Precio Base:</b> {precio_txt}\n"
+            f"🔑 <b>Clave Multitienda:</b> <code>{item.get('clave_busqueda', 'N/A')}</code>"
+        )
+        await context.bot.send_message(chat_id=chat_id, text=txt, reply_markup=keyboard, parse_mode="HTML")
 
 
 async def ejecutar_escaneo(update: Update, context: ContextTypes.DEFAULT_TYPE, filtro: str):
@@ -279,7 +312,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not nombre_prod:
             nombre_prod = texto_plano.split('\n')[0][:80] if texto_plano else "Producto Desconocido"
 
-        # 2. Extraer URL de la oferta
+        # 2. Extraer precio del mensaje
+        precio_prod = 0.0
+        for linea in texto_plano.split('\n'):
+            if "S/." in linea or "Precio" in linea:
+                p_temp = limpiar_precio_pnp(linea)
+                if p_temp > 0:
+                    precio_prod = p_temp
+                    break
+
+        # 3. Extraer URL de la oferta
         link_producto = ""
         entities = query.message.caption_entities or query.message.entities or []
         for entity in entities:
@@ -294,7 +336,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         link_clean = link_producto.split('?')[0].split('#')[0].rstrip('/') if link_producto else ""
 
-        # 3. Extraer clave del modelo simplificado
+        # 4. Extraer clave del modelo simplificado
         clave_modelo = extraer_clave_modelo(nombre_prod)
 
         try:
@@ -302,10 +344,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "nombre_producto": nombre_prod[:120],
                 "link_producto": link_clean,
                 "clave_busqueda": clave_modelo,
+                "precio_guardado": precio_prod,
                 "activo": True
             }).execute()
 
-            await query.answer(f"🎯 ¡Siguiendo modelo: '{clave_modelo}'!\nTe avisaremos si baja en esta o CUALQUIER otra tienda.", show_alert=True)
+            txt_confirmacion = f"🎯 ¡Siguiendo modelo: '{clave_modelo}'!\n"
+            if precio_prod > 0:
+                txt_confirmacion += f"💰 Precio base registrado: S/. {precio_prod:.2f}\n"
+            txt_confirmacion += "Te avisaremos si baja en esta o CUALQUIER otra tienda."
+
+            await query.answer(txt_confirmacion, show_alert=True)
         except Exception as e:
             err_str = str(e).lower()
             if "duplicate" in err_str or "unique" in err_str or "23505" in err_str:
@@ -313,6 +361,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 logger.error(f"Error al seguir producto: {e}")
                 await query.answer(f"🚨 Error al guardar en Supabase: {e}", show_alert=True)
+
+    elif data.startswith("unfollow_"):
+        prod_id = data.replace("unfollow_", "")
+        try:
+            supabase.table("productos_seguidos").delete().eq("id", prod_id).execute()
+            await query.answer("🗑️ Producto eliminado de tu lista de seguimiento.", show_alert=True)
+            await query.message.delete()
+        except Exception as e:
+            logger.error(f"Error al dejar de seguir: {e}")
+            await query.answer(f"🚨 Error al eliminar: {e}", show_alert=True)
 
 
 def main():
@@ -326,6 +384,7 @@ def main():
     app.add_handler(CommandHandler(["coby", "start"], comando_coby))
     app.add_handler(CommandHandler("itzel", comando_itzel))
     app.add_handler(CommandHandler(["pausados", "inactivos"], comando_pausados))
+    app.add_handler(CommandHandler(["seguidos", "mis_seguidos"], comando_seguidos))
     app.add_handler(CommandHandler("tiendas", menu_tiendas))
     app.add_handler(CommandHandler("categorias", menu_categorias))
     app.add_handler(CommandHandler("forzar_todo", lambda u, c: ejecutar_escaneo(u, c, "TODOS")))
