@@ -1,4 +1,5 @@
 import os
+import re
 import html
 import logging
 import asyncio
@@ -24,7 +25,7 @@ except Exception:
 
 from config import supabase
 from patrol import revisar_ofertas
-from utils import analizar_producto_con_gemini
+from utils import analizar_producto_con_gemini, extraer_clave_modelo
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -209,7 +210,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("⚠️ Esta oferta ya fue analizada.", show_alert=True)
             return
 
-        # 1. Extraer palabras clave del producto para buscar su historial real en Supabase
         historial_texto = ""
         try:
             lineas = texto_plano.split('\n')
@@ -231,7 +231,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # 2. Enviar a Gemini junto con el historial recolectado
         veredicto = await asyncio.to_thread(analizar_producto_con_gemini, texto_plano, historial_texto)
 
         try:
@@ -263,6 +262,57 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 logger.error(f"Error IA: {e}")
                 await query.answer(f"🚨 Error: {e}", show_alert=True)
+
+    elif data == "seguir_producto":
+        await query.answer("📌 Registrando producto para seguimiento multitienda...", show_alert=False)
+        
+        texto_html = query.message.caption_html if query.message.caption else (query.message.text_html or "")
+        texto_plano = query.message.caption or query.message.text or ""
+
+        # 1. Extraer nombre del producto
+        nombre_prod = ""
+        for linea in texto_plano.split('\n'):
+            if "Producto:" in linea:
+                nombre_prod = linea.replace("Producto:", "").strip()
+                break
+        
+        if not nombre_prod:
+            nombre_prod = texto_plano.split('\n')[0][:80] if texto_plano else "Producto Desconocido"
+
+        # 2. Extraer URL de la oferta
+        link_producto = ""
+        entities = query.message.caption_entities or query.message.entities or []
+        for entity in entities:
+            if entity.type == "text_link" and entity.url:
+                link_producto = entity.url
+                break
+
+        if not link_producto:
+            urls = re.findall(r'https?://[^\s>"]+', texto_html or texto_plano)
+            if urls:
+                link_producto = urls[0]
+
+        link_clean = link_producto.split('?')[0].split('#')[0].rstrip('/') if link_producto else ""
+
+        # 3. Extraer clave del modelo simplificado
+        clave_modelo = extraer_clave_modelo(nombre_prod)
+
+        try:
+            supabase.table("productos_seguidos").insert({
+                "nombre_producto": nombre_prod[:120],
+                "link_producto": link_clean,
+                "clave_busqueda": clave_modelo,
+                "activo": True
+            }).execute()
+
+            await query.answer(f"🎯 ¡Siguiendo modelo: '{clave_modelo}'!\nTe avisaremos si baja en esta o CUALQUIER otra tienda.", show_alert=True)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "duplicate" in err_str or "unique" in err_str or "23505" in err_str:
+                await query.answer("ℹ️ Este producto ya está registrado en tu lista de seguimiento.", show_alert=True)
+            else:
+                logger.error(f"Error al seguir producto: {e}")
+                await query.answer(f"🚨 Error al guardar en Supabase: {e}", show_alert=True)
 
 
 def main():
