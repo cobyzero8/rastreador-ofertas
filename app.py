@@ -106,6 +106,7 @@ st.sidebar.write("---")
 
 menu = st.sidebar.radio("Sección:", [
     "📈 Ver Dashboard / Ofertas", 
+    "📌 Mis Productos Seguidos (VIP)",
     "🎟️ Cupones de Descuento", 
     "🏥 Salud de Scrapers (Health Check)",
     "🛠️ Configurar Radares y URLs", 
@@ -311,6 +312,42 @@ if menu == "📈 Ver Dashboard / Ofertas":
         )
     else:
         st.info("No hay ofertas registradas en este rango.")
+
+# ---------------------------
+# Mis Productos Seguidos (VIP)
+# ---------------------------
+elif menu == "📌 Mis Productos Seguidos (VIP)":
+    st.title("📌 Mis Productos en Seguimiento Personalizado (VIP)")
+    st.caption("Lista de artículos monitoreados activamente. Si bajan de precio o aparecen en oferta en cualquier tienda, recibirás una Alerta VIP especial en Telegram.")
+    st.write("---")
+
+    try:
+        res_seg = supabase.table("productos_seguidos").select("*").eq("activo", True).order("fecha_registro", desc=True).execute()
+        items_seguidos = res_seg.data or []
+
+        if items_seguidos:
+            st.subheader(f"📋 Productos en Rastreo Multitienda ({len(items_seguidos)})")
+            for item in items_seguidos:
+                with st.container(border=True):
+                    col_info, col_del = st.columns([5, 1])
+                    with col_info:
+                        st.markdown(f"🎯 **{item.get('nombre_producto', 'Producto sin nombre')}**")
+                        clave = item.get('clave_busqueda', 'N/A')
+                        st.caption(f"🔑 **Clave Multitienda:** `{clave}`")
+                        link_prod = item.get('link_producto')
+                        if link_prod:
+                            st.caption(f"🔗 [Ver Enlace Registrado]({link_prod})")
+                        st.caption(f"📅 **Fecha de Registro:** {item.get('fecha_registro', 'N/A')}")
+                    with col_del:
+                        if st.button("🗑️ Eliminar", key=f"del_seg_{item['id']}", use_container_width=True):
+                            supabase.table("productos_seguidos").delete().eq("id", item['id']).execute()
+                            st.success("Producto eliminado del seguimiento.")
+                            time.sleep(0.8)
+                            st.rerun()
+        else:
+            st.info("ℹ️ No estás siguiendo ningún producto actualmente. Presiona el botón **'📌 Seguir Producto'** en cualquier mensaje de Telegram para agregarlo.")
+    except Exception as e_seg:
+        st.error(f"🚨 Error cargando productos seguidos desde Supabase: {e_seg}")
 
 # ---------------------------
 # Cupones de Descuento
