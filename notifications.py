@@ -63,7 +63,10 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
     nombre_clean = str(nombre).replace("<", "&lt;").replace(">", "&gt;")
 
     # 🎯 ENCABEZADOS Y TEXTO SEGÚN EL TIPO DE EVENTO
-    if tipo_alerta == "BAJA_PRECIO":
+    if tipo_alerta in ["SEGUIDO", "BAJA_PRECIO_SEGUIDO"]:
+        header = "🎯🎯🎯 <b>¡ALERTA VIP DE SEGUIMIENTO!</b> 🎯🎯🎯\n🔥 <i>¡El producto que estabas siguiendo bajó de precio o apareció en oferta!</i>"
+        label_precio = "💰 <b>Precio Especial Detectado:</b>"
+    elif tipo_alerta == "BAJA_PRECIO":
         header = "📉 <b>¡EL PRODUCTO BAJÓ DE PRECIO APROVECHA COBY!</b> 📉"
         label_precio = "💰 <b>Nuevo Precio Menor:</b>"
     else:
@@ -85,10 +88,13 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
 
     mensaje += f"\n👉 <a href='{link}'><b>¡VER EN TIENDA!</b></a>"
 
-    # 🧠 Botón interactivo para consultar a Gemini bajo demanda
-    teclado_ia = {
+    # 🧠 Teclado interactivo: Análisis con Gemini + Botón de Seguimiento
+    teclado_interactivo = {
         "inline_keyboard": [
-            [{"text": "🧠 Analizar con IA", "callback_data": "analizar_ia"}]
+            [
+                {"text": "🧠 Analizar con IA", "callback_data": "analizar_ia"},
+                {"text": "📌 Seguir Producto", "callback_data": "seguir_producto"}
+            ]
         ]
     }
 
@@ -108,7 +114,7 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
                     "chat_id": chat_id,
                     "caption": mensaje,
                     "parse_mode": "HTML",
-                    "reply_markup": json.dumps(teclado_ia)
+                    "reply_markup": json.dumps(teclado_interactivo)
                 }
                 files = {
                     "photo": ("producto.jpg", res_img.content, "image/jpeg")
@@ -129,7 +135,7 @@ def enviar_alerta_telegram(tienda, nombre, precio_oferta, precio_regular, link, 
             "text": mensaje,
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
-            "reply_markup": teclado_ia
+            "reply_markup": teclado_interactivo
         }
         resp_text = requests.post(url_text, json=payload_text, timeout=10)
         if resp_text.status_code == 200:
