@@ -6,10 +6,8 @@ httpx
 curl_cffi
 urllib3
 cloudscraper
-playwright
 python-telegram-bot
 telethon
-starlette<0.39.0
 pandas
 st-annotated-text
 google-genai
