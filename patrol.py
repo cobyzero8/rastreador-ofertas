@@ -14,7 +14,7 @@ from config import supabase
 from scrapers import escanear_tienda
 from notifications import enviar_alerta_telegram
 from health_monitor import registrar_resultado_salud
-from utils import safe_log, es_error_de_precio, safe_float
+from utils import safe_log, es_error_de_precio, safe_float, extraer_clave_modelo
 
 # Configuración de horas mínimas entre escaneos por tienda (Protección de créditos)
 TIENDAS_CON_ENFRIAMIENTO = {
@@ -24,6 +24,47 @@ TIENDAS_CON_ENFRIAMIENTO = {
     "RIPLEY": 4,
     "SHOPSTAR": 4,
 }
+
+
+def es_producto_seguido(supabase_client, nombre_producto: str, link_producto: str):
+    """
+    Verifica si el producto detectado coincide con la lista de 'productos_seguidos'
+    ya sea por URL directa o por coincidencia de modelo clave (multitienda).
+    """
+    if not supabase_client:
+        return False, None
+
+    try:
+        # 1. Búsqueda por enlace exacto
+        res_link = (
+            supabase_client.table("productos_seguidos")
+            .select("*")
+            .eq("activo", True)
+            .eq("link_producto", link_producto)
+            .limit(1)
+            .execute()
+        )
+        if res_link.data:
+            return True, res_link.data[0]
+
+        # 2. Búsqueda por clave de modelo (Multitienda)
+        clave = extraer_clave_modelo(nombre_producto)
+        if clave and len(clave) >= 3:
+            res_clave = (
+                supabase_client.table("productos_seguidos")
+                .select("*")
+                .eq("activo", True)
+                .ilike("clave_busqueda", f"%{clave[:15]}%")
+                .limit(1)
+                .execute()
+            )
+            if res_clave.data:
+                return True, res_clave.data[0]
+
+    except Exception as e:
+        safe_log(f"⚠️ Error verificando producto en seguimiento: {e}", "warning")
+
+    return False, None
 
 
 def cumple_filtro_categoria(filtro: str, identificador: str) -> bool:
@@ -191,6 +232,9 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 if precio_oferta <= 0 or es_error_de_precio(precio_oferta, precio_regular):
                     continue
 
+                # 📌 VERIFICAR SI EL PRODUCTO ESTÁ EN SEGUIMIENTO PERSONALIZADO (MULTITIENDA)
+                es_seguido, _ = es_producto_seguido(supabase, nombre_real, link_prod)
+
                 res_existente = (
                     supabase.table("historial_precios")
                     .select("id, precio, precio_regular, nombre_producto, imagen_producto")
@@ -200,7 +244,8 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                 )
 
                 if not res_existente.data:
-                    # 🟢 PRODUCTO NUEVO: Notificar a Telegram
+                    # 🟢 PRODUCTO NUEVO: Notificar a Telegram (VIP si es seguido)
+                    tipo_alerta_envio = "SEGUIDO" if es_seguido else "NUEVO_PRODUCTO"
                     exito_telegram = enviar_alerta_telegram(
                         tienda=tienda,
                         nombre=nombre_real,
@@ -208,7 +253,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         precio_regular=precio_regular,
                         link=link_prod,
                         imagen=imagen,
-                        tipo_alerta="NUEVO_PRODUCTO",
+                        tipo_alerta=tipo_alerta_envio,
                     )
 
                     if exito_telegram:
@@ -226,7 +271,8 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                         if res_ins and res_ins.data:
                             total_productos_procesados += 1
                             total_ofertas_notificadas += 1
-                            safe_log(f"🆕 Producto nuevo notificado y guardado: {nombre_real}", "success")
+                            label_log = "🎯 Producto VIP seguido" if es_seguido else "🆕 Producto nuevo"
+                            safe_log(f"{label_log} notificado y guardado: {nombre_real}", "success")
                             time.sleep(1.2)
 
                 else:
@@ -236,7 +282,8 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                     id_bd = reg_guardado.get("id")
 
                     if precio_oferta < precio_guardado:
-                        # 📉 BAJA DE PRECIO (Notificar a Telegram)
+                        # 📉 BAJA DE PRECIO: Notificar a Telegram (VIP si es seguido)
+                        tipo_alerta_envio = "BAJA_PRECIO_SEGUIDO" if es_seguido else "BAJA_PRECIO"
                         exito_telegram = enviar_alerta_telegram(
                             tienda=tienda,
                             nombre=nombre_real,
@@ -244,7 +291,7 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             precio_regular=precio_guardado,
                             link=link_prod,
                             imagen=imagen,
-                            tipo_alerta="BAJA_PRECIO",
+                            tipo_alerta=tipo_alerta_envio,
                         )
 
                         if exito_telegram:
@@ -259,8 +306,9 @@ def revisar_ofertas(filtro_categoria="TODOS"):
                             supabase.table("historial_precios").update(datos_update).eq("id", id_bd).execute()
                             total_productos_procesados += 1
                             total_ofertas_notificadas += 1
+                            label_log = "🎯 Baja VIP en producto seguido" if es_seguido else "📉 Baja de precio"
                             safe_log(
-                                f"📉 Baja de precio (S/. {precio_guardado:.2f} ➔ S/. {precio_oferta:.2f}): {nombre_real}",
+                                f"{label_log} (S/. {precio_guardado:.2f} ➔ S/. {precio_oferta:.2f}): {nombre_real}",
                                 "success",
                             )
                             time.sleep(1.2)
