@@ -30,13 +30,37 @@ for secret_key, value in st.secrets.items():
 
 @st.cache_resource
 def iniciar_bot_telegram_en_la_nube():
+    """
+    Inicia el bot de Telegram en segundo plano de forma segura.
+    Utiliza psutil para evitar errores de comandos faltantes ('ps') en Linux/Streamlit Cloud.
+    """
+    # 1. Intentar verificación limpia mediante psutil
     try:
-        # Verificar si ya hay una instancia corriendo para no duplicar procesos
-        for proc in subprocess.Popen(["ps", "aux"], stdout=subprocess.PIPE).communicate()[0].decode().split("\n"):
-            if "telegram_bot.py" in proc:
-                return None
-
+        import psutil
+        for proc in psutil.process_iter(['cmdline']):
+            try:
+                cmd = proc.info.get('cmdline')
+                if cmd and any('telegram_bot.py' in arg for arg in cmd):
+                    return None
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
         return subprocess.Popen([sys.executable, "telegram_bot.py"])
+    except Exception:
+        pass
+
+    # 2. Fallback mediante subprocess si psutil no estuviera disponible
+    try:
+        out = subprocess.check_output(["ps", "aux"]).decode()
+        if "telegram_bot.py" in out:
+            return None
+        return subprocess.Popen([sys.executable, "telegram_bot.py"])
+    except FileNotFoundError:
+        # Si el sistema operativo no tiene la herramienta 'ps', ejecutamos directamente el bot
+        try:
+            return subprocess.Popen([sys.executable, "telegram_bot.py"])
+        except Exception as ex_bot:
+            st.error(f"Error lanzando proceso telegram_bot.py: {ex_bot}")
+            return None
     except Exception as e:
         st.error(f"Error iniciando bot de Telegram en segundo plano: {e}")
         return None
