@@ -312,14 +312,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not nombre_prod:
             nombre_prod = texto_plano.split('\n')[0][:80] if texto_plano else "Producto Desconocido"
 
-        # 2. Extraer precio del mensaje
+        # 2. Extraer precio directamente del texto usando Regex
         precio_prod = 0.0
-        for linea in texto_plano.split('\n'):
-            if "S/." in linea or "Precio" in linea:
-                p_temp = limpiar_precio_pnp(linea)
-                if p_temp > 0:
-                    precio_prod = p_temp
-                    break
+        match_precio = re.search(r'S/\.?\s*([\d.,]+)', texto_plano)
+        if match_precio:
+            precio_prod = limpiar_precio_pnp(match_precio.group(1))
 
         # 3. Extraer URL de la oferta
         link_producto = ""
@@ -344,7 +341,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "nombre_producto": nombre_prod[:120],
                 "link_producto": link_clean,
                 "clave_busqueda": clave_modelo,
-                "precio_guardado": precio_prod,
+                "precio_guardado": precio_prod if precio_prod > 0 else None,
                 "activo": True
             }).execute()
 
