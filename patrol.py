@@ -3,12 +3,24 @@ import json
 import time
 import logging
 import requests
+import warnings
 from datetime import datetime, timezone, timedelta
 
 # Silenciar advertencias de Streamlit en ejecuciones CLI / GitHub Actions / Cron
 os.environ["STREAMLIT_LOG_LEVEL"] = "error"
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+
+# Ocultar advertencias de contexto de Streamlit cuando se ejecuta en CLI / Cron
+warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
+warnings.filterwarnings("ignore", category=UserWarning)
+
+for logger_name in [
+    "streamlit",
+    "streamlit.runtime.scriptrunner",
+    "streamlit.runtime.scriptrunner.script_runner",
+]:
+    logging.getLogger(logger_name).setLevel(logging.CRITICAL)
 
 from config import supabase
 from scrapers import escanear_tienda
